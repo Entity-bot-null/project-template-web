@@ -79,8 +79,9 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   another user than the one who sent it.
 - **One refresh at a time across tabs** (`web/src/auth/session.ts`): tabs share the cookie and
   every refresh rotates it, so they take turns through a Web Lock and none presents a token another
-  has just rotated. Without Web Locks (or when the browser refuses the lock), one retry covers a
-  race between two tabs.
+  has just rotated. A refresh gives up after 10 seconds without an answer, so a stalled one cannot
+  hold the lock for every tab. Without Web Locks (or when the browser refuses the lock), one retry
+  covers a race between two tabs.
 - **Sign-out** is immediate in the tab and in the other open tabs (`BroadcastChannel`), including
   one that was picking up the session at that moment (its refresh never lands). The
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next

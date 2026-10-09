@@ -127,11 +127,13 @@ sudo ufw allow OpenSSH
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw allow 443/udp
-sudo ufw enable
+sudo ufw --force enable
 sudo apt-get install -y unattended-upgrades
 sudo dpkg-reconfigure --priority=low unattended-upgrades
 ```
 
+`--force` skips `ufw`'s confirmation prompt, which would otherwise take the next pasted line as its
+answer and leave the firewall off; OpenSSH is allowed first, so the current session stays open.
 Docker publishes container ports around `ufw`: only `proxy` publishes any (80 and 443), so nothing
 else is reachable from outside.
 

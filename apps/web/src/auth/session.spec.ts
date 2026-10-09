@@ -16,6 +16,7 @@ import {
   getAccessToken,
   getState,
   refresh,
+  REFRESH_TIMEOUT_MS,
   resetForTests,
   retrySignOut,
   setSession,
@@ -30,6 +31,16 @@ const LOGOUT = 'POST /api/auth/logout';
 const SIGNED_OUT = { status: 'anonymous', user: null, signedOut: 'done' };
 const routeOf = (request: Request) => `${request.method} ${new URL(request.url).pathname}`;
 const signedOut = () => new Response(null, { status: 204 });
+// An answer that never comes: like fetch, it gives up only when the request's
+// signal aborts.
+const neverAnswered = (request: Request) =>
+  new Promise<Response>((_resolve, reject) => {
+    const abort = () => {
+      reject(request.signal.reason as Error);
+    };
+    if (request.signal.aborted) abort();
+    else request.signal.addEventListener('abort', abort);
+  });
 
 beforeEach(() => {
   resetForTests();
@@ -125,6 +136,51 @@ describe('refresh', () => {
     stubFetch({ [REFRESH]: () => session('token-1') });
     await expect(refresh()).resolves.toBe(true);
     expect(held).toEqual(['auth-refresh']);
+  });
+
+  it('gives up on a refresh that does not answer in time and frees the lock for the next', async () => {
+    // One stalled refresh would otherwise hold the cross-tab lock, and no tab
+    // could renew its session until the page was closed.
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+    // An exclusive lock, like the browser's: each holder waits for the last.
+    let released: Promise<unknown> = Promise.resolve();
+    const locks = {
+      request: (_name: string, work: () => Promise<unknown>) => {
+        const held = released.then(work);
+        released = held.catch(() => undefined);
+        return held;
+      },
+    };
+    vi.stubGlobal('navigator', { locks });
+    let attempts = 0;
+    stubFetch({
+      [REFRESH]: (request) => (attempts++ === 0 ? neverAnswered(request) : session('token-2')),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+
+    const stalled = refresh();
+    await vi.waitFor(() => {
+      expect(timeout).toHaveBeenCalledWith(REFRESH_TIMEOUT_MS);
+    });
+    deadline.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+    // Like a network failure: the session stays for the next attempt.
+    await expect(stalled).resolves.toBe(false);
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
+    await expect(refresh()).resolves.toBe(true);
+    expect(getAccessToken()).toBe('token-2');
+  });
+
+  it('settles a boot whose refresh does not answer in time as anonymous', async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+    stubFetch({
+      [REFRESH]: neverAnswered,
+    });
+    const booted = boot();
+    deadline.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+    await expect(booted).resolves.toBe(false);
+    expect(getState()).toEqual({ status: 'anonymous', user: null });
   });
 
   it('refreshes without the lock when the browser refuses one', async () => {

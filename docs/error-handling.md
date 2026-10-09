@@ -43,8 +43,10 @@ Rules:
 
 - **API calls:** `call(api.GET(...))` turns every outcome into
   `{ ok: true, data } | { ok: false, failure: { status, message, retryAfterSec? } }`
-  (`apps/web/src/api/errors.ts`). Network failures are `status: 0`. Screens switch on `ok`; there
-  is no try/catch around API calls.
+  (`apps/web/src/api/errors.ts`). Network failures and timeouts are `status: 0`. A success answer
+  without the `{ data, message }` envelope (other than a bodyless `204`) did not come from the API
+  (a proxy, a captive portal): it fails with `status: 502`, never reaching a screen as data.
+  Screens switch on `ok`; there is no try/catch around API calls.
 - **User-facing text:** a screen maps the statuses it expects (sign-in maps 401 to "Invalid email or
   password."); everything else goes through `describeFailure(failure)`. The server `message` is for
   developers and logs, never shown as is.
@@ -52,7 +54,8 @@ Rules:
   `LoadFailed` renders the message and a retry button.
 - **Session errors:** a 401 to a request that carried a token triggers one refresh and one replay;
   a second 401 signs the user out (`src/auth/middleware.ts`). A refresh that fails on the server
-  side or on the network keeps the session for the next attempt. A sign-out the server could not
+  side or on the network, or gets no answer within 10 seconds (it holds the cross-tab lock
+  meanwhile), keeps the session for the next attempt. A sign-out the server could not
   confirm is shown on the sign-in page with a retry.
 - **Render errors:** the root route's `errorElement` (`RouteErrorPage`) catches anything thrown
   while rendering, logs it with `console.error` (the hook for an error tracker, docs/observability.md)

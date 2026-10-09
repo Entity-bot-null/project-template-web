@@ -67,8 +67,9 @@ one, or an optional feature asked for without what it needs (`RATE_LIMIT_STORE=r
 The web app calls `/api` on its own origin and reads deployment settings at runtime from
 `/app-config.json`, which the web server writes from its environment at start (one image for every
 environment). All optional. The ones written into `/app-config.json` and the CSP are checked by
-`apps/web/nginx/18-validate-runtime-config.sh` before nginx starts (a bad value stops the
-container and names the variable); a malformed `API_UPSTREAM` fails nginx's own configuration test.
+`apps/web/nginx/18-validate-runtime-config.sh` before nginx starts: one line each, with no quote,
+backslash or `$`, in the shape the table gives (a bad value stops the container and names the
+variable). A malformed `API_UPSTREAM` fails nginx's own configuration test.
 
 | Variable                 | Default                   | Purpose                                                                                                                                    |
 | ------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |

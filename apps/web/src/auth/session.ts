@@ -6,7 +6,9 @@ import type { AuthSession, AuthState } from './types';
 // The session store (docs/security.md#authentication-and-tokens). The access token lives in this
 // module's memory and nowhere else: never localStorage or sessionStorage,
 // where any injected script could read it. The refresh token is an httpOnly
-// cookie the browser sends by itself to /api/auth. A page load therefore
+// cookie the browser sends by itself (in production `__Host-refresh_token` on
+// Path=/, in development `refresh_token` scoped to /api/auth; only the
+// refresh and logout routes read it). A page load therefore
 // starts with one refresh (`boot`), and every caller (boot, the 401
 // middleware, racing tabs) shares the same in-flight refresh: the server
 // rotates refresh tokens, so two parallel refreshes would race.
@@ -99,11 +101,19 @@ async function doRefresh(): Promise<boolean> {
   return false;
 }
 
+/**
+ * How long a refresh may take, answer included. It holds the cross-tab lock
+ * meanwhile, so one that stalls (a hung connection, a stuck proxy) would keep
+ * every tab from renewing its session; past this it fails like a network
+ * error, and the next request tries again.
+ */
+export const REFRESH_TIMEOUT_MS = 10_000;
+
 function refreshOnce(): Promise<ApiResult<AuthSession>> {
   let sent = false;
   const send = () => {
     sent = true;
-    return call(api.POST('/api/auth/refresh'));
+    return call(api.POST('/api/auth/refresh', { signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }));
   };
   if (!('locks' in navigator)) return send();
   // A browser can still refuse the lock (a sandboxed frame, a storage

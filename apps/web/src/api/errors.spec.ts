@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { failure, json, ok } from '../test/http';
-import { call, describeFailure, failureOf, NETWORK_ERROR_MESSAGE } from './errors';
+import {
+  call,
+  describeFailure,
+  failureOf,
+  NETWORK_ERROR_MESSAGE,
+  NOT_AN_ENVELOPE_MESSAGE,
+} from './errors';
 
 const outcome = (response: Response, body?: unknown) =>
   Promise.resolve(
@@ -20,6 +26,37 @@ describe('call', () => {
 
   it('folds a bodyless success to null', async () => {
     await expect(call(outcome(new Response(null, { status: 204 })))).resolves.toEqual({
+      ok: true,
+      data: null,
+    });
+  });
+
+  it('fails a success answer that is not the envelope: not the API answering', async () => {
+    // A proxy, a captive portal or a deploy in progress can answer 2xx with
+    // something else; its body must never reach a screen as data.
+    const notAnEnvelope = { ok: false, failure: { status: 502, message: NOT_AN_ENVELOPE_MESSAGE } };
+    for (const body of [
+      {},
+      [],
+      'ok',
+      42,
+      { data: { id: 1 } },
+      { message: 'ok' },
+      { data: null, message: 1 },
+    ]) {
+      await expect(call(outcome(json(200, body), body)), JSON.stringify(body)).resolves.toEqual(
+        notAnEnvelope,
+      );
+    }
+    // 200 with an empty body: openapi-fetch reads no data.
+    await expect(
+      call(outcome(new Response('', { status: 200, headers: { 'Content-Length': '0' } }))),
+    ).resolves.toEqual(notAnEnvelope);
+    await expect(call(outcome(json(201, null), null))).resolves.toEqual(notAnEnvelope);
+  });
+
+  it('accepts an envelope whose data is null', async () => {
+    await expect(call(outcome(ok(null), { data: null, message: 'Done' }))).resolves.toEqual({
       ok: true,
       data: null,
     });
