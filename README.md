@@ -56,7 +56,7 @@ Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `m
 | `pnpm test:integration`                             | API against PostgreSQL (`pnpm db:up` first)                                                        |
 | `pnpm test:e2e`                                     | Browser tests on the built stack (`pnpm build` first)                                              |
 | `pnpm security`                                     | Dependency audit (high and critical fail), dependency policy and secret scan                       |
-| `pnpm deps:check`                                   | Dependency policy: registry sources with integrity, licenses (`scripts/dependency-policy.json`)    |
+| `pnpm deps:check`                                   | Dependency policy: registry sources, licenses, install settings, release-delay exemptions          |
 | `pnpm sast` / `pnpm lint:workflows`                 | Semgrep / actionlint + zizmor, the pinned images CI runs (need Docker)                             |
 | `pnpm sbom:generate`                                | CycloneDX SBOM of the production dependencies in `dist/sbom/`                                      |
 | `pnpm perf:check`                                   | Web bundle size against its budget (after `pnpm build`)                                            |

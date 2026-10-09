@@ -321,9 +321,21 @@ pinned by a dependency, add a scoped override in `pnpm-workspace.yaml` naming th
 there now, for packages pinned by the Prisma CLI); if neither is possible, document an exception
 with the advisory, why it is not exploitable here, and a review date, in the pull request and here.
 
-**Urgent fix younger than the release delay:** add only that package to
-`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with the advisory in a comment, and remove the
-entry in the next update.
+**Urgent fix younger than the release delay:** exempt only the fixed version, in
+`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with the date the exemption expires and the
+advisory:
+
+```yaml
+minimumReleaseAgeExclude:
+  - 'vite@8.3.3' # expires 2026-10-16: GHSA-xxxx-xxxx-xxxx
+```
+
+`pnpm deps:check` enforces the form: an exact version (`name@1.2.3`, or `name@1.2.3 || 1.2.4`),
+never a bare name, a range or a wildcard, which would let every future release skip the delay too;
+an expiry date at most one delay (seven days) ahead, since the version is old enough by then; and a
+plain block list, since an entry written inline carries no date. It fails once the date has passed,
+and on any exemption pnpm applies that the list does not hold (a global pnpm configuration, a
+`PNPM_CONFIG_*` variable). Remove the entry when it expires, or earlier with the next update.
 
 The other supply-chain controls: [Dependency policy](#dependency-policy) and
 [Dependency maintenance](#dependency-maintenance).
@@ -338,12 +350,17 @@ of `pnpm security`, so of `pnpm verify` and CI), with the policy in
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Frozen lockfile             | Installing anything the reviewed `pnpm-lock.yaml` does not list, with its sha512 integrity                                            | `.github/actions/setup` (`--frozen-lockfile`)                                |
 | Registry sources only       | A dependency from a git repository, a tarball URL or a folder (no registry integrity, no release delay)                               | `blockExoticSubdeps` (transitive), `deps:check` (direct)                     |
-| Release delay (seven days)  | A hijacked release, usually detected and unpublished within days                                                                      | `minimumReleaseAge`, Dependabot `cooldown`                                   |
+| Release delay (seven days)  | A hijacked release, usually detected and unpublished within days; exemptions are exact versions that expire                           | `minimumReleaseAge`, Dependabot `cooldown`, `deps:check` (exemptions)        |
 | Trust downgrade refused     | A new version published with weaker evidence than earlier ones (provenance lost: a stolen token)                                      | `trustPolicy: no-downgrade`                                                  |
 | Install scripts allowlisted | Code running at install time without a reviewed decision                                                                              | `allowBuilds`                                                                |
 | License policy              | A license the product cannot ship: production dependencies need a permissive license, tools may also use weak copyleft; unknown fails | `deps:check`, `scripts/dependency-policy.json`                               |
 | Known vulnerabilities       | High and critical advisories                                                                                                          | `pnpm audit`, Trivy on the images                                            |
 | Weakened settings           | Lowering the delay, dropping the trust policy or the block on exotic sources; removing the Dependabot cooldown                        | `deps:check` (floors in `scripts/dependency-policy.json`); zizmor (cooldown) |
+
+**License expressions** are read as SPDX defines them: `WITH` binds tighter than `AND`, `AND`
+tighter than `OR`, parentheses group. One passes when some way to comply with it (every license of
+an `AND`, one branch of an `OR`) uses allowed licenses only: `(MIT OR GPL-2.0) AND GPL-3.0` fails.
+An expression that does not parse fails, like an unknown license.
 
 **Adding a dependency** ([how-to](how-to.md#add-a-dependency)): maintained (recent releases, more
 than one maintainer for anything security-relevant), an allowed license, no install script unless

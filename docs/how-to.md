@@ -716,8 +716,10 @@ The web app's deployment settings are set on the web container and served as `/a
    it to `allowBuilds` in `pnpm-workspace.yaml` with a placeholder. Set `true` only when the script
    is needed (native binaries), otherwise `false`, with a comment saying why.
 4. **Brand-new versions:** a version published less than seven days ago is refused
-   (`ERR_PNPM_NO_MATURE_MATCHING_VERSION`). Wait, or, for an urgent security fix only, add the
-   package to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml` and remove it afterwards.
+   (`ERR_PNPM_NO_MATURE_MATCHING_VERSION`). Wait, or, for an urgent security fix only, exempt
+   that exact version in `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with its expiry date
+   and the advisory (`- 'name@1.2.3' # expires YYYY-MM-DD: GHSA-...`, at most seven days ahead;
+   [security.md](security.md#dependency-vulnerabilities)). `pnpm deps:check` fails once it expires.
    A package whose own dependencies come from a git repository or a tarball URL is refused too
    (`blockExoticSubdeps`), and so is a recent version published with weaker evidence than its
    predecessors (`High-risk trust downgrade`, `trustPolicy`): pick another version, and report it
