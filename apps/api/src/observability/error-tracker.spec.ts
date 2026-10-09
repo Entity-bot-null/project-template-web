@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   disabledErrorTracker,
   errorTracker,
@@ -7,6 +7,14 @@ import {
 } from './error-tracker.js';
 
 const settings = { APP_ENVIRONMENT: 'test', APP_RELEASE: 'r1', SENTRY_SAMPLE_RATE: 1 };
+
+// startErrorTracking loads the Sentry SDK on first use, and only with a DSN.
+// Its module graph takes seconds to load on a cold, busy machine (15 s was
+// seen with other suites running), so it is loaded here, outside the tests'
+// own time limit, which stays for what they check.
+beforeAll(async () => {
+  await import('./sentry.js');
+}, 60_000);
 
 afterEach(async () => {
   await errorTracker().close(100);
