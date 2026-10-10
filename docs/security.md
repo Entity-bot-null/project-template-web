@@ -258,6 +258,10 @@ a disable comment that says so.
   an investigation needs): personal data in some jurisdictions, so log retention and access follow
   the project's data policy.
 - Never in the bundle: `VITE_*` variables are public (apps/web/.env.example).
+- Never in Terraform's files or outputs: the DigitalOcean token comes from `DIGITALOCEAN_TOKEN`
+  only, the generated database passwords are sensitive outputs, and the state that holds them stays
+  out of git (`*.tfstate*` in `.gitignore`), on the operator's disk or in a private Spaces bucket
+  ([deploy-vps.md](deploy-vps.md#state)).
 - In production: the platform's secret store or the GitHub environment secrets, one value per
   environment (docs/environment.md#secrets). Rotation: [Secret rotation](#secret-rotation).
 - A leaked secret is rotated first, then removed from history if needed; removal alone is not enough.
@@ -411,8 +415,9 @@ the pull request that stops using it.
 **Dependabot** opens the update pull requests (`.github/dependabot.yml`): weekly, grouped
 (production minor/patch, development minor/patch, actions, tool images), each with the full CI.
 It covers npm, GitHub Actions (SHA pins and their version comments), the Dockerfiles' base images,
-Docker Compose and the tool images (`.github/tool-images/Dockerfile`, tag and digest). Version
-updates wait the same seven days as pnpm; **security updates** (Dependabot alerts) are not delayed.
+Docker Compose, the tool images (`.github/tool-images/Dockerfile`, tag and digest) and the Terraform
+providers (`infra/terraform`, version and lock-file checksums together). Version updates wait the
+same seven days as pnpm; **security updates** (Dependabot alerts) are not delayed.
 Majors arrive one per pull request, with their release notes to read. A person still approves every
 update: once approved and green, a patch or minor update merges itself
 ([ci-cd.md](ci-cd.md#dependency-updates)); majors and workflow updates are merged by hand.

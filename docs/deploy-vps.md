@@ -11,6 +11,10 @@ The step-by-step setup, with what to check after each step, is in
 [step-by-step.md](step-by-step.md#phase-7-production-servers) (Spanish:
 [step-by-step.es.md](step-by-step.es.md)). This page describes the pieces and the operations.
 
+On DigitalOcean, Terraform can set up sections 2 to 5 instead (the server, its firewalls, Docker,
+the deploy user, the database and its roles), and the same server results:
+[Provision with Terraform (DigitalOcean)](#provision-with-terraform-digitalocean).
+
 - [How it works](#how-it-works)
 - [The files](#the-files)
 - [1. What you need](#1-what-you-need)
@@ -22,6 +26,7 @@ The step-by-step setup, with what to check after each step, is in
 - [7. GitHub settings](#7-github-settings)
 - [8. The first deployment](#8-the-first-deployment)
 - [9. Create the first administrator](#9-create-the-first-administrator)
+- [Provision with Terraform (DigitalOcean)](#provision-with-terraform-digitalocean)
 - [Operations](#operations)
 
 ## How it works
@@ -100,8 +105,11 @@ the address from Caddy, and only from Caddy's network.
 ## 2. Create the server
 
 In the provider's console: Ubuntu 24.04 LTS, your SSH public key for the first login, a firewall
-(if the provider has one) allowing TCP 22, 80, 443 and UDP 443. Then the DNS: an `A` record
-(and `AAAA` for IPv6) from the domain to the server's address. Check from your machine:
+(if the provider has one) allowing TCP 22, 80, 443 and UDP 443. Then the DNS: an `A` record from
+the domain to the server's IPv4 address, and no `AAAA` record. The deployment serves IPv4 only:
+its Docker network (`compose.yaml`) has no IPv6, so Docker would hand every IPv6 visitor to Caddy
+from one internal address, and the API's per-IP rate limits would count them all as one client.
+Check from your machine:
 
 ```
 nslookup app.example.com          # the server's address
@@ -176,15 +184,20 @@ the workflow from talking to an impostor.
 ## 5. The database
 
 Create the PostgreSQL instance in the provider's console (same region as the server, automated
-backups and point-in-time recovery on, deletion protection on, access limited to the server's
-address or a private network). Then, connected as the provider's administrator (`psql` with the
-connection string the console gives):
+backups and point-in-time recovery on, deletion protection on where the provider has it, access
+limited to the server's address or a private network). Then, connected as the provider's
+administrator (`psql` with the connection string the console gives):
 
 ```sql
 CREATE ROLE app_migrator LOGIN PASSWORD '<password 1>';
+GRANT app_migrator TO CURRENT_USER;
 CREATE DATABASE app OWNER app_migrator;
 CREATE ROLE app_runtime LOGIN PASSWORD '<password 2>' CONNECTION LIMIT 50;
 ```
+
+The `GRANT` is needed from PostgreSQL 16: an administrator that is not a superuser (a managed
+service's never is) may give a database only to a role it is a member of. Without it,
+`CREATE DATABASE` fails with `must be able to SET ROLE "app_migrator"`.
 
 Then connected **as `app_migrator`** to the database `app`, the runtime role's rights
 ([disaster-recovery.md](disaster-recovery.md#backup-strategy)):
@@ -226,6 +239,13 @@ nano web.env         # APP_ENVIRONMENT
 
 `JWT_ACCESS_SECRET`: `openssl rand -hex 32`, a different one per environment. Every other API
 variable is in [environment.md](environment.md); none is needed to start.
+
+The API's database driver (node-postgres) reads `sslmode=require` as `verify-full`: it refuses a
+certificate signed by the provider's own CA (DigitalOcean, Amazon RDS), and the rollout stops with
+a certificate error in the API's log (`self-signed certificate in certificate chain`). With such a
+provider, end both URLs with `?sslmode=require&uselibpqcompat=true`: TLS as libpq means `require`,
+encrypted without checking the certificate, on a network where the database admits only this
+server. The Terraform outputs are written that way.
 
 ## 7. GitHub settings
 
@@ -291,6 +311,200 @@ unset PASSWORD
 
 It prints `Created the admin account owner@your-company.com (<id>).` and refuses an email that
 already has an account. Sign in at `PUBLIC_URL` with it.
+
+## Provision with Terraform (DigitalOcean)
+
+`infra/terraform/digitalocean/` builds on DigitalOcean what sections 2 to 5 build by hand: the
+same server, firewall, users, Docker and database roles. Choose one path per environment. Sections
+6 to 9 (the files and their secrets, GitHub, the first deployment, the first administrator) are the
+same for both.
+
+### What it creates
+
+| What                                                                                                                                                     | File                                                 | Instead of                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------- |
+| A Droplet: Ubuntu 24.04 LTS, `s-2vcpu-4gb`, the metrics agent, weekly backups, IPv4 only; the deploy key in the account, so no root password is emailed  | `main.tf`                                            | section 2                                                       |
+| A reserved IP (the address survives a new server), and the `A` record to it with `manage_dns`                                                            | `main.tf`                                            | section 2                                                       |
+| A cloud firewall: SSH from `admin_cidrs` only; TCP 80 and 443, UDP 443 from anywhere                                                                     | `main.tf`                                            | section 2                                                       |
+| Docker Engine from Docker's repository, its signing key checked by fingerprint; the `ufw` rules; automatic security updates                              | `cloud-init.yaml.tftpl`                              | section 3                                                       |
+| The `deploy` user (Docker, the Deploy workflow's key) and `/srv/app`; an administrator, `ops` (sudo, your key); SSH with keys only, root refused         | `cloud-init.yaml.tftpl`                              | section 4                                                       |
+| A private network (VPC) for the server and its database                                                                                                  | `main.tf`                                            | section 5 (private network)                                     |
+| Managed PostgreSQL 18 in that network: daily backups, 7 days of point-in-time recovery, the server as its only trusted source; never destroyed by a plan | `database.tf`                                        | section 5                                                       |
+| `app_migrator`, the database `app` it owns, and `app_runtime` (50 connections), with generated passwords                                                 | `database/roles.sql`, applied by `pnpm iac:database` | section 5 (SQL)                                                 |
+| Email alerts: CPU, memory and disk of the server and of the database; the site down from every region; its certificate expiring within 14 days           | `monitoring.tf`                                      | [observability.md](observability.md#uptime-monitoring), by hand |
+| A DigitalOcean project that groups them, and tags                                                                                                        | `main.tf`                                            |                                                                 |
+
+Where it goes further than the manual steps, on purpose:
+
+- **SSH**: no root login, no password login, and only `ops` and `deploy` may log in. People work as
+  `ops` (with `sudo`), never as root.
+- **Passwords**: the roles' passwords reach PostgreSQL as SCRAM verifiers computed on your machine,
+  never in clear.
+- **Uptime**: the check probes `https://<domain>/healthz`, the web server's public health check.
+  The API's readiness (`/api/health/ready`) answers 404 from outside on purpose (the deploy smoke
+  test checks that it does), and DigitalOcean counts any answer outside 2xx as down, so readiness
+  cannot be probed from outside: the database alerts and DigitalOcean's own notices about the
+  cluster (sent to the team's contact email) cover the database.
+
+**IPv6 is off, by choice** (section 2 says why): the Droplet has no IPv6 address, the cloud
+firewall opens IPv4 only, and Terraform creates no `AAAA` record. Served over IPv6 today, every IPv6
+visitor would reach the API as the edge network's gateway and share one rate-limit bucket (audit
+finding U1). Turning it on takes the edge network of `compose.yaml` carrying IPv6 and `realip.conf`
+trusting its IPv6 range first; then `ipv6 = true` on the Droplet, IPv6 sources in the firewall and
+an `AAAA` record.
+
+Backups are DigitalOcean's: daily, with 7 days of point-in-time recovery, the low end of
+[disaster-recovery.md](disaster-recovery.md#backup-strategy). They go with the cluster when it is
+deleted, so a copy outside it (another account or region) is the project's to add.
+
+### What it costs
+
+The monthly drivers, at DigitalOcean's prices of October 2026 (its pricing pages have today's):
+
+| Item                                              | Default                    | Per month                                                                                          |
+| ------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
+| Droplet                                           | `s-2vcpu-4gb`              | $24                                                                                                |
+| Droplet backups                                   | weekly (`droplet_backups`) | 20 % of the Droplet ($4.80); daily, 30 %                                                           |
+| PostgreSQL                                        | `db-s-1vcpu-1gb`, one node | about $15; standby nodes (`database_node_count`) need `db-s-1vcpu-2gb` or larger, about $30 a node |
+| Uptime check                                      | one                        | an account's first check is free, then $1 each                                                     |
+| Remote state in Spaces (optional)                 |                            | the Spaces subscription                                                                            |
+| Reserved IP, VPC, firewalls, DNS, alerts, project |                            | nothing (a reserved IP is billed only while no Droplet holds it)                                   |
+
+Outbound traffic beyond the Droplet's included allowance is billed too.
+
+### Before you start
+
+- Terraform 1.16 on your machine (`terraform version`).
+- A DigitalOcean team, and an API token that can write (API → Tokens). It lives in your shell's
+  environment only, never in a file or a variable: `read -rs DIGITALOCEAN_TOKEN` (paste it, then
+  Enter), then `export DIGITALOCEAN_TOKEN`.
+- Your SSH public key, and the deploy key pair of section 4, generated the same way
+  (`ssh-keygen -t ed25519 -N "" -C "github-deploy-production" -f deploy_production`): a new one
+  per environment. Terraform registers its public half in the DigitalOcean account (a Droplet
+  created without an account key gets a root password by email), and an account refuses a key it
+  holds already.
+- With `manage_dns = true`: the domain's zone in DigitalOcean (Networking → Domains), the
+  registrar pointing at DigitalOcean's name servers.
+- For the alerts: email addresses of verified members of the team (DigitalOcean refuses others).
+
+### Create an environment
+
+In `infra/terraform/digitalocean`, once per environment (`production` here; `staging` the other
+time):
+
+```
+cd infra/terraform/digitalocean
+cp terraform.tfvars.example production.tfvars    # fill it in; variables.tf explains every value
+read -rs DIGITALOCEAN_TOKEN && export DIGITALOCEAN_TOKEN
+terraform init
+terraform workspace new production                # later: terraform workspace select production
+terraform plan -var-file=production.tfvars -out=production.tfplan
+terraform apply production.tfplan
+rm production.tfplan
+```
+
+Read the plan before applying it: the first one only adds, about twenty resources. The apply takes
+about ten minutes, most of them the database. Each environment has its own workspace, and so its
+own state: applying production's values in the staging workspace is refused.
+
+If the first apply stops with `Provider produced inconsistent result after apply` on
+`digitalocean_reserved_ip.app`, the address exists but the state does not know it (a race between
+DigitalOcean's API and provider versions before 2.104.0). Bring it in, then apply again:
+`terraform import -var-file=production.tfvars digitalocean_reserved_ip.app <address>`, with the
+address from the control panel (Networking → Reserved IPs).
+
+`admin_cidrs` must include where the Deploy workflow connects from. GitHub-hosted runners have no
+fixed addresses, so with them it is `["0.0.0.0/0"]`, as in the manual setup (SSH with keys only,
+no root, no passwords); narrow it when every SSH client, the runner included, has a fixed address
+(a self-hosted runner, a VPN).
+
+Then, in order:
+
+1. **Wait for cloud-init**, and check the server's host key. The first connection asks whether to
+   trust it: compare its fingerprint with the one the server shows in the control panel's Droplet
+   Console (log in as `ops`, run `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`). The console
+   connects over SSH from DigitalOcean's network, so it needs `admin_cidrs` open, as by default.
+
+   ```
+   ssh "$(terraform output -raw ssh_admin)" cloud-init status --wait
+   ```
+
+   It ends with `status: done` once sections 3 and 4 are complete and the Docker daemon answers;
+   the server then reboots once if an update needs it. `status: error`: read
+   `/var/log/cloud-init-output.log` on the server.
+
+2. **DNS**, without `manage_dns`: create the record that `terraform output dns_record` shows, at
+   your DNS provider, and check it with `nslookup` (section 2).
+
+3. **The database roles**, from the repository root, the workspace still selected:
+
+   ```
+   cd ../../..
+   pnpm iac:database
+   ```
+
+   It runs `database/roles.sql` from the server, the only machine the database accepts, and ends
+   with `Done: the database app (owner app_migrator) and the role app_runtime.` Running it again is
+   safe.
+
+4. **Sections 6 to 9** as written. From section 4, only the checks remain (the deploy key is on the
+   server already): `ssh -i deploy_production deploy@app.example.com 'docker ps'` and
+   `known_hosts_production`. The values Terraform gives:
+
+   | Where                                     | Value                                           |
+   | ----------------------------------------- | ----------------------------------------------- |
+   | `api.env`: `DATABASE_URL` (section 6)     | `terraform output -raw database_runtime_url`    |
+   | `migrate.env`: `DATABASE_URL` (section 6) | `terraform output -raw database_migrator_url`   |
+   | `DEPLOY_HOST`, `PUBLIC_URL` (section 7)   | `terraform output github_environment_variables` |
+
+What stays manual on both paths: the GitHub settings (section 7), the DNS record unless
+`manage_dns`, the files and secrets on the server (section 6), the first deployment (section 8)
+and the first administrator (section 9).
+
+### State
+
+Terraform's state is local by default, in `terraform.tfstate.d/<workspace>/` in that directory,
+and never committed (`.gitignore`). It holds every password of the environment, the cluster
+administrator's and both roles': keep the disk encrypted and the file out of shared folders. For a
+team, or to apply from more than one machine, keep it in DigitalOcean Spaces:
+`backend.hcl.example` says how (a private bucket with versioning, the Spaces key in
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, then
+`terraform init -backend-config=backend.hcl -migrate-state`; locking included).
+
+### Later changes
+
+- `terraform plan` shows what a change does before `terraform apply`. A larger `droplet_size`
+  resizes the server (it is off for a few minutes); `database_size` and `database_node_count`
+  resize the cluster.
+- cloud-init runs at the first boot only, and Terraform ignores later changes to the user data and
+  to the Droplet's account key: either would mean a new server, which would lose the files of
+  `/srv/app`. Rotate a key on the server itself (`~/.ssh/authorized_keys` of `ops` or `deploy`;
+  for `deploy`, then `DEPLOY_SSH_KEY` in GitHub).
+- To rebuild the server on purpose: copy `/srv/app/*.env` off it (the release pointers included),
+  run `terraform apply -replace=digitalocean_droplet.app -var-file=production.tfvars`, put the
+  files back (section 6), replace `DEPLOY_KNOWN_HOSTS` (a new server has new host keys), then
+  deploy. The address stays the same.
+- To rotate a database password, for example the runtime role's:
+  `terraform apply -replace=random_password.runtime -var-file=production.tfvars`, then
+  `pnpm iac:database`, then the new `terraform output -raw database_runtime_url` in `api.env` and
+  `docker compose --env-file server.env --env-file release.env up -d --wait api`. The API's open
+  connections keep working, new ones need the new password: do the last two steps right away.
+- Terraform's and the providers' versions are pinned; `versions.tf` says how to update them.
+
+### Teardown
+
+`terraform destroy -var-file=production.tfvars` stops before it changes anything: the database
+cluster has `prevent_destroy`, because deleting a DigitalOcean cluster deletes its backups with it.
+DigitalOcean's API and its Terraform provider have no deletion protection for clusters, so this
+guard covers Terraform only: limit who can delete resources in the team. To remove an environment
+for good:
+
+1. If the data matters, keep a copy first: a `pg_dump` taken from the server
+   ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine)).
+2. In your working copy only, set `prevent_destroy = false` in `database.tf`.
+3. `terraform destroy -var-file=production.tfvars`, then restore `database.tf`
+   (`git checkout database.tf`) and delete the workspace
+   (`terraform workspace select default && terraform workspace delete production`).
 
 ## Operations
 

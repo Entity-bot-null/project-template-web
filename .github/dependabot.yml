@@ -76,3 +76,15 @@ updates:
       default-days: 7
     commit-message:
       prefix: build
+
+  # The Terraform providers of infra/terraform/digitalocean: the exact version
+  # in versions.tf and the checksums of .terraform.lock.hcl, for the platforms
+  # the lock file already lists, updated together.
+  - package-ecosystem: terraform
+    directory: /infra/terraform/digitalocean
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build

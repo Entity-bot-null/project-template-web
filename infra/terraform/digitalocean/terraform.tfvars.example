@@ -1,0 +1,47 @@
+# One environment's settings (docs/deploy-vps.md#provision-with-terraform-digitalocean).
+# Copy to <environment>.tfvars (staging.tfvars, production.tfvars): *.tfvars
+# files are never committed. Nothing here is secret; the API token comes from
+# DIGITALOCEAN_TOKEN. Every variable, its default and its checks: variables.tf.
+
+project_name = "acme-portal"
+environment  = "production"
+region       = "nyc3"
+
+# The public host name, and whether Terraform creates its A record (the zone
+# must already be in DigitalOcean's DNS). Otherwise create the record at your
+# DNS provider: terraform output dns_record.
+domain     = "app.example.com"
+manage_dns = false
+# dns_zone = "example.com"
+
+# Your personal key (the server's administrator, sudo), and the public half of
+# the Deploy workflow's key for this environment
+# (ssh-keygen -t ed25519 -N "" -C github-deploy-production -f deploy_production).
+admin_username        = "ops"
+admin_ssh_public_key  = "ssh-ed25519 <your public key> you@laptop"
+deploy_ssh_public_key = "ssh-ed25519 <deploy_production.pub> github-deploy-production"
+
+# Who may reach SSH. The Deploy workflow connects from GitHub-hosted runners,
+# whose addresses are not fixed: keep 0.0.0.0/0 (key-only SSH, no root, no
+# passwords, as the manual setup) unless every SSH client, the runner
+# included, has a fixed address.
+admin_cidrs = ["0.0.0.0/0"]
+
+# Verified email addresses of members of your DigitalOcean team.
+alert_emails = ["oncall@example.com"]
+
+# The defaults, written out to show what they are.
+# droplet_size        = "s-2vcpu-4gb"
+# droplet_backups     = "weekly"
+# postgres_version    = "18"
+# database_size       = "db-s-1vcpu-1gb"
+# database_node_count = 1
+# database_maintenance_window = {
+#   day  = "sunday"
+#   hour = "03:00"
+# }
+# alert_thresholds = {
+#   cpu_percent    = 80
+#   memory_percent = 85
+#   disk_percent   = 85
+# }

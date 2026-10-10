@@ -448,6 +448,70 @@ merged change can be tried on a real server.
 Do this phase twice: once for **staging**, once for **production**. The commands use
 `app.acme.com`; use the domain of the environment you are setting up.
 
+Steps 7.1 to 7.5 build the server and the database by hand, with any provider. On DigitalOcean,
+Terraform can build the same ones instead: do 7.0, skip 7.1 to 7.5, and go on at 7.6.
+
+### 7.0 On DigitalOcean, 7.1 to 7.5 with Terraform (optional)
+
+What Terraform creates, what it costs and why:
+[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). You need Terraform 1.16
+([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
+`terraform version` prints `Terraform v1.16.` and the patch number) and a DigitalOcean API token
+that can write (**API → Tokens**).
+
+On your computer, the deploy key of this environment (as in 7.4), then the settings file:
+
+```
+ssh-keygen -t ed25519 -N "" -C "github-deploy-production" -f deploy_production
+cd infra/terraform/digitalocean
+cp terraform.tfvars.example production.tfvars
+```
+
+Edit `production.tfvars`: `project_name`, `environment`, `domain`, your SSH public key
+(`admin_ssh_public_key`, the content of your `~/.ssh/id_ed25519.pub`), the content of
+`deploy_production.pub` (`deploy_ssh_public_key`) and `alert_emails` (verified members of your
+DigitalOcean team). Keep `admin_cidrs = ["0.0.0.0/0"]`: GitHub's runners connect over SSH from
+addresses that change. Then (paste the token when `read` waits, then Enter):
+
+```
+read -rs DIGITALOCEAN_TOKEN && export DIGITALOCEAN_TOKEN
+terraform init
+terraform workspace new production
+terraform plan -var-file=production.tfvars -out=production.tfplan
+terraform apply production.tfplan
+rm production.tfplan
+ssh "$(terraform output -raw ssh_admin)" cloud-init status --wait
+```
+
+The first SSH connection asks whether to trust the server's key: compare its fingerprint with the
+one the server shows in DigitalOcean's **Droplet Console** (log in as `ops`, run
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`). Then point the domain at the server, unless
+`manage_dns = true` did it: the record `terraform output dns_record` shows, at your DNS provider.
+Last, the database roles and the server's key for GitHub:
+
+```
+cd ../../..
+pnpm iac:database
+ssh-keyscan -t ed25519 app.acme.com > known_hosts_production
+```
+
+**Check:** `cloud-init status --wait` ends with `status: done`; `pnpm iac:database` ends with
+`Done: the database app (owner app_migrator) and the role app_runtime.`;
+`ssh -i deploy_production deploy@app.acme.com 'docker ps'` prints an empty table (headers only);
+`ssh-keygen -lf known_hosts_production` shows the fingerprint you compared.
+
+**If it fails:**
+
+| Message                                              | Cause and fix                                                                                                                                                                                                          |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`, `Unable to authenticate you`                  | `DIGITALOCEAN_TOKEN` is not exported in this terminal, or the token cannot write                                                                                                                                       |
+| `Invalid value for variable`                         | the value it names in `production.tfvars`; `variables.tf` says what each one accepts                                                                                                                                   |
+| `SSH Key is already in use on your account`          | this deploy key is in DigitalOcean already (another environment, an earlier attempt): one deploy key per environment, or remove the old one there (**Settings → Security**)                                            |
+| `Provider produced inconsistent result after apply`  | the new reserved IP showed late in DigitalOcean's API: `terraform import -var-file=production.tfvars digitalocean_reserved_ip.app <address>` (the address in **Networking → Reserved IPs**), then plan and apply again |
+| `The workspace (...) is not the environment (...)`   | `terraform workspace select production`                                                                                                                                                                                |
+| `status: error`                                      | `/var/log/cloud-init-output.log` on the server says which command failed                                                                                                                                               |
+| `pnpm iac:database`: `Permission denied (publickey)` | your SSH key is not the one in `admin_ssh_public_key`                                                                                                                                                                  |
+
 ### 7.1 Create the server
 
 In your provider's console: a server with **Ubuntu 24.04 LTS**, 2 vCPU and 4 GB RAM or more, a
@@ -458,8 +522,8 @@ allow TCP 22, 80 and 443, and UDP 443.
 
 ### 7.2 Point the domain at it
 
-At your DNS provider: an **A** record `app.acme.com` → the server's IPv4 (and an **AAAA** record for
-its IPv6, if it has one).
+At your DNS provider: an **A** record `app.acme.com` → the server's IPv4. No **AAAA** record: the
+deployment serves IPv4 only ([deploy-vps.md](deploy-vps.md#2-create-the-server) says why).
 
 **Check**, after a few minutes: `nslookup app.acme.com` answers the server's address.
 
@@ -527,6 +591,7 @@ connected as the provider's administrator (`psql "<admin connection string>"`):
 
 ```sql
 CREATE ROLE app_migrator LOGIN PASSWORD '<migrator password>';
+GRANT app_migrator TO CURRENT_USER;
 CREATE DATABASE app OWNER app_migrator;
 CREATE ROLE app_runtime LOGIN PASSWORD '<runtime password>' CONNECTION LIMIT 50;
 ```
@@ -541,9 +606,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runti
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
 ```
 
-**Check:** each statement answers `CREATE ROLE`, `CREATE DATABASE`, `GRANT` or
-`ALTER DEFAULT PRIVILEGES`, without errors. The migrator will own and change the schema; the API
-connects as `app_runtime`, which reads and writes data only.
+**Check:** each statement answers `CREATE ROLE`, `GRANT ROLE`, `CREATE DATABASE`, `GRANT` or
+`ALTER DEFAULT PRIVILEGES`, without errors. Without `GRANT app_migrator TO CURRENT_USER`,
+PostgreSQL 16 and later refuse `CREATE DATABASE` (`must be able to SET ROLE "app_migrator"`): the
+providers' administrators are not superusers. The migrator will own and change the schema; the
+API connects as `app_runtime`, which reads and writes data only.
 
 ### 7.6 Put the deployment files on the server
 
@@ -579,6 +646,16 @@ Edit each file (`nano <file>`, save with `Ctrl+O`, exit with `Ctrl+X`):
 | `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<migrator password>@<db host>:5432/app?sslmode=require`                                                                                                                                |
 | `web.env`     | `APP_ENVIRONMENT=production` (or `staging`)                                                                                                                                                                                    |
 
+With Terraform (7.0), the two `DATABASE_URL` values are complete already: in
+`infra/terraform/digitalocean` on your computer, `terraform output -raw database_runtime_url`
+(`api.env`) and `terraform output -raw database_migrator_url` (`migrate.env`).
+
+On DigitalOcean or Amazon RDS, whose certificates come from the provider's own CA, end both URLs
+with `?sslmode=require&uselibpqcompat=true` instead (the Terraform outputs already do): the API
+would otherwise refuse the certificate (a certificate error such as
+`self-signed certificate in certificate chain`,
+[deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)).
+
 **Check:** `ls -l /srv/app` shows `api.env` and `migrate.env` as `-rw-------` (only `deploy` can
 read them), and `grep -c '<' *.env` prints `0` for each file (no placeholder left).
 
@@ -609,7 +686,7 @@ your computer.
 `PUBLIC_URL` and the secrets `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`; **Settings → Secrets and
 variables → Actions → Variables** lists `DEPLOY_TARGET` and `IMAGE_PREFIX`.
 
-Now repeat 7.1–7.7 for the other environment.
+Now repeat the phase for the other environment: 7.0 or 7.1–7.5, then 7.6 and 7.7.
 
 ---
 

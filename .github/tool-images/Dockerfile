@@ -22,6 +22,17 @@ FROM semgrep/semgrep:1.179.0@sha256:93963d9295a366f59e4850127b1550400ee7b388f04f
 # Secrets in the git history.
 FROM ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f AS gitleaks
 
+# Infrastructure as code (scripts/check-iac.mjs, which also runs the trivy and
+# postgres images below): Terraform itself (keep required_version in
+# infra/terraform/digitalocean on its minor version), TFLint with its bundled
+# Terraform rules, and the Ubuntu release the server runs, for cloud-init's
+# schema check of its user data. Terraform from HashiCorp's ECR Public
+# repository and Ubuntu from ECR Public's mirror of Docker's official images:
+# the same digests as on Docker Hub, without its anonymous pull limit.
+FROM public.ecr.aws/hashicorp/terraform:1.16.5@sha256:c7926feace05d0f7e73542842bf3945924e955a1f782cf000ccbb8d18fa42d77 AS terraform
+FROM ghcr.io/terraform-linters/tflint:v0.64.0@sha256:1c595f42d794c32c45a6ea8b58655fd66433d4ca3b1bc631c574a48d120bd19f AS tflint
+FROM public.ecr.aws/docker/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS ubuntu
+
 # Image vulnerability scanning.
 FROM ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa AS trivy
 
