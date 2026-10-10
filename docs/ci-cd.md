@@ -253,6 +253,14 @@ the reference immutable. Workflows and the local commands read the reference thr
 hand. zizmor's online audits also verify that every pinned action SHA belongs to the action's
 repository (impostor commits).
 
+**Registries.** Docker Hub limits anonymous pulls per address, and CI runners share theirs, so a
+busy day of pull requests fails jobs with `toomanyrequests`. Where an image is published elsewhere
+with the same digest, the pin points there (GHCR, or Docker's mirror of its official images on
+Amazon ECR Public). The images only Docker Hub hosts are pulled in CI through `mirror.gcr.io` by
+their digest (`TOOL_IMAGE_MIRROR` in `quality-gates.yml`, read by `scripts/tool-image.mjs`):
+the digest makes the content identical whatever the source, Docker Hub stays the fallback, and
+Dependabot keeps updating the pins from their source.
+
 ## Deployment
 
 `deploy.yml` is the integration point. Run it from `main` (it refuses any other branch) with the

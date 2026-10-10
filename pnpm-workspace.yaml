@@ -6,67 +6,23 @@ engineStrict: true
 
 # Supply chain: a version must be public for seven days before it can be
 # installed, so a hijacked release is usually caught and pulled before it
-# reaches us. Dependabot waits as long (cooldown). For an urgent security fix,
-# exempt that one package with minimumReleaseAgeExclude and remove the entry
-# afterwards (docs/security.md#dependency-vulnerabilities).
+# reaches us. Dependabot waits as long (cooldown). pnpm re-checks every
+# lockfile entry on each install.
+#
+# For an urgent security fix only, exempt the one fixed version with
+# minimumReleaseAgeExclude: a block list, each entry an exact version with
+# the date its exemption expires (at most seven days ahead: the version is
+# old enough by then) and the advisory. `pnpm deps:check` fails on a bare
+# name, a pattern, an entry without its date or written inline, and once the
+# date has passed (docs/security.md#dependency-vulnerabilities):
+#
+#   minimumReleaseAgeExclude:
+#     - 'vite@8.3.3' # expires 2026-10-16: GHSA-xxxx-xxxx-xxxx
+#
+# minimumReleaseAgeExcludePrune drops an entry once an update moves the
+# lockfile past its version.
 minimumReleaseAge: 10080
-
-# TEMPORARY: the packages locked when this template was last updated
-# (2026-10-03) whose versions were younger than minimumReleaseAge that day.
-# pnpm re-checks every lockfile entry on each install, so they stay listed
-# until they mature (all of them by 2026-10-10). minimumReleaseAgeExcludePrune
-# lets installs prune the list; delete whatever remains after that date
-# (`pnpm deps:check` reminds you while the list is not empty). Otherwise only
-# for an urgent security fix, one package, removed after the next update.
 minimumReleaseAgeExcludePrune: true
-minimumReleaseAgeExclude:
-  - '@asamuzakjp/dom-selector'
-  - '@csstools/css-calc'
-  - '@csstools/css-color-parser'
-  - '@csstools/css-parser-algorithms'
-  - '@csstools/css-syntax-patches-for-csstree'
-  - '@nestjs/common'
-  - '@nestjs/core'
-  - '@nestjs/platform-express'
-  - '@nestjs/testing'
-  - '@rolldown/binding-android-arm-eabi'
-  - '@rolldown/binding-android-arm64'
-  - '@rolldown/binding-darwin-arm64'
-  - '@rolldown/binding-darwin-x64'
-  - '@rolldown/binding-freebsd-x64'
-  - '@rolldown/binding-linux-arm-gnueabihf'
-  - '@rolldown/binding-linux-arm64-gnu'
-  - '@rolldown/binding-linux-arm64-musl'
-  - '@rolldown/binding-linux-ppc64-gnu'
-  - '@rolldown/binding-linux-s390x-gnu'
-  - '@rolldown/binding-linux-x64-gnu'
-  - '@rolldown/binding-linux-x64-musl'
-  - '@rolldown/binding-openharmony-arm64'
-  - '@rolldown/binding-win32-arm64-msvc'
-  - '@rolldown/binding-win32-x64-msvc'
-  - '@types/node'
-  - '@vitest/coverage-v8'
-  - '@vitest/mocker'
-  - '@vitest/spy'
-  - 'baseline-browser-mapping'
-  - 'browserslist'
-  - 'caniuse-lite'
-  - 'chai'
-  - 'electron-to-chromium'
-  - 'globals'
-  - 'ignore'
-  - 'mysql2'
-  - 'pg'
-  - 'pg-cloudflare'
-  - 'pg-connection-string'
-  - 'pg-protocol'
-  - 'rolldown'
-  - 'source-map-js'
-  - 'std-env'
-  - 'supports-hyperlinks'
-  - 'tinyrainbow'
-  - 'vite'
-  - 'vitest'
 
 # Supply chain: a new version published with weaker evidence than its earlier
 # ones (for example without the provenance or trusted publisher they had) is

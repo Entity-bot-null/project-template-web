@@ -173,9 +173,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   // Logout, and sign-in over an existing session: ends the family of the
   // presented token, whatever its state. Presenting a token that was rotated
-  // earlier than the leeway is also reported as theft. Idempotent; an unknown
-  // token is a no-op.
-  async retire(token: string): Promise<void> {
+  // earlier than the leeway is also reported as theft, naming where it was
+  // caught. Idempotent; an unknown token is a no-op.
+  async retire(token: string, during: 'sign-in' | 'logout'): Promise<void> {
     const tokenHash = hashRefreshToken(token);
     const reusedBy = await this.prisma.$transaction(async (tx) => {
       const found = await tx.session.findUnique({ where: { tokenHash }, select: { userId: true } });
@@ -191,7 +191,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         now - current.revokedAt.getTime() > REFRESH_REUSE_LEEWAY_SEC * 1000;
       return reused ? current.userId : null;
     });
-    if (reusedBy !== null) this.logReuse(reusedBy, 'logout');
+    if (reusedBy !== null) this.logReuse(reusedBy, during);
   }
 
   /** Ends every session of a user at once (password change, account lock). */
@@ -221,7 +221,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private logReuse(userId: string, during: 'refresh' | 'logout'): void {
+  private logReuse(userId: string, during: 'refresh' | 'sign-in' | 'logout'): void {
     this.logger.warn(
       `Refresh token reuse for user ${userId} (at ${during}): its session family was revoked`,
     );

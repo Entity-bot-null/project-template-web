@@ -584,12 +584,12 @@ openssl rand -hex 32
 
 Edita cada fichero (`nano <fichero>`, guarda con `Ctrl+O`, sal con `Ctrl+X`):
 
-| Fichero       | Define                                                                                                                                                                                                                   |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server.env`  | `APP_DOMAIN=app.acme.com`                                                                                                                                                                                                |
-| `api.env`     | `DATABASE_URL=postgresql://app_runtime:<contraseña de app_runtime>@<host de la base de datos>:5432/app?sslmode=require`, `JWT_ACCESS_SECRET=<el valor que imprimió openssl>`, `APP_ENVIRONMENT=production` (o `staging`) |
-| `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                                                                |
-| `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                               |
+| Fichero       | Define                                                                                                                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.env`  | `APP_DOMAIN=app.acme.com`                                                                                                                                                                                                                                   |
+| `api.env`     | `DATABASE_URL=postgresql://app_runtime:<contraseña de app_runtime>@<host de la base de datos>:5432/app?sslmode=require`, `JWT_ACCESS_SECRET=<el valor que imprimió openssl>`, `APP_ENVIRONMENT=production` (o `staging`), `APP_ORIGIN=https://app.acme.com` |
+| `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                                                                                                   |
+| `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                                                                  |
 
 **Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
 puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).
@@ -819,7 +819,6 @@ corrige hacia delante con un pull request nuevo ([deploy-vps.md](deploy-vps.md#r
 | Cada semana                              | Lee los resultados del DAST (el workflow **DAST** se ejecuta los lunes).                                                                                                                                                                     |
 | Cada mes                                 | En cada servidor: `docker image prune`, y `docker image rm` de las imágenes de release que no nombran `release.env` ni `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reinícialo si existe `/var/run/reboot-required`. |
 | Cada trimestre                           | Un simulacro de restore de la base de datos; revisa las alertas; comprueba la caducidad de `RELEASE_PLEASE_TOKEN`.                                                                                                                           |
-| El 2026-10-10 o después                  | Borra la lista temporal `minimumReleaseAgeExclude` de `pnpm-workspace.yaml` y ejecuta `pnpm install --frozen-lockfile` ([manual.es.md](manual.es.md#13-calendario-de-mantenimiento)).                                                        |
 | Cuando un secreto puede haberse filtrado | Rótalo de inmediato ([security.md](security.md#secret-rotation)).                                                                                                                                                                            |
 | Después de cada incidente                | Un postmortem breve; actualiza el runbook y las alertas.                                                                                                                                                                                     |
 

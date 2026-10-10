@@ -18,6 +18,10 @@ permissions:
 env:
   # Integration and end-to-end suites derive `<db>_test` and `<db>_e2e` from it.
   DATABASE_URL: postgresql://app:app@localhost:5432/app
+  # Tool images hosted on Docker Hub are pulled through this mirror, by digest
+  # (scripts/tool-image.mjs): Docker Hub limits anonymous pulls per address,
+  # and runners share theirs.
+  TOOL_IMAGE_MIRROR: mirror.gcr.io
 
 jobs:
   # The pinned PostgreSQL and Redis images of .github/tool-images/Dockerfile

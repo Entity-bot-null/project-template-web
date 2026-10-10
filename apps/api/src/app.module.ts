@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { seconds, ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module.js';
 import { FetchMetadataGuard } from './common/guards/fetch-metadata.guard.js';
+import { RateLimitGuard, rateLimitOptions } from './common/guards/rate-limit.guard.js';
 import { env } from './env/env.js';
 import { HealthModule } from './health/health.module.js';
 import { CacheModule } from './infrastructure/cache/cache.module.js';
@@ -25,18 +26,17 @@ import { UsersModule } from './users/users.module.js';
     RedisModule,
     CacheModule,
     CoordinationModule,
-    // Counters in the store RATE_LIMIT_STORE names: memory for one instance,
+    // The global limit and the routes' own (common/guards/rate-limit.guard.ts),
+    // counted in the store RATE_LIMIT_STORE names: memory for one instance,
     // Redis when several share the limits (docs/security.md#rate-limiting).
     ThrottlerModule.forRootAsync({
       imports: [RateLimitModule],
       inject: [RATE_LIMIT_STORE],
-      useFactory: (storage: RateLimitStore) => ({
-        throttlers: [
-          { name: 'default', ttl: seconds(env.RATE_LIMIT_WINDOW_SEC), limit: env.RATE_LIMIT_MAX },
-        ],
-        errorMessage: 'Too many requests, retry later',
-        storage,
-      }),
+      useFactory: (storage: RateLimitStore) =>
+        rateLimitOptions(storage, {
+          limit: env.RATE_LIMIT_MAX,
+          windowSec: env.RATE_LIMIT_WINDOW_SEC,
+        }),
     }),
     PrismaModule,
     AuthModule,
@@ -52,7 +52,7 @@ import { UsersModule } from './users/users.module.js';
     // a victim's rate limit; the limiter then counts everything else,
     // unauthenticated and forbidden requests included.
     { provide: APP_GUARD, useClass: FetchMetadataGuard },
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: RateLimitGuard },
   ],
 })
 export class AppModule {}

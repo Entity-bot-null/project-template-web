@@ -11,7 +11,18 @@ fail() {
   exit 1
 }
 
+newline='
+'
+carriage_return=$(printf '\r')
+
+# One line, and none of the characters that end or escape a JSON string or
+# the single-quoted nginx string around it, or that nginx would read as a
+# variable: checked first, since grep matches line by line, so a second line
+# would ride in on a valid first one.
 matches() {
+  case "$1" in
+    *"$newline"* | *"$carriage_return"* | *\"* | *\'* | *\\* | *\$*) return 1 ;;
+  esac
   printf '%s' "$1" | grep -Eq "$2"
 }
 

@@ -1,4 +1,5 @@
 import type { CookieOptions } from 'express';
+import type { RouteLimit } from '../common/guards/rate-limit.guard.js';
 import { env } from '../env/env.js';
 
 /** Access token lifetime: short, the refresh cookie renews it. */
@@ -17,9 +18,11 @@ export const SESSION_SWEEP_INTERVAL_SEC = 60 * 60;
 /** argon2 has no practical input limit; this bounds the work per request. */
 export const PASSWORD_MAX_LENGTH = 200;
 
-/** Per client IP, on top of the global limit: credential stuffing protection. */
-export const SIGN_IN_RATE_LIMIT = { limit: 10, ttlSec: 60 };
-export const REFRESH_RATE_LIMIT = { limit: 30, ttlSec: 60 };
+// Per client IP: credential stuffing protection. Counted on top of the global
+// limit (RATE_LIMIT_MAX), not instead of it: both apply, and whichever runs
+// out first blocks (@RouteRateLimit, common/guards/rate-limit.guard.ts).
+export const SIGN_IN_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 60 };
+export const REFRESH_RATE_LIMIT: RouteLimit = { limit: 30, ttlSec: 60 };
 
 // In production the refresh cookie carries the __Host- prefix: browsers then
 // accept it only when Secure, without Domain and on Path=/, so a site on a

@@ -125,6 +125,40 @@ describe.skipIf(skipWithoutRedis)('Redis-backed adapters (integration)', () => {
     memoryStore.onApplicationShutdown();
   });
 
+  it('limits like the in-memory store without a block duration too (blockDuration 0)', async () => {
+    // No block period: past the limit a hit is refused (and not counted) until
+    // the oldest counted hit leaves the sliding window.
+    const redisStore = new RedisRateLimitStore(await connectedRedis());
+    const memoryStore = new InMemoryRateLimitStore();
+    const run = async (store: RedisRateLimitStore | InMemoryRateLimitStore) => {
+      const outcomes = [];
+      for (let hit = 0; hit < 5; hit += 1) {
+        const record = await store.increment('parity-no-block', 1_500, 3, 0, 'default');
+        outcomes.push([record.totalHits, record.isBlocked, record.timeToBlockExpire > 0]);
+      }
+      return outcomes;
+    };
+    const [fromRedis, fromMemory] = await Promise.all([run(redisStore), run(memoryStore)]);
+    expect(fromRedis).toEqual(fromMemory);
+    expect(fromMemory).toEqual([
+      [1, false, false],
+      [2, false, false],
+      [3, false, false],
+      [4, true, true],
+      [4, true, true],
+    ]);
+
+    // The window slides: once the counted hits expire, the next one is allowed.
+    await new Promise((resolve) => setTimeout(resolve, 1_600));
+    const [afterRedis, afterMemory] = await Promise.all([
+      redisStore.increment('parity-no-block', 1_500, 3, 0, 'default'),
+      memoryStore.increment('parity-no-block', 1_500, 3, 0, 'default'),
+    ]);
+    expect([afterRedis.totalHits, afterRedis.isBlocked]).toEqual([1, false]);
+    expect([afterMemory.totalHits, afterMemory.isBlocked]).toEqual([1, false]);
+    memoryStore.onApplicationShutdown();
+  });
+
   it('shares rate limits between instances: two APIs, one allowance', async () => {
     const options = redisTestOptions();
     prefixes.push(options.keyPrefix);

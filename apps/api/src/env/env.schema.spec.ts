@@ -127,6 +127,16 @@ describe('EnvSchema', () => {
     ]);
   });
 
+  it('reads APP_ORIGIN as one bare origin, unset by default', () => {
+    expect(EnvSchema.parse(base).APP_ORIGIN).toBeUndefined();
+    expect(EnvSchema.parse({ ...base, APP_ORIGIN: 'https://app.example.com' }).APP_ORIGIN).toBe(
+      'https://app.example.com',
+    );
+    expect(issuePaths({ ...base, APP_ORIGIN: 'https://app.example.com/login' })).toEqual([
+      'APP_ORIGIN',
+    ]);
+  });
+
   it('allows SameSite=None only in production, where cookies are Secure', () => {
     expect(issuePaths({ ...base, AUTH_COOKIE_SAMESITE: 'none' })).toEqual(['AUTH_COOKIE_SAMESITE']);
     expect(issuePaths({ ...production, AUTH_COOKIE_SAMESITE: 'none' })).toEqual([]);

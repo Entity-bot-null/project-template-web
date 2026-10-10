@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getState, resetForTests, setSession } from '../auth/session';
 import { admin, member } from '../test/fixtures';
-import { failure, ok, stubFetch } from '../test/http';
+import { failure, json, ok, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const LIST = 'GET /api/users';
@@ -37,6 +37,19 @@ describe('AdminUsersPage', () => {
         attempt++ === 0
           ? failure(503, 'Database unreachable')
           : ok({ items: [row(member)], total: 1 }),
+    });
+    renderRoute('/admin/users');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The service is unavailable');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('cell', { name: member.email })).toBeInTheDocument();
+  });
+
+  it('offers a retry, never the crash page, when a success answer is not the envelope', async () => {
+    let attempt = 0;
+    stubFetch({
+      // Something between the browser and the API answered 200 for it.
+      [LIST]: () => (attempt++ === 0 ? json(200, {}) : ok({ items: [row(member)], total: 1 })),
     });
     renderRoute('/admin/users');
 

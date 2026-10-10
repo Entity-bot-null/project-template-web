@@ -79,8 +79,9 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   another user than the one who sent it.
 - **One refresh at a time across tabs** (`web/src/auth/session.ts`): tabs share the cookie and
   every refresh rotates it, so they take turns through a Web Lock and none presents a token another
-  has just rotated. Without Web Locks (or when the browser refuses the lock), one retry covers a
-  race between two tabs.
+  has just rotated. A refresh gives up after 10 seconds without an answer, so a stalled one cannot
+  hold the lock for every tab. Without Web Locks (or when the browser refuses the lock), one retry
+  covers a race between two tabs.
 - **Sign-out** is immediate in the tab and in the other open tabs (`BroadcastChannel`), including
   one that was picking up the session at that moment (its refresh never lands). The
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next
@@ -140,8 +141,14 @@ API decides what is **allowed**. Never rely on a hidden link or a client guard a
 - **CSRF:** `FetchMetadataGuard` runs first on **every** route (a global guard, before the rate
   limiter): a request whose `Sec-Fetch-Site` says another origin made the browser send it
   (`cross-site`, and `same-site`: a sibling subdomain) is refused with 403 unless its `Origin` is in
-  `CORS_ORIGINS`. Requests without the header pass: older browsers still apply SameSite, and
-  non-browser clients carry no victim's cookies. Bearer-token routes cannot be forged anyway
+  `CORS_ORIGINS`. Browsers that send no Fetch Metadata (Safari before 16.4, and any browser on a page
+  served over plain HTTP from a non-local address) still send `Origin` on cross-origin requests and
+  on same-origin POSTs: without `Sec-Fetch-Site`, an `Origin` must be the app's own (`APP_ORIGIN`,
+  or the scheme and host the request was sent to) or one of `CORS_ORIGINS`, and `Origin: null` is
+  refused. Set `APP_ORIGIN` in production: behind the web image, nginx sends the API its own
+  upstream name as `Host`, so nothing else tells the API its public origin (it warns at boot
+  without it). Requests with neither header pass: non-browser clients carry no victim's cookies,
+  and a browser that sends neither still applies SameSite. Bearer-token routes cannot be forged anyway
   (browsers never attach the header), and the API accepts JSON bodies only
   (`common/http/json-only.middleware.ts`, 415 otherwise): HTML forms, the one kind of body another
   site can send without a CORS preflight, never reach a handler.
@@ -197,8 +204,13 @@ IPv6.
 
 ## Rate limiting
 
-`@nestjs/throttler`, per client IP and per route: `RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_SEC`
-(default 100/60 s), sign-in 10/min, refresh 30/min, health probes exempt; `429` with `Retry-After`.
+`@nestjs/throttler`, per client IP and per route, by two throttlers that both count
+(`common/guards/rate-limit.guard.ts`): the global limit on every route, `RATE_LIMIT_MAX` per
+`RATE_LIMIT_WINDOW_SEC` (default 100/60 s), and on top of it a tighter limit of the route's own,
+declared with `@RouteRateLimit`: sign-in 10/min, refresh 30/min. Whichever runs out first blocks;
+health probes are exempt; `429` with `Retry-After`. Never set a route's limit with
+`@Throttle({ default: ... })`: that replaces the global limit for the route instead of adding to
+it.
 
 The counters live in a **store** chosen by `RATE_LIMIT_STORE`
 (`infrastructure/rate-limit/rate-limit.store.ts`); the guard, the limits and the routes are the same
@@ -223,8 +235,10 @@ capped at 100 kB.
 ## SQL injection
 
 Prisma parameterizes every query. Raw SQL only through tagged templates (`$queryRaw\`...${value}\``),
-never the `*Unsafe`variants with interpolated input (the one use,`$executeRawUnsafe` in the test reset
-helper, interpolates table names read from the database catalog).
+never the `*Unsafe`variants with interpolated input: an ESLint rule refuses them everywhere,
+scripts and tests included. The one use,`$executeRawUnsafe` in the test reset helper, interpolates
+table names read from the database catalog (identifiers cannot be bound as parameters) and carries
+a disable comment that says so.
 
 ## Secrets
 
@@ -321,9 +335,21 @@ pinned by a dependency, add a scoped override in `pnpm-workspace.yaml` naming th
 there now, for packages pinned by the Prisma CLI); if neither is possible, document an exception
 with the advisory, why it is not exploitable here, and a review date, in the pull request and here.
 
-**Urgent fix younger than the release delay:** add only that package to
-`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with the advisory in a comment, and remove the
-entry in the next update.
+**Urgent fix younger than the release delay:** exempt only the fixed version, in
+`minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with the date the exemption expires and the
+advisory:
+
+```yaml
+minimumReleaseAgeExclude:
+  - 'vite@8.3.3' # expires 2026-10-16: GHSA-xxxx-xxxx-xxxx
+```
+
+`pnpm deps:check` enforces the form: an exact version (`name@1.2.3`, or `name@1.2.3 || 1.2.4`),
+never a bare name, a range or a wildcard, which would let every future release skip the delay too;
+an expiry date at most one delay (seven days) ahead, since the version is old enough by then; and a
+plain block list, since an entry written inline carries no date. It fails once the date has passed,
+and on any exemption pnpm applies that the list does not hold (a global pnpm configuration, a
+`PNPM_CONFIG_*` variable). Remove the entry when it expires, or earlier with the next update.
 
 The other supply-chain controls: [Dependency policy](#dependency-policy) and
 [Dependency maintenance](#dependency-maintenance).
@@ -338,12 +364,17 @@ of `pnpm security`, so of `pnpm verify` and CI), with the policy in
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Frozen lockfile             | Installing anything the reviewed `pnpm-lock.yaml` does not list, with its sha512 integrity                                            | `.github/actions/setup` (`--frozen-lockfile`)                                |
 | Registry sources only       | A dependency from a git repository, a tarball URL or a folder (no registry integrity, no release delay)                               | `blockExoticSubdeps` (transitive), `deps:check` (direct)                     |
-| Release delay (seven days)  | A hijacked release, usually detected and unpublished within days                                                                      | `minimumReleaseAge`, Dependabot `cooldown`                                   |
+| Release delay (seven days)  | A hijacked release, usually detected and unpublished within days; exemptions are exact versions that expire                           | `minimumReleaseAge`, Dependabot `cooldown`, `deps:check` (exemptions)        |
 | Trust downgrade refused     | A new version published with weaker evidence than earlier ones (provenance lost: a stolen token)                                      | `trustPolicy: no-downgrade`                                                  |
 | Install scripts allowlisted | Code running at install time without a reviewed decision                                                                              | `allowBuilds`                                                                |
 | License policy              | A license the product cannot ship: production dependencies need a permissive license, tools may also use weak copyleft; unknown fails | `deps:check`, `scripts/dependency-policy.json`                               |
 | Known vulnerabilities       | High and critical advisories                                                                                                          | `pnpm audit`, Trivy on the images                                            |
 | Weakened settings           | Lowering the delay, dropping the trust policy or the block on exotic sources; removing the Dependabot cooldown                        | `deps:check` (floors in `scripts/dependency-policy.json`); zizmor (cooldown) |
+
+**License expressions** are read as SPDX defines them: `WITH` binds tighter than `AND`, `AND`
+tighter than `OR`, parentheses group. One passes when some way to comply with it (every license of
+an `AND`, one branch of an `OR`) uses allowed licenses only: `(MIT OR GPL-2.0) AND GPL-3.0` fails.
+An expression that does not parse fails, like an unknown license.
 
 **Adding a dependency** ([how-to](how-to.md#add-a-dependency)): maintained (recent releases, more
 than one maintainer for anything security-relevant), an allowed license, no install script unless
@@ -383,6 +414,18 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   code and no development tools. Every image applies the operating system fixes published after
   its base was built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web
   image), so a fixed advisory in the base does not wait for the next base release.
+- The files of an image belong to root: the user it runs as can read and run them, never change
+  them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
+  - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`, and
+    nginx's generated configuration), emptied at every restart;
+  - no Linux capability (`cap_drop: [ALL]`), except Caddy's `NET_BIND_SERVICE` for ports 80
+    and 443;
+  - `no-new-privileges`, so a setuid binary grants nothing;
+  - limits on processes and memory, so one runaway container cannot take the server down.
+
+  An intruder in a container therefore cannot change the application, plant a persistent tool or
+  gain privileges inside it.
+
 - CI scans every image with Trivy (`docker-images.yml`): a HIGH or CRITICAL advisory **with a
   published fix** fails the build. Fix it by rebuilding (newer base patches), updating the base image
   (Dependabot proposes it weekly) or updating the dependency; unfixed advisories are reported by the
