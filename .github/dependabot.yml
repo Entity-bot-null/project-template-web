@@ -11,6 +11,11 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
+    ignore:
+      # @types/node describes the Node.js major of .nvmrc and moves with it, by
+      # hand: a newer major types APIs the runtime does not have.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
     groups:
       development:
         dependency-type: development

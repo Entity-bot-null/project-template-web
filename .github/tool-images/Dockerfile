@@ -5,6 +5,11 @@
 # repository checked out. Written as a Dockerfile so Dependabot (the docker
 # entry in .github/dependabot.yml) proposes tag and digest updates together.
 # scripts/tool-image.mjs reads it: one `FROM <image> AS <name>` per tool.
+#
+# Where an image is published outside Docker Hub with the same digest, it is
+# pulled from there: Docker Hub limits anonymous pulls per address, and CI
+# runners share theirs. The two left on Docker Hub (actionlint, Semgrep) are
+# pulled in CI through a mirror, by digest (scripts/tool-image.mjs).
 
 # Workflow linting: actionlint (syntax, expressions, shellcheck) and zizmor
 # (security: permissions, injection, pinning, credential persistence).
@@ -18,15 +23,15 @@ FROM semgrep/semgrep:1.179.0@sha256:93963d9295a366f59e4850127b1550400ee7b388f04f
 FROM ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f AS gitleaks
 
 # Image vulnerability scanning.
-FROM aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa AS trivy
+FROM ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa AS trivy
 
 # Test database of the integration and end-to-end jobs; keep the major
 # version equal to docker-compose.yml.
-FROM postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 AS postgres
+FROM public.ecr.aws/docker/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 AS postgres
 
 # Redis of the integration job (the Redis-backed adapters); keep the major
 # version equal to docker-compose.yml.
-FROM redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 AS redis
+FROM public.ecr.aws/docker/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 AS redis
 
 # Dynamic application security testing (.github/workflows/dast.yml).
 FROM ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef AS zap

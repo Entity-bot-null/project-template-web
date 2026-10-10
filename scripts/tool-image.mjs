@@ -26,6 +26,40 @@ export function toolImage(name) {
   throw new Error(`No tool image named "${name}" in .github/tool-images/Dockerfile`);
 }
 
+// Docker Hub limits anonymous pulls per address, and CI runners share theirs.
+// With TOOL_IMAGE_MIRROR set (CI sets mirror.gcr.io, a mirror of Docker Hub),
+// an image hosted on Docker Hub is pulled from the mirror by its digest. The
+// digest makes the content identical whatever the source, and Docker Hub is
+// used as before when the mirror does not have it. Without the variable
+// (local runs) nothing changes.
+
+/**
+ * The reference to run: the mirror's copy of a Docker Hub image, when a mirror
+ * is set and has it; the pinned reference otherwise.
+ * @param {string} image a reference pinned by digest
+ * @param {{ mirror?: string; pull?: (reference: string) => boolean }} [options]
+ */
+export function pullableImage(
+  image,
+  { mirror = process.env.TOOL_IMAGE_MIRROR, pull = dockerPull } = {},
+) {
+  if (!mirror) return image;
+  const at = image.indexOf('@');
+  const parts = image.slice(0, at).split('/');
+  const host = parts.length > 1 ? (parts[0] ?? '') : '';
+  const dockerHub = ['', 'docker.io', 'index.docker.io'].includes(host);
+  const isHost = host.includes('.') || host.includes(':') || host === 'localhost';
+  if (!dockerHub && isHost) return image;
+  const path = (isHost ? parts.slice(1) : parts).join('/').replace(/:[^/]*$/, '');
+  const copy = `${mirror}/${path.includes('/') ? path : `library/${path}`}${image.slice(at)}`;
+  return pull(copy) ? copy : image;
+}
+
+/** @param {string} reference */
+function dockerPull(reference) {
+  return spawnSync('docker', ['pull', '--quiet', reference], { stdio: 'ignore' }).status === 0;
+}
+
 /**
  * Runs a tool image with the repository mounted at `mount` (also the working
  * directory) and returns its exit status.
@@ -53,7 +87,7 @@ export function runTool(
       mount,
       ...passEnv,
       ...(entrypoint ? ['--entrypoint', entrypoint] : []),
-      toolImage(name),
+      pullableImage(toolImage(name)),
       ...args,
     ],
     { stdio: 'inherit' },
