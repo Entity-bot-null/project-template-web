@@ -130,6 +130,24 @@
       "tags": ["security", "static"]
     },
     {
+      "id": "iac:check",
+      "script": "iac:check",
+      "name": "Infrastructure as code (Terraform fmt, validate and tests, TFLint, Trivy, cloud-init schema, database roles script)",
+      "command": "pnpm iac:check",
+      "source": ".github/workflows/quality-gates.yml › Infrastructure as code (Terraform)",
+      "required": true,
+      "when": "paths",
+      "paths": [
+        "infra/**",
+        ".github/tool-images/**",
+        "scripts/check-iac.mjs",
+        "scripts/iac-database.mjs"
+      ],
+      "requires": ["docker", "network"],
+      "tags": ["security", "static"],
+      "note": "Downloads the Terraform providers and cloud-init from the Ubuntu archive at each run. Creates nothing in any cloud and needs no token: a real plan or apply is never part of a review."
+    },
+    {
       "id": "test:scripts",
       "script": "test:scripts",
       "name": "Repository script tests (Doberman engine, Semgrep file selection)",
@@ -347,13 +365,14 @@
       "id": "deploy",
       "paths": [
         "deploy/**",
+        "infra/**",
         "apps/*/Dockerfile",
         "docker-compose.yml",
         ".dockerignore",
         ".github/workflows/deploy.yml",
         ".github/workflows/docker-images.yml"
       ],
-      "focus": "non-root images, pinned digests, migrations before the new version, no secrets in images or compose files, docs/deploy-vps.md and both step-by-step guides updated",
+      "focus": "non-root images, pinned digests, migrations before the new version, no secrets in images or compose files, docs/deploy-vps.md and both step-by-step guides updated; Terraform (infra/terraform) reproduces docs/deploy-vps.md: no secret with a default or in a non-sensitive output, firewalls as narrow as the guide, the lock file and the pinned versions updated together",
       "docs": ["docs/deploy-vps.md", "docs/ci-cd.md", "docs/security.md"]
     },
     {

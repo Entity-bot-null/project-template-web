@@ -1,0 +1,36 @@
+# Remote state in DigitalOcean Spaces, through Terraform's S3 backend
+# (docs/deploy-vps.md#state). The state holds every password of the
+# environment: a private bucket, versioning on, access keys limited to it.
+#
+# 1. Create the bucket (Spaces, the region of your choice), with versioning,
+#    and a Spaces access key limited to it.
+# 2. Uncomment `backend "s3" {}` in versions.tf.
+# 3. Copy this file to backend.hcl (not committed) and fill it in.
+# 4. With the key in the environment (never in this file: values given here
+#    are copied into .terraform/ and into plan files):
+#      export AWS_ACCESS_KEY_ID=<Spaces access key>
+#      export AWS_SECRET_ACCESS_KEY=<Spaces secret key>
+#      terraform init -backend-config=backend.hcl -migrate-state
+#    Each workspace (staging, production) gets its own state under
+#    env:/<workspace>/ in the bucket.
+
+bucket = "acme-portal-terraform-state"
+key    = "digitalocean/terraform.tfstate"
+
+endpoints = {
+  s3 = "https://fra1.digitaloceanspaces.com"
+}
+
+# Required by the S3 backend, ignored by Spaces.
+region = "us-east-1"
+
+# Spaces is not AWS: no account, no STS, no region list, no S3 checksums.
+skip_credentials_validation = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_region_validation      = true
+skip_s3_checksum            = true
+
+# State locking with a lock file next to the state, so two applies never run
+# at once.
+use_lockfile = true

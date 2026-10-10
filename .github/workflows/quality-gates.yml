@@ -75,6 +75,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/lint-workflows.mjs
 
+  iac:
+    name: Infrastructure as code (Terraform)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # infra/terraform: fmt, validate and tests, TFLint, Trivy, the server's
+      # cloud-init against its schema, the database roles script on
+      # PostgreSQL, with the pinned images of .github/tool-images/Dockerfile
+      # (docs/ci-cd.md#infrastructure-as-code). No cloud account, no token,
+      # no install needed.
+      - run: node scripts/check-iac.mjs
+
   sast:
     name: Static analysis (Semgrep)
     runs-on: ubuntu-latest

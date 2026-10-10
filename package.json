@@ -28,6 +28,8 @@
     "sast": "node scripts/sast.mjs",
     "lint:workflows": "node scripts/lint-workflows.mjs",
     "observability:check": "node scripts/check-observability.mjs",
+    "iac:check": "node scripts/check-iac.mjs",
+    "iac:database": "node scripts/iac-database.mjs",
     "sbom:generate": "pnpm sbom --sbom-format cyclonedx --sbom-type application --prod --out dist/sbom/sbom.cdx.json",
     "perf:check": "node scripts/check-bundle-size.mjs",
     "smoke": "node scripts/smoke-test.mjs",

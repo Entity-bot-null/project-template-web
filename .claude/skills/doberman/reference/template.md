@@ -187,6 +187,9 @@ The plan comes from `doberman.mjs start` (`verify` in `package.json`, plus the C
   images.
 - `pnpm test:scripts` (CI only, outside `verify`): the tests of the repository's own scripts, the
   Doberman engine and Semgrep's file selection. On Windows the POSIX signal test is skipped.
+- `pnpm iac:check` (Docker and the network) only when the change touches `infra/`, the tool images
+  or its scripts: Terraform checks, TFLint, Trivy, cloud-init and the roles script. Never a real
+  `terraform plan` or `apply`: they need a DigitalOcean account and token.
 - `pnpm sast` and `pnpm lint:workflows` need Docker; `pnpm security` needs the network. gitleaks
   needs commits; on Windows (Git Bash) the plan's `commandWindows` passes a Windows path to Docker.
 - `pnpm observability:check` (Docker; when `observability/**` or `.github/tool-images/**` change):
