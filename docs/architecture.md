@@ -244,7 +244,7 @@ src/
   main.tsx, App.tsx    mount, boot refresh, router
   router.tsx           every route, guarded as layout routes
   api/                 client.ts (openapi-fetch), errors.ts (call, describeFailure), schema.d.ts (generated)
-  monitoring/          runtime config (/app-config.json), error tracking (Sentry, lazy-loaded chunk)
+  monitoring/          runtime config (/app-config.json), error tracking (Sentry), Web Vitals; lazy chunks
   auth/                session store (token in memory), 401 middleware, guards, useAuth
   hooks/               useLoader (load, retry, stale-response protection)
   components/          layout and shared UI

@@ -459,7 +459,9 @@ entorno:
 
 `API_UPSTREAM` (http://api:3000, la API a la que el servidor web reenvía `/api`), `APP_ENVIRONMENT`
 (production), `APP_RELEASE` (lo fija el build de la imagen), `WEB_SENTRY_DSN` (vacío: apagado),
-`WEB_SENTRY_SAMPLE_RATE` (1). Solo en desarrollo: `API_PROXY_TARGET` (http://127.0.0.1:3000).
+`WEB_SENTRY_SAMPLE_RATE` (1), `WEB_VITALS_SAMPLE_RATE` (1, la proporción de cargas de página que
+informan de sus Web Vitals; 0: apagado). Solo en desarrollo: `API_PROXY_TARGET`
+(http://127.0.0.1:3000).
 Todo lo que se llame `VITE_*` se compila en el bundle público: nunca un secreto.
 
 ### 6.4 Variables de Compose (`.env` de la raíz)

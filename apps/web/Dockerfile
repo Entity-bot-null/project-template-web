@@ -42,13 +42,15 @@ USER 101
 # error, so a regression points at its release.
 ARG APP_RELEASE=unversioned
 # Runtime settings, all with safe defaults (docs/environment.md#web-variables):
-# error tracking stays off until WEB_SENTRY_DSN is set at deployment.
+# error tracking stays off until WEB_SENTRY_DSN is set at deployment; every
+# page load reports its Web Vitals to the API (0 turns that off).
 ENV API_UPSTREAM=http://api:3000 \
     NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
     APP_ENVIRONMENT=production \
     APP_RELEASE=${APP_RELEASE} \
     WEB_SENTRY_DSN="" \
-    WEB_SENTRY_SAMPLE_RATE=1
+    WEB_SENTRY_SAMPLE_RATE=1 \
+    WEB_VITALS_SAMPLE_RATE=1
 COPY --chmod=0755 apps/web/nginx/18-validate-runtime-config.sh /docker-entrypoint.d/18-validate-runtime-config.sh
 COPY apps/web/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY apps/web/nginx/default.conf.template /etc/nginx/templates/default.conf.template

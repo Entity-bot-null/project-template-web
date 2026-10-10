@@ -31,6 +31,7 @@ const VALID = {
   APP_RELEASE: '3f2c1a9',
   WEB_SENTRY_DSN: '',
   WEB_SENTRY_SAMPLE_RATE: '1',
+  WEB_VITALS_SAMPLE_RATE: '1',
   NGINX_LOCAL_RESOLVERS: '127.0.0.11',
 };
 
@@ -72,6 +73,7 @@ describe('18-validate-runtime-config.sh', () => {
         APP_RELEASE: 'v1.4.0+build.7',
         WEB_SENTRY_DSN: 'https://0123abcd@o42.ingest.sentry.io/4504',
         WEB_SENTRY_SAMPLE_RATE: '0.25',
+        WEB_VITALS_SAMPLE_RATE: '0',
       }).status,
       0,
     );
@@ -84,6 +86,7 @@ describe('18-validate-runtime-config.sh', () => {
     assertRefused('APP_ENVIRONMENT', 'staging\nevil');
     assertRefused('WEB_SENTRY_DSN', 'https://0123abcd@o42.ingest.sentry.io/4504\nevil');
     assertRefused('WEB_SENTRY_SAMPLE_RATE', '1\nevil');
+    assertRefused('WEB_VITALS_SAMPLE_RATE', '0.5\nevil');
     assertRefused('APP_RELEASE', 'abc\revil');
   });
 
@@ -93,6 +96,7 @@ describe('18-validate-runtime-config.sh', () => {
       assertRefused('APP_ENVIRONMENT', `staging${character}evil`);
       assertRefused('WEB_SENTRY_DSN', `https://0123abcd@o42.ingest.sentry.io/4504${character}evil`);
       assertRefused('WEB_SENTRY_SAMPLE_RATE', `1${character}`);
+      assertRefused('WEB_VITALS_SAMPLE_RATE', `1${character}`);
     }
   });
 
@@ -101,6 +105,8 @@ describe('18-validate-runtime-config.sh', () => {
     assertRefused('APP_RELEASE', '');
     assertRefused('WEB_SENTRY_DSN', 'http://0123abcd@o42.ingest.sentry.io/4504');
     assertRefused('WEB_SENTRY_SAMPLE_RATE', '1.5');
+    assertRefused('WEB_VITALS_SAMPLE_RATE', '');
+    assertRefused('WEB_VITALS_SAMPLE_RATE', '2');
     assertRefused('NGINX_LOCAL_RESOLVERS', '');
   });
 });

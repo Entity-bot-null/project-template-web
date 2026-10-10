@@ -13,7 +13,8 @@ const apiTarget = process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:3000';
 // /app-config.json, the deployment settings the app reads at runtime
 // (src/monitoring/runtimeConfig.ts), from this process's environment: the same
 // file the production web server writes from its own (apps/web/nginx). Empty
-// WEB_SENTRY_DSN: error tracking off, the default.
+// WEB_SENTRY_DSN: error tracking off, the default. WEB_VITALS_SAMPLE_RATE 0:
+// Web Vitals off; every page load reports them by default.
 function runtimeConfig(): Plugin {
   const serve = (_request: unknown, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json');
@@ -24,6 +25,7 @@ function runtimeConfig(): Plugin {
         release: process.env.APP_RELEASE ?? 'unversioned',
         sentryDsn: process.env.WEB_SENTRY_DSN ?? '',
         sentrySampleRate: process.env.WEB_SENTRY_SAMPLE_RATE ?? '1',
+        webVitalsSampleRate: process.env.WEB_VITALS_SAMPLE_RATE ?? '1',
       }),
     );
   };
