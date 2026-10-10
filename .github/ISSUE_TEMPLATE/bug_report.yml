@@ -1,0 +1,54 @@
+name: Bug report
+description: Something does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities must NOT be reported here: follow SECURITY.md.
+        Never paste passwords, tokens, cookies or personal data.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The behavior you saw, with exact error messages.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Sign in as a member
+        2. Open ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: request-id
+    attributes:
+      label: Request id
+      description: The X-Request-Id of a failing API response, if any (it ties the report to the server logs).
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Local, staging or production; browser and version; commit or release.
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Blocker (no workaround, many users affected)
+        - Major (important feature broken, workaround exists)
+        - Minor (cosmetic or rare)
+    validations:
+      required: true

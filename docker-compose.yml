@@ -1,0 +1,147 @@
+# Local development: `pnpm db:up` starts PostgreSQL, and the API and the web
+# app run on the host (`pnpm dev`). Nothing else is needed.
+#
+# Optional services, started only when asked for (docs/architecture.md):
+#   docker compose --profile redis up -d           Redis (REDIS_PASSWORD in the root .env)
+#   docker compose --profile observability up -d   OpenTelemetry backend + Grafana (development)
+#
+# Production-like stack built from the Dockerfiles (profile "stack"):
+# migrations, then the API, behind the web server at http://localhost:8080.
+#   docker compose --profile stack up --build
+# Reads JWT_ACCESS_SECRET from a root .env (see .env.example). Not a
+# deployment: no TLS, local credentials, nothing published beyond loopback.
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      # Local development only. Published on loopback only.
+      POSTGRES_PASSWORD: app
+    ports:
+      - '127.0.0.1:${DB_PORT:-5432}:5432'
+    volumes:
+      - db_data:/var/lib/postgresql
+    healthcheck:
+      # TCP on purpose: during the first initdb the server listens on the
+      # Unix socket only, which would pass a socket check and then restart.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  migrate:
+    profiles: [stack]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    profiles: [stack]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      args:
+        APP_RELEASE: ${APP_RELEASE:-local}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://app:app@db:5432/app
+      # One proxy hop: the web container, which replaces X-Forwarded-For.
+      TRUST_PROXY: '1'
+      # Empty when unset: the API then refuses to boot and names the variable.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-}
+      APP_ENVIRONMENT: stack
+      # Optional integrations, off unless set in the root .env (.env.example):
+      # with the redis profile, STACK_REDIS_URL=redis://:<REDIS_PASSWORD>@redis:6379;
+      # with the observability profile, STACK_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318.
+      REDIS_URL: ${STACK_REDIS_URL:-}
+      RATE_LIMIT_STORE: ${STACK_RATE_LIMIT_STORE:-memory}
+      CACHE_STORE: ${STACK_CACHE_STORE:-memory}
+      SENTRY_DSN: ${STACK_SENTRY_DSN:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${STACK_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      # Only when the redis profile is active.
+      redis:
+        condition: service_healthy
+        required: false
+
+  web:
+    profiles: [stack]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        APP_RELEASE: ${APP_RELEASE:-local}
+    environment:
+      API_UPSTREAM: http://api:3000
+      APP_ENVIRONMENT: stack
+      WEB_SENTRY_DSN: ${STACK_WEB_SENTRY_DSN:-}
+    ports:
+      - '127.0.0.1:${WEB_PORT:-8080}:8080'
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Optional: Redis for shared rate limits, cache, locks and idempotency
+  # (docs/architecture.md#redis). The application runs without it.
+  # Secure defaults: a password is required (REDIS_PASSWORD in the root .env,
+  # never committed), it is published on loopback only, runs as the redis
+  # user, keeps its data (AOF, fsync every second) and evicts only keys that
+  # have a TTL when full: every key the template writes has one, so future keys
+  # without a TTL (queues) are never dropped. `exec` makes redis-server PID 1:
+  # SIGTERM reaches it and it saves before exiting.
+  redis:
+    profiles: [redis]
+    image: redis:8-alpine
+    restart: unless-stopped
+    user: redis
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        test -n "$$REDIS_PASSWORD" || { echo 'REDIS_PASSWORD is empty: set it in the root .env (openssl rand -hex 24)' >&2; exit 1; }
+        printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
+        exec redis-server /tmp/redis.conf --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy volatile-lru
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # The password reaches redis-cli through its environment, not its arguments.
+      test: ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    stop_grace_period: 10s
+
+  # Optional, development only: an OpenTelemetry backend on this machine
+  # (collector, Prometheus, Tempo, Loki and Grafana in one image), to see the
+  # API's traces and metrics before choosing a provider. Then, in
+  # apps/api/.env: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318, and
+  # Grafana at http://localhost:3001 (anonymous admin: loopback only, never
+  # deploy this service). docs/observability.md#local-backend.
+  otel-lgtm:
+    profiles: [observability]
+    image: grafana/otel-lgtm:0.34.0
+    ports:
+      - '127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318'
+      - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
+
+volumes:
+  db_data:
+  redis_data:

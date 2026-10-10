@@ -1,0 +1,13 @@
+# Semgrep (pnpm sast, CI): what it never scans. Replaces Semgrep's built-in
+# defaults, so tests are scanned too. Untracked files are skipped anyway.
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.env
+apps/api/src/prisma/generated/
+# Generated and committed: checked by the contract drift gates instead.
+openapi/openapi.json
+apps/web/src/api/schema.d.ts
+pnpm-lock.yaml

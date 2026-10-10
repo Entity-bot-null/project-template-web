@@ -1,0 +1,8 @@
+# zizmor (scripts/lint-workflows.mjs): GitHub Actions security audits. Every
+# audit is on; an exception names the audit and why (docs/ci-cd.md#workflow-security).
+rules:
+  # Suggests the newer `$/` syntax for actions and workflows of this
+  # repository. `./` resolves inside the same commit, so it is equally safe,
+  # and every tool here (actionlint included) understands it.
+  self-repository:
+    disable: true

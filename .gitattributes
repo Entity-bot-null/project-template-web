@@ -1,0 +1,18 @@
+# LF everywhere, whatever the OS or core.autocrlf: Prettier, the hooks and
+# the Docker builds all expect it.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+
+# Derived from openapi/openapi.json: collapsed in pull request diffs. The
+# contract itself is NOT marked, its diff is what reviewers must read. Nor is
+# pnpm-lock.yaml: a supply-chain change (a new transitive package, another
+# tarball source) shows only there, so its diff stays visible.
+apps/web/src/api/schema.d.ts linguist-generated=true

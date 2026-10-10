@@ -1,0 +1,46 @@
+# Code owners are requested for review automatically and, with the ruleset in
+# .github/rulesets/main.json, must approve changes to the paths they own.
+# Replace the placeholders with real GitHub users or teams
+# (@org/team, which needs write access), then uncomment. Later lines win.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything.
+# *                              @your-org/maintainers
+
+# The parts where a mistake is a security incident or an outage.
+# Authentication, sessions, guards and the HTTP pipeline.
+# /apps/api/src/auth/            @your-org/security-reviewers
+# /apps/api/src/common/          @your-org/security-reviewers
+# Redaction, error tracking and telemetry: what leaves the process.
+# /apps/api/src/observability/   @your-org/security-reviewers
+# /apps/web/src/monitoring/      @your-org/security-reviewers
+# /apps/api/src/infrastructure/  @your-org/backend
+# /apps/api/src/lifecycle/       @your-org/backend
+# /apps/api/src/env/             @your-org/security-reviewers
+# /apps/api/src/app.setup.ts     @your-org/security-reviewers
+# /apps/api/src/app.module.ts    @your-org/security-reviewers
+# /apps/web/src/auth/            @your-org/security-reviewers
+# /apps/web/nginx/               @your-org/security-reviewers
+# Schema and migrations.
+# /apps/api/prisma/              @your-org/backend
+# /openapi/                      @your-org/backend @your-org/frontend
+# Supply chain: dependencies, install settings, images.
+# /pnpm-workspace.yaml           @your-org/maintainers
+# /pnpm-lock.yaml                @your-org/maintainers
+# package.json                   @your-org/maintainers
+# Dockerfile                     @your-org/maintainers
+# /.dockerignore                 @your-org/maintainers
+# /docker-compose.yml            @your-org/maintainers
+# Release management.
+# /release-please-config.json    @your-org/maintainers
+# Gates: CI, hooks and the checks they run. Owning this file is what keeps
+# the rules above from being edited away.
+# /.github/                      @your-org/maintainers
+# /.husky/                       @your-org/maintainers
+# /scripts/                      @your-org/maintainers
+# /eslint.config.js              @your-org/maintainers
+# /lint-staged.config.js         @your-org/maintainers
+# /.secretlintrc.json            @your-org/maintainers
+# /.secretlintignore             @your-org/maintainers
+# /.semgrepignore                @your-org/security-reviewers
+# /.zap/                         @your-org/security-reviewers

@@ -1,0 +1,48 @@
+name: Feature or story
+description: New behavior, written so it can be built and verified.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      placeholder: As a <role>, I want <capability>, so that <benefit>.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable, testable conditions. Each one becomes at least one test.
+      placeholder: |
+        - Given ..., when ..., then ...
+        - Given ..., when ..., then ...
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Out of scope
+      description: What this story deliberately does not include.
+  - type: textarea
+    id: technical
+    attributes:
+      label: Technical notes
+      description: API contract changes (breaking ones identified), data model and migrations, roles that may use it, dependencies on other work.
+  - type: textarea
+    id: non-functional
+    attributes:
+      label: Non-functional needs
+      description: Performance expectations, personal data involved, audit or compliance requirements. "None" is a valid answer.
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Definition of Ready (docs/definition-of-ready.md)
+      options:
+        - label: The value and the user are clear.
+        - label: Acceptance criteria are testable.
+        - label: Roles and permissions are defined (who may do it, on which records).
+        - label: API contract and data changes are sketched, if any, and breaking changes identified.
+        - label: Non-functional needs (performance, personal data, compliance) are stated.
+        - label: Dependencies and designs are available.
+        - label: Small enough to finish in a few days; otherwise split.

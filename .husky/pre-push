@@ -1,0 +1,6 @@
+# No pushes to main/master, branch names checked, then the checks fast enough
+# to wait for: type checking (contract types included) and unit/component
+# tests. Integration, E2E, security and build run in CI. See docs/git-hooks.md.
+node scripts/git/pre-push.mjs
+pnpm typecheck
+pnpm test

@@ -1,0 +1,6 @@
+# Staged files only: no .env files, no secrets, lint (with fixes), format.
+# Relative paths and a lower argument limit keep each command under the
+# Windows command-line limit (8191 characters) when many files are staged:
+# lint-staged splits the file list at the limit, and the package manager's
+# command shims add their own path on top. See lint-staged.config.js and docs/git-hooks.md.
+pnpm exec lint-staged --relative --max-arg-length 6000

@@ -1,0 +1,238 @@
+name: Quality gates
+
+# Reusable: every gate a commit must pass, the same ones `pnpm verify` runs
+# locally plus the integration, end-to-end and image checks. Called by CI on
+# every pull request and push to main, and by the deploy workflow for the
+# exact ref being released (docs/ci-cd.md).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out (default the triggering commit).
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  # Integration and end-to-end suites derive `<db>_test` and `<db>_e2e` from it.
+  DATABASE_URL: postgresql://app:app@localhost:5432/app
+
+jobs:
+  # The pinned PostgreSQL and Redis images of .github/tool-images/Dockerfile
+  # (updated by Dependabot, tag and digest), for the service containers below,
+  # which cannot read a file themselves.
+  tool-images:
+    name: Tool images
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      postgres: ${{ steps.images.outputs.postgres }}
+      redis: ${{ steps.images.outputs.redis }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/tool-images
+            scripts/tool-image.mjs
+          sparse-checkout-cone-mode: false
+      - id: images
+        run: |
+          {
+            echo "postgres=$(node scripts/tool-image.mjs postgres)"
+            echo "redis=$(node scripts/tool-image.mjs redis)"
+          } >> "$GITHUB_OUTPUT"
+
+  static:
+    name: Format, lint, types, workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm format:check
+      - run: pnpm lint
+      # Includes the contract check: the web client types match openapi/openapi.json.
+      - run: pnpm typecheck
+      # The repository tooling's own tests: the Semgrep file selection and
+      # Doberman's engine (scripts/*.test.mjs).
+      - run: pnpm test:scripts
+      # actionlint and zizmor (workflow security), the pinned images of
+      # .github/tool-images/Dockerfile (docs/ci-cd.md#workflow-security). The
+      # token, read-only here, enables zizmor's impostor-commit check.
+      - name: Lint GitHub workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/lint-workflows.mjs
+
+  sast:
+    name: Static analysis (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # Code, Dockerfiles and nginx configuration; any finding fails
+      # (docs/security.md#static-analysis). No install needed.
+      - run: node scripts/sast.mjs
+
+  unit:
+    name: Unit and component tests, coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # Fails below the coverage thresholds; includes the OpenAPI drift spec.
+      - run: pnpm test:coverage
+      - name: Upload coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: apps/*/coverage/
+          retention-days: 14
+
+  integration:
+    name: Integration tests (API + PostgreSQL + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: tool-images
+    env:
+      # The Redis-backed adapters' specs run against this throwaway server;
+      # in CI a missing one fails them instead of skipping them.
+      REDIS_TEST_URL: redis://localhost:6379
+    services:
+      postgres:
+        # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
+        image: ${{ needs.tool-images.outputs.postgres }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
+        image: ${{ needs.tool-images.outputs.redis }} # zizmor: ignore[unpinned-images]
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm test:integration
+
+  security:
+    name: Security (dependencies, licenses, secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          # Full history, so the secret scan also sees commits that were reverted.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # Known vulnerabilities (high and critical fail), the dependency policy
+      # (registry sources, licenses) and secrets in the tree.
+      - run: pnpm security
+      - name: Secrets in the git history (gitleaks)
+        run: >-
+          docker run --rm -v "$PWD:/repo"
+          "$(node scripts/tool-image.mjs gitleaks)"
+          git /repo --redact --no-banner
+
+  build:
+    name: Build and performance budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm build
+      - run: pnpm perf:check
+
+  e2e:
+    name: End-to-end tests (browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: tool-images
+    services:
+      postgres:
+        # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
+        image: ${{ needs.tool-images.outputs.postgres }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Cache Playwright browsers
+        id: browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install the browser
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install the browser's system dependencies
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - run: pnpm build
+      - run: pnpm test:e2e
+      - name: Upload the Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
+  images:
+    name: Images
+    uses: ./.github/workflows/docker-images.yml
+    with:
+      ref: ${{ inputs.ref }}
+      push: false

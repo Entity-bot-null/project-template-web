@@ -1,0 +1,77 @@
+name: Main guard
+
+# Every commit on main arrives through a merged pull request (docs/ci-cd.md#required-check).
+# A ruleset enforces that, but rulesets need a public repository or a paid plan: on a
+# private repository of GitHub Free nothing stops a direct push. This workflow
+# detects one after the fact. It fails and opens an issue naming the commits and
+# who pushed them, so they get reviewed or reverted. It runs for pushes made with
+# a person's credentials; merges made by workflows (Dependabot auto-merge) start no
+# workflow, and are pull requests anyway.
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  pull-requests-only:
+    name: Pushed through pull requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the pushed commits
+      pull-requests: read # the pull requests they belong to
+      issues: write # report a direct push
+    steps:
+      - name: Every pushed commit is a merged pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PUSHER: ${{ github.actor }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          FORCED: ${{ github.event.forced }}
+          COMPARE: ${{ github.event.compare }}
+        run: |
+          set -euo pipefail
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "::notice::main was created by this push (the first push of a new repository)."
+            exit 0
+          fi
+
+          # A squash merge is one commit on main whose pull request records it
+          # as its merge commit. GitHub links the two a few seconds after the
+          # merge, hence the retries.
+          direct=()
+          for sha in $(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.commits[].sha'); do
+            found=no
+            for _ in 1 2 3 4 5 6; do
+              count=$(gh api "repos/$REPO/commits/$sha/pulls" |
+                jq --arg sha "$sha" '[.[] | select(.merged_at != null and .merge_commit_sha == $sha)] | length')
+              if [ "$count" -gt 0 ]; then found=yes; break; fi
+              sleep 10
+            done
+            [ "$found" = yes ] || direct+=("$sha")
+          done
+
+          if [ "${#direct[@]}" -eq 0 ] && [ "$FORCED" != true ]; then
+            echo "Every pushed commit is a merged pull request."
+            exit 0
+          fi
+
+          {
+            echo "@$PUSHER pushed to \`main\` without a pull request ($COMPARE)."
+            echo
+            if [ "$FORCED" = true ]; then echo "The push was **forced**: history on main was rewritten."; echo; fi
+            if [ "${#direct[@]}" -gt 0 ]; then
+              echo "Commits that no merged pull request contains:"
+              echo
+              for sha in "${direct[@]}"; do echo "- $sha"; done
+              echo
+            fi
+            echo "Review them now: revert them, or open a pull request that runs CI on them and gets"
+            echo "reviewed. Nothing should reach main this way (docs/ci-cd.md#required-check)."
+          } > issue.md
+          gh issue create -R "$REPO" --title "Direct push to main by $PUSHER" --body-file issue.md
+          echo "::error title=Direct push to main::See the issue just opened in this repository."
+          exit 1

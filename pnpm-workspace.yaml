@@ -1,0 +1,113 @@
+packages:
+  - apps/*
+
+# Fail the install on a Node.js version outside package.json "engines".
+engineStrict: true
+
+# Supply chain: a version must be public for seven days before it can be
+# installed, so a hijacked release is usually caught and pulled before it
+# reaches us. Dependabot waits as long (cooldown). For an urgent security fix,
+# exempt that one package with minimumReleaseAgeExclude and remove the entry
+# afterwards (docs/security.md#dependency-vulnerabilities).
+minimumReleaseAge: 10080
+
+# TEMPORARY: the packages locked when this template was last updated
+# (2026-10-03) whose versions were younger than minimumReleaseAge that day.
+# pnpm re-checks every lockfile entry on each install, so they stay listed
+# until they mature (all of them by 2026-10-10). minimumReleaseAgeExcludePrune
+# lets installs prune the list; delete whatever remains after that date
+# (`pnpm deps:check` reminds you while the list is not empty). Otherwise only
+# for an urgent security fix, one package, removed after the next update.
+minimumReleaseAgeExcludePrune: true
+minimumReleaseAgeExclude:
+  - '@asamuzakjp/dom-selector'
+  - '@csstools/css-calc'
+  - '@csstools/css-color-parser'
+  - '@csstools/css-parser-algorithms'
+  - '@csstools/css-syntax-patches-for-csstree'
+  - '@nestjs/common'
+  - '@nestjs/core'
+  - '@nestjs/platform-express'
+  - '@nestjs/testing'
+  - '@rolldown/binding-android-arm-eabi'
+  - '@rolldown/binding-android-arm64'
+  - '@rolldown/binding-darwin-arm64'
+  - '@rolldown/binding-darwin-x64'
+  - '@rolldown/binding-freebsd-x64'
+  - '@rolldown/binding-linux-arm-gnueabihf'
+  - '@rolldown/binding-linux-arm64-gnu'
+  - '@rolldown/binding-linux-arm64-musl'
+  - '@rolldown/binding-linux-ppc64-gnu'
+  - '@rolldown/binding-linux-s390x-gnu'
+  - '@rolldown/binding-linux-x64-gnu'
+  - '@rolldown/binding-linux-x64-musl'
+  - '@rolldown/binding-openharmony-arm64'
+  - '@rolldown/binding-win32-arm64-msvc'
+  - '@rolldown/binding-win32-x64-msvc'
+  - '@types/node'
+  - '@vitest/coverage-v8'
+  - '@vitest/mocker'
+  - '@vitest/spy'
+  - 'baseline-browser-mapping'
+  - 'browserslist'
+  - 'caniuse-lite'
+  - 'chai'
+  - 'electron-to-chromium'
+  - 'globals'
+  - 'ignore'
+  - 'mysql2'
+  - 'pg'
+  - 'pg-cloudflare'
+  - 'pg-connection-string'
+  - 'pg-protocol'
+  - 'rolldown'
+  - 'source-map-js'
+  - 'std-env'
+  - 'supports-hyperlinks'
+  - 'tinyrainbow'
+  - 'vite'
+  - 'vitest'
+
+# Supply chain: a new version published with weaker evidence than its earlier
+# ones (for example without the provenance or trusted publisher they had) is
+# refused: the typical sign of a stolen maintainer token. Versions older than
+# 30 days are not compared, since packages published before provenance
+# existed would otherwise fail. Exempt a reviewed package with
+# trustPolicyExclude.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200
+
+# Supply chain: only the dependencies declared in a package.json may come from
+# a git repository or a tarball URL; a transitive one doing so fails the
+# install, since it bypasses the registry and its integrity checks.
+blockExoticSubdeps: true
+
+# Supply chain: dependencies may run install scripts only when listed here
+# with true. pnpm stops the install when a new dependency wants to run one,
+# so every addition is a reviewed decision.
+allowBuilds:
+  # Native password hashing binding.
+  argon2: true
+  # Prisma CLI and engines download their platform binaries.
+  '@prisma/engines': true
+  prisma: true
+  # Telemetry only.
+  '@scarf/scarf': false
+
+# Security overrides: transitive versions forced past a published advisory
+# until the dependency that pins them ships the fix. Each entry names the
+# advisory; delete it once `pnpm why <package>` shows a fixed version without
+# the override (docs/security.md#dependency-vulnerabilities).
+overrides:
+  # GHSA-ggr8-5vv4-36mx (high), pinned at 7.1.5 by @prisma/config 7.10.
+  '@prisma/config>deepmerge-ts': ^8.0.2
+  # GHSA-3f6p-5ww8-9rcr (high) and GHSA-rgwj-5xj2-c3m3 (moderate), pinned at
+  # 3.15.3 by the prisma CLI 7.10 (MySQL support; this template uses PostgreSQL).
+  'prisma>mysql2': ^3.24.5
+
+# Reviewed peer exceptions: each entry says why the mismatch is safe.
+peerDependencyRules:
+  allowedVersions:
+    # Declares TypeScript 5 but generates the same output under TypeScript 6
+    # (the web typecheck verifies the generated file on every run).
+    openapi-typescript>typescript: '6'

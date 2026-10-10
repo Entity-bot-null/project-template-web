@@ -1,0 +1,128 @@
+name: DAST
+run-name: DAST against ${{ inputs.target || 'the local stack' }}
+
+# Dynamic application security testing with OWASP ZAP (docs/security.md#dynamic-analysis).
+# ADVISORY: not part of "CI passed"; a failure opens no gate, it asks for a
+# look at the report. Rule levels (FAIL, WARN, IGNORE) live in .zap/rules.tsv.
+#
+#   local-stack  every Monday and on demand: builds the production images,
+#                starts them with Docker Compose on the runner, then the ZAP
+#                baseline (passive) on the web app and the ZAP API scan
+#                (active attacks) on every operation of openapi/openapi.json.
+#                Nothing outside the runner is touched.
+#   staging      on demand, the baseline only (passive: it reads what a
+#                normal visitor gets, sends no attacks) against the URL in the
+#                repository variable DAST_STAGING_URL (REQUIERE CONFIGURACIÓN).
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to scan
+        type: choice
+        options: [local-stack, staging]
+        default: local-stack
+
+concurrency:
+  group: dast-${{ inputs.target || 'local-stack' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  zap:
+    name: OWASP ZAP (${{ inputs.target || 'local-stack' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET: ${{ inputs.target || 'local-stack' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start the production stack
+        if: ${{ env.TARGET == 'local-stack' }}
+        run: |
+          # A throwaway signing secret: this stack lives for one run.
+          JWT_ACCESS_SECRET="$(openssl rand -hex 32)"
+          export JWT_ACCESS_SECRET
+          docker compose --profile stack up --build --detach
+          # The web server starts only once the API is healthy (compose
+          # depends_on), so its health check means the whole stack is up.
+          curl --fail --silent --show-error --retry 60 --retry-delay 5 --retry-all-errors \
+            http://localhost:8080/healthz
+          echo "url=http://localhost:8080" >> "$GITHUB_ENV"
+
+      # The smoke test a deployment runs (docs/ci-cd.md#deployment), here on
+      # the production images: it keeps working as the app changes.
+      - name: Smoke test the stack
+        if: ${{ env.TARGET == 'local-stack' }}
+        run: node scripts/smoke-test.mjs --url http://localhost:8080
+
+      - name: Use the staging URL
+        if: ${{ env.TARGET == 'staging' }}
+        env:
+          STAGING_URL: ${{ vars.DAST_STAGING_URL }}
+        run: |
+          if [[ ! "$STAGING_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]]; then
+            echo "::error title=DAST_STAGING_URL::Set the repository variable DAST_STAGING_URL to the staging origin, for example https://staging.example.com"
+            exit 1
+          fi
+          echo "url=${STAGING_URL%/}" >> "$GITHUB_ENV"
+
+      # ZAP writes its reports as its own user (uid 1000) into the mounted folder.
+      - name: Prepare the report folder
+        run: |
+          mkdir -p zap
+          cp .zap/rules.tsv openapi/openapi.json zap/
+          chmod -R a+rwX zap
+          echo "image=$(node scripts/tool-image.mjs zap)" >> "$GITHUB_ENV"
+
+      # Passive: spiders the app and inspects every response (headers,
+      # cookies, disclosures). -I: warnings are reported, only FAIL rules fail.
+      - name: Baseline scan
+        id: baseline
+        continue-on-error: true
+        run: >-
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" "$image"
+          zap-baseline.py -t "$url" -c rules.tsv -I
+          -r baseline.html -J baseline.json
+
+      # Active: attacks every operation of the contract (injection, XSS,
+      # path traversal...). Only against the throwaway local stack.
+      - name: API scan
+        id: api
+        if: ${{ env.TARGET == 'local-stack' }}
+        continue-on-error: true
+        run: >-
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" "$image"
+          zap-api-scan.py -t openapi.json -f openapi -O "$url" -c rules.tsv -I
+          -r api.html -J api.json
+
+      - name: Upload the reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zap-reports-${{ env.TARGET }}
+          path: |
+            zap/*.html
+            zap/*.json
+          retention-days: 30
+
+      - name: Stack logs
+        if: ${{ failure() && env.TARGET == 'local-stack' }}
+        run: docker compose --profile stack logs --no-color
+
+      - name: Result
+        env:
+          BASELINE: ${{ steps.baseline.outcome }}
+          API: ${{ steps.api.outcome }}
+        run: |
+          if [[ "$BASELINE" == failure || "$API" == failure ]]; then
+            echo "::error title=DAST::A FAIL rule of .zap/rules.tsv was triggered, or a scan could not run; see the zap-reports artifact and the step logs."
+            exit 1
+          fi
+          echo "No FAIL rule triggered (warnings, if any, are in the reports)."
