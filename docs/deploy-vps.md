@@ -240,6 +240,13 @@ nano web.env         # APP_ENVIRONMENT
 `JWT_ACCESS_SECRET`: `openssl rand -hex 32`, a different one per environment. Every other API
 variable is in [environment.md](environment.md); none is needed to start.
 
+The API's database driver (node-postgres) reads `sslmode=require` as `verify-full`: it refuses a
+certificate signed by the provider's own CA (DigitalOcean, Amazon RDS), and the rollout stops with
+a certificate error in the API's log (`self-signed certificate in certificate chain`). With such a provider, end both
+URLs with `?sslmode=require&uselibpqcompat=true`: TLS as libpq means `require`, encrypted without
+checking the certificate, on a network where the database admits only this server. The Terraform
+outputs are written that way.
+
 ## 7. GitHub settings
 
 Repository variables (Settings → Secrets and variables → Actions → Variables):

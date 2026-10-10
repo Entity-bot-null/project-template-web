@@ -668,6 +668,12 @@ Con Terraform (7.0), los dos valores de `DATABASE_URL` ya están completos: en
 `infra/terraform/digitalocean` en tu equipo, `terraform output -raw database_runtime_url`
 (`api.env`) y `terraform output -raw database_migrator_url` (`migrate.env`).
 
+En DigitalOcean o Amazon RDS, cuyos certificados vienen de la CA propia del proveedor, termina las
+dos URL con `?sslmode=require&uselibpqcompat=true` (las salidas de Terraform ya lo hacen): si no,
+la API rechaza el certificado (un error de certificado como
+`self-signed certificate in certificate chain`,
+[deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)).
+
 **Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
 puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).
 
