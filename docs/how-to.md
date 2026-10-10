@@ -873,11 +873,13 @@ must happen exactly once, make the write itself idempotent in the database
 
 1. Try it locally: `docker compose --profile observability up -d`, then
    `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` in `apps/api/.env` and restart `pnpm dev`;
-   Grafana at http://localhost:3001 (Explore: Tempo, Prometheus).
+   Grafana at http://localhost:3001 (Dashboards → Application, Alerting, Explore: Tempo,
+   Prometheus).
 2. Deployed: `OTEL_EXPORTER_OTLP_ENDPOINT` of your collector or provider, its credentials in
    `OTEL_EXPORTER_OTLP_HEADERS` (secret store), a sampler (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`,
    `OTEL_TRACES_SAMPLER_ARG=0.1`), `APP_ENVIRONMENT`.
-3. Build the dashboards and alerts from docs/observability.md#metrics and #alerting.
+3. Import the dashboards and load the alert rules of `observability/` into your backend, and route
+   the alerts by severity (docs/observability.md#use-them-with-your-backend).
 4. Kill switch: `OTEL_SDK_DISABLED=true`.
 
 ## Pull changes from the team

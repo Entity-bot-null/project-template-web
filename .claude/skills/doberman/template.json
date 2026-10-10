@@ -140,6 +140,19 @@
       "tags": ["tests"]
     },
     {
+      "id": "observability:check",
+      "script": "observability:check",
+      "name": "Observability as code (dashboards, alert rules, promtool)",
+      "command": "pnpm observability:check",
+      "source": ".github/workflows/quality-gates.yml › Observability as code (dashboards, alert rules)",
+      "required": true,
+      "when": "paths",
+      "paths": ["observability/**", ".github/tool-images/**"],
+      "requires": ["docker"],
+      "tags": ["static"],
+      "note": "Static checks of observability/ (datasource references, runbook sections, metric names against observability/api-metrics.json), then promtool from the pinned image: configuration, rules, every dashboard query parsed, the rules' unit tests. The static part also runs in pnpm test:scripts."
+    },
+    {
       "id": "gitleaks",
       "name": "Secrets in the git history (gitleaks)",
       "command": "docker run --rm -v \"$PWD:/repo:ro\" \"$(node scripts/tool-image.mjs gitleaks)\" git /repo --redact --no-banner",
@@ -319,10 +332,16 @@
       "paths": [
         "apps/api/src/observability/**",
         "apps/api/src/common/logging/**",
-        "apps/web/src/monitoring/**"
+        "apps/web/src/monitoring/**",
+        "observability/**"
       ],
-      "focus": "redaction, ids not personal data, errorTracker/reportError once, low-cardinality metric attributes",
-      "docs": ["docs/observability.md", "docs/security.md"]
+      "focus": "redaction, ids not personal data, errorTracker/reportError once, low-cardinality metric attributes, dashboards and alert rules reading only exported metrics, every alert with severity, runbook and a unit test",
+      "docs": [
+        "docs/observability.md",
+        "docs/security.md",
+        "docs/alerting.md",
+        "docs/incident-response.md"
+      ]
     },
     {
       "id": "deploy",

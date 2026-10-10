@@ -1,0 +1,268 @@
+# Unit tests of api-alerts.yaml with synthetic series: `pnpm observability:check`
+# runs them with promtool (docs/observability.md#dashboards-and-alerts-as-code).
+# "1+6x10" is 1, 7, 13... one value per interval; "_" is a missing sample.
+rule_files:
+  - ../rules/api-alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # The orchestrator probes every 10 seconds and every probe fails.
+  - name: readiness failing for minutes pages
+    interval: 1m
+    input_series:
+      - series: 'app_server_errors_total{job="api", deployment_environment_name="production", instance="i-1", error_origin="unavailable", http_route="/api/health/ready"}'
+        values: '1+6x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ApiReadinessFailing
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ApiReadinessFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: api
+              deployment_environment_name: production
+              instance: i-1
+            exp_annotations:
+              summary: 'API instance i-1 fails its readiness probe (api, production)'
+              description: 'GET /api/health/ready answered 503 12 times in the last 2 minutes: the orchestrator takes the instance out of rotation. The reason is in the "Readiness:" warning of its log.'
+              runbook_url: docs/incident-response.md#2-readiness-failing
+              dashboard_uid: app-api
+
+  # One 503 while an instance drains for a deployment, then nothing.
+  - name: a single readiness failure does not page
+    interval: 1m
+    input_series:
+      - series: 'app_server_errors_total{job="api", deployment_environment_name="production", instance="i-1", error_origin="unavailable", http_route="/api/health/ready"}'
+        values: '1x3 2x8'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ApiReadinessFailing
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ApiReadinessFailing
+        exp_alerts: []
+
+  # Other deliberate 503s (a feature switched off) are not readiness.
+  - name: other unavailable answers are not readiness failures
+    interval: 1m
+    input_series:
+      - series: 'app_server_errors_total{job="api", deployment_environment_name="production", instance="i-1", error_origin="unavailable", http_route="/api/users"}'
+        values: '1+6x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ApiReadinessFailing
+        exp_alerts: []
+
+  - name: no API metrics for 10 minutes warns
+    interval: 1m
+    input_series:
+      - series: 'process_cpu_time_seconds_total{job="api", deployment_environment_name="production", instance="i-1", cpu_mode="user"}'
+        values: '0+1x20 _x20'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ApiMetricsAbsent
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ApiMetricsAbsent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+            exp_annotations:
+              summary: 'No metrics from the API for 10 minutes (api)'
+              description: 'Either no API instance is running (the uptime checks page for that) or its OTLP export stopped reaching this backend; the SLO alerts cannot fire meanwhile. Check the instances, then OTEL_EXPORTER_OTLP_ENDPOINT and the collector.'
+              runbook_url: docs/incident-response.md#1-api-down
+              dashboard_uid: app-api
+
+  - name: database errors for minutes page, a single burst does not
+    interval: 1m
+    input_series:
+      - series: 'app_server_errors_total{job="api", deployment_environment_name="production", instance="i-1", error_origin="database", http_route="/api/users"}'
+        values: '1+3x10'
+      - series: 'app_server_errors_total{job="api", deployment_environment_name="staging", instance="i-2", error_origin="database", http_route="/api/users"}'
+        values: '1x3 5x8'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ApiDatabaseErrors
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'API requests fail on the database (api, production)'
+              description: '6 responses in the last 2 minutes were 5xx caused by the database, for more than 2 minutes.'
+              runbook_url: docs/incident-response.md#3-database-unavailable
+              dashboard_uid: app-api
+
+  # /api/users: 10 % of 600 requests a minute fail. /api/reports: every
+  # request fails, but there are only 10 in 10 minutes.
+  - name: one route answering many 5xx warns, with enough traffic
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+540x40'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+60x40'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/reports", http_response_status_code="500"}'
+        values: '0+1x40'
+    alert_rule_test:
+      # Pending: true for less than the 10 minutes of "for".
+      - eval_time: 8m
+        alertname: ApiRouteErrorRatioHigh
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ApiRouteErrorRatioHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              http_route: /api/users
+            exp_annotations:
+              summary: '/api/users answers too many 5xx (api, production)'
+              description: '10% of its responses over the last 10 minutes were 5xx (threshold 5 %).'
+              runbook_url: docs/incident-response.md#5-high-5xx-rate
+              dashboard_uid: app-api
+
+  # Each minute 100 requests: 50 within 250 ms, 80 within 500 ms, all
+  # within 1 s, so p95 = 0.5 + (95 - 80) / (100 - 80) × 0.5 s = 875 ms.
+  # Sign-in is as slow but excluded (password hashing is slow on purpose).
+  - name: p95 above 500 ms on a route warns, authentication excluded
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.25"}'
+        values: '0+50x40'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.5"}'
+        values: '0+80x40'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="1"}'
+        values: '0+100x40'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="+Inf"}'
+        values: '0+100x40'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+100x40'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/auth/sign-in", http_response_status_code="200", le="0.5"}'
+        values: '0+0x40'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/auth/sign-in", http_response_status_code="200", le="+Inf"}'
+        values: '0+100x40'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/auth/sign-in", http_response_status_code="200"}'
+        values: '0+100x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ApiRouteLatencyHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: ApiRouteLatencyHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              http_route: /api/users
+            exp_annotations:
+              summary: '/api/users is slow: p95 above 500 ms (api, production)'
+              description: 'p95 over the last 10 minutes: 875ms, for more than 15 minutes.'
+              runbook_url: docs/incident-response.md#6-high-latency
+              dashboard_uid: app-api
+
+  - name: features running on their fallback warn
+    interval: 1m
+    input_series:
+      - series: 'app_degraded_operations_total{job="api", deployment_environment_name="production", instance="i-1", feature="rate_limit", dependency_name="redis"}'
+        values: '0+10x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ApiDegradedMode
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ApiDegradedMode
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              feature: rate_limit
+              dependency_name: redis
+            exp_annotations:
+              summary: 'rate_limit runs degraded: redis unavailable (api, production)'
+              description: '50 operations in the last 5 minutes were served by the fallback, for more than 5 minutes.'
+              runbook_url: docs/incident-response.md#4-redis-unavailable
+              dashboard_uid: app-api
+
+  # billing: 3 of 30 calls a minute time out. maps: all calls succeed.
+  - name: a failing external dependency warns
+    interval: 1m
+    input_series:
+      - series: 'app_dependency_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", dependency_name="billing", outcome="success", http_response_status_code="200"}'
+        values: '0+27x40'
+      - series: 'app_dependency_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", dependency_name="billing", outcome="timeout"}'
+        values: '0+3x40'
+      - series: 'app_dependency_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", dependency_name="maps", outcome="success", http_response_status_code="200"}'
+        values: '0+30x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ApiDependencyFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              dependency_name: billing
+            exp_annotations:
+              summary: 'Calls to billing fail (api, production)'
+              description: '10% of the calls over the last 10 minutes failed (threshold 5 %).'
+              runbook_url: docs/incident-response.md#12-external-dependency-outage
+              dashboard_uid: app-api
+
+  - name: requests waiting for a database connection warn
+    interval: 1m
+    input_series:
+      - series: 'db_client_connection_pending_requests{job="api", deployment_environment_name="production", instance="i-1", db_client_connection_pool_name="pool"}'
+        values: '0 0 3x10'
+      - series: 'db_client_connection_pending_requests{job="api", deployment_environment_name="production", instance="i-2", db_client_connection_pool_name="pool"}'
+        values: '0x12'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ApiDatabasePoolSaturated
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: ApiDatabasePoolSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              instance: i-1
+            exp_annotations:
+              summary: 'Requests wait for a database connection on i-1 (api, production)'
+              description: '3 requests are waiting for a connection of the pool, for more than 5 minutes.'
+              runbook_url: docs/incident-response.md#6-high-latency
+              dashboard_uid: app-api
+
+  - name: a blocked event loop warns
+    interval: 1m
+    input_series:
+      - series: 'nodejs_eventloop_delay_p99_seconds{job="api", deployment_environment_name="production", instance="i-1"}'
+        values: '0.35x20'
+      - series: 'nodejs_eventloop_delay_p99_seconds{job="api", deployment_environment_name="production", instance="i-2"}'
+        values: '0.02x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ApiEventLoopDelayHigh
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ApiEventLoopDelayHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              instance: i-1
+            exp_annotations:
+              summary: 'Event loop delay above 200 ms on i-1 (api, production)'
+              description: 'p99 event loop delay: 350ms, for more than 15 minutes (CPU starvation or blocking work).'
+              runbook_url: docs/incident-response.md#7-memory-or-cpu-pressure
+              dashboard_uid: app-api

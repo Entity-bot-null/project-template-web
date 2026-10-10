@@ -47,18 +47,23 @@ a share of users degraded (CRITICAL or persistent WARNING); SEV3 = minor, no use
 | Which version is running?     | `release` on the log lines and spans (`service.version`), `release` in `/app-config.json` for the web image                                |
 | Is the database the problem?  | Readiness `Database unreachable`, `error.origin=database`, `db_client_connection_*` pool metrics, `Slow query` warnings                    |
 | Is Redis the problem?         | Readiness `checks.redis`, `Redis unavailable`, `Redis is not answering` and the matching recovery lines, `app_degraded_operations_total`   |
+| The overall picture?          | Grafana → Application: "API service" (traffic, errors by origin, runtime, database, Redis, dependencies), "API SLOs" (budget, burn rates)  |
 | Is a provider the problem?    | `app_dependency_duration_seconds` by `dependency_name` and `outcome`, `External:<name>` log lines, the provider's status page              |
 
 PromQL for each metric: docs/observability.md#metrics. Log patterns: [alerting.md](alerting.md#log-patterns).
 
 ## Runbooks
 
-Each runbook: symptoms, impact, first checks, signals, immediate actions, mitigation, when to roll
-back, when it is recovered, what to validate afterwards, what to document. The general rule for
-rollback: if the problem started with a deployment, roll back first and investigate after.
+Each runbook: the alerts that open it, symptoms, impact, first checks, signals, immediate actions,
+mitigation, when to roll back, when it is recovered, what to validate afterwards, what to document.
+The alerts are the rules of `observability/prometheus/rules`, whose `runbook_url` points at these
+sections and whose `dashboard_uid` names the dashboard to open first
+([observability.md](observability.md#alerts)). The general rule for rollback: if the problem
+started with a deployment, roll back first and investigate after.
 
 ### 1. API down
 
+- **Alerts:** `ApiMetricsAbsent` (no metrics at all); the external uptime checks.
 - **Symptoms:** the uptime check on a page that calls the API fails; `/api/*` answers nginx's 502
   or 504 while `/healthz` (nginx alone) still answers 200; no access log lines from the API.
 - **Impact:** total for signed-in use: the app shell loads, every API call fails, nobody can sign in.
@@ -83,6 +88,7 @@ rollback: if the problem started with a deployment, roll back first and investig
 
 ### 2. Readiness failing
 
+- **Alerts:** `ApiReadinessFailing`.
 - **Symptoms:** instances marked unready, taken out of the load balancer; `GET /api/health/ready`
   answers 503 with the reason in the message: `Database unreachable`, `Redis unreachable` (only
   with `REDIS_REQUIRED=true`) or `Shutting down`. `status: "degraded"` with 200 is not a failure.
@@ -105,6 +111,7 @@ rollback: if the problem started with a deployment, roll back first and investig
 
 ### 3. Database unavailable
 
+- **Alerts:** `ApiDatabaseErrors`; often `ApiReadinessFailing` with it.
 - **Symptoms:** readiness 503 `Database unreachable`; 5xx lines ending `, database)`;
   `app_server_errors_total{error_origin="database"}` rising; Sentry issues with `error.origin:
 database`; failing pg spans. The API keeps running (it even starts without a database, and
@@ -134,6 +141,7 @@ database system is in recovery mode` (restart or failover). The provider's statu
 
 ### 4. Redis unavailable
 
+- **Alerts:** `ApiDegradedMode` (`feature`, `dependency_name` labels).
 - **Symptoms:** `Redis unavailable (<host>): <reason>` once per outage, or
   `Redis is not answering (<host>)` when it stays connected but stops replying; readiness
   `status: "degraded"`, `checks.redis: "unavailable"` (200); `Rate limiting falls back to
@@ -163,6 +171,8 @@ per-instance counters`; `Cache unavailable, serving from the source`;
 
 ### 5. High 5xx rate
 
+- **Alerts:** `ApiAvailabilityBudgetFastBurn` (CRITICAL), `ApiAvailabilityBudgetSlowBurn`,
+  `ApiRouteErrorRatioHigh` (one route).
 - **Symptoms:** availability burn rate alert; Sentry spike; 5xx lines
   `METHOD /path -> 5xx (request <id>, <origin>)`.
 - **Impact:** the routes affected, for every user who calls them.
@@ -184,6 +194,8 @@ per-instance counters`; `Cache unavailable, serving from the source`;
 
 ### 6. High latency
 
+- **Alerts:** `ApiLatencyBudgetFastBurn` (CRITICAL), `ApiLatencyBudgetSlowBurn`,
+  `ApiRouteLatencyHigh` (one route), `ApiDatabasePoolSaturated`.
 - **Symptoms:** p95 or p99 of `http.server.request.duration` above the latency SLO, latency burn
   rate alert, users reporting slowness; nginx's access log `request_time`.
 - **Impact:** slow pages, client timeouts, retries that add load.
@@ -205,6 +217,7 @@ per-instance counters`; `Cache unavailable, serving from the source`;
 
 ### 7. Memory or CPU pressure
 
+- **Alerts:** `ApiEventLoopDelayHigh`.
 - **Symptoms:** CPU near the container's limit or throttled; `process.memory.usage` (RSS) or
   `v8js.memory.heap.used` growing toward the memory limit; longer `v8js.gc.duration`; event loop
   delay; restarts with exit code 137 (killed for memory).
@@ -325,6 +338,7 @@ per-instance counters`; `Cache unavailable, serving from the source`;
 
 ### 12. External dependency outage
 
+- **Alerts:** `ApiDependencyFailing` (`dependency_name` label).
 - **Symptoms:** 502 (`An upstream service failed`) or 504 (`An upstream service did not answer in
 time`) on the routes that call a provider; 5xx lines ending `dependency: <name>)`; warnings from
   the `External:<name>` logger (`METHOD /path <status|timeout|network_error> <ms>ms attempts=<n>`);

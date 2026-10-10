@@ -189,6 +189,8 @@ The plan comes from `doberman.mjs start` (`verify` in `package.json`, plus the C
   Doberman engine and Semgrep's file selection. On Windows the POSIX signal test is skipped.
 - `pnpm sast` and `pnpm lint:workflows` need Docker; `pnpm security` needs the network. gitleaks
   needs commits; on Windows (Git Bash) the plan's `commandWindows` passes a Windows path to Docker.
+- `pnpm observability:check` (Docker; when `observability/**` or `.github/tool-images/**` change):
+  dashboards and alert rules against runbooks and exported metrics, then promtool and rule tests.
 - `pnpm contract` writes files: never run it in the workspace. Contract drift is already checked by
   `pnpm typecheck` and the drift spec in `pnpm test:coverage`.
 

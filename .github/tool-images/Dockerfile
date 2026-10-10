@@ -35,3 +35,10 @@ FROM public.ecr.aws/docker/library/redis:8-alpine@sha256:3811787313eba226a2ef386
 
 # Dynamic application security testing (.github/workflows/dast.yml).
 FROM ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef AS zap
+
+# Observability as code (pnpm observability:check): promtool checks the
+# Prometheus configuration, alert and recording rules and the dashboards'
+# queries, and runs the rules' unit tests. Keep it at or above the Prometheus
+# version of the local backend (docker-compose.yml, grafana/otel-lgtm). From
+# Quay, where the Prometheus project publishes the digest of prom/prometheus.
+FROM quay.io/prometheus/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e AS promtool

@@ -1,0 +1,284 @@
+# Service level objectives of the API (docs/alerting.md#slis-and-slos), as
+# Prometheus rules that any Prometheus, Mimir or Grafana Cloud stack loads
+# unchanged (docs/observability.md#dashboards-and-alerts-as-code):
+#
+#   api-availability  99.9 % of API responses are not 5xx, over 30 days;
+#   api-latency       95 % of API responses take 500 ms or less, over 30 days,
+#                     authentication routes excluded (sign-in hashes passwords
+#                     on purpose, slowly).
+#
+# Health probes never reach these numbers: the API does not measure them.
+# The recording rules compute each SLI's error ratio (bad events / all
+# events) over the windows of the burn-rate alerts; the alerts follow the
+# multiwindow, multi-burn-rate method of Google's SRE Workbook, with the
+# severities of docs/alerting.md#error-budget. Everything is grouped by job
+# (OTEL_SERVICE_NAME) and deployment_environment_name (APP_ENVIRONMENT), so
+# two services or two environments sharing a backend never mix.
+#
+# Changing an objective: the error budget (1 - objective) is written in the
+# objective rule and in each alert below, and the latency threshold (le="0.5")
+# must stay a bucket boundary of http.server.request.duration.
+groups:
+  - name: api-slo-objectives
+    rules:
+      # Metadata for the SLO dashboard: the target of each SLO.
+      - record: slo:objective:ratio
+        labels:
+          slo: api-availability
+        expr: vector(0.999)
+      - record: slo:objective:ratio
+        labels:
+          slo: api-latency
+        expr: vector(0.95)
+
+  # Error ratio = 5xx responses / all responses. "or ... 0 *" keeps a 0 for
+  # a service that answered no 5xx at all, instead of no value.
+  - name: api-slo-availability
+    rules:
+      - record: slo:sli_error:ratio_rate5m
+        labels:
+          slo: api-availability
+        expr: |
+          (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+            or on (job, deployment_environment_name)
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[5m]))
+          )
+          /
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[5m]))
+      - record: slo:sli_error:ratio_rate30m
+        labels:
+          slo: api-availability
+        expr: |
+          (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30m]))
+            or on (job, deployment_environment_name)
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30m]))
+          )
+          /
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30m]))
+      - record: slo:sli_error:ratio_rate1h
+        labels:
+          slo: api-availability
+        expr: |
+          (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1h]))
+            or on (job, deployment_environment_name)
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[1h]))
+          )
+          /
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[1h]))
+      - record: slo:sli_error:ratio_rate6h
+        labels:
+          slo: api-availability
+        expr: |
+          (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[6h]))
+            or on (job, deployment_environment_name)
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[6h]))
+          )
+          /
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[6h]))
+      - record: slo:sli_error:ratio_rate3d
+        labels:
+          slo: api-availability
+        expr: |
+          (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[3d]))
+            or on (job, deployment_environment_name)
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[3d]))
+          )
+          /
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[3d]))
+      # Request rates of the long windows: an SLO alert needs at least 100
+      # requests in its long window. With fewer, one failure moves the ratio
+      # by whole percents; the uptime checks cover low traffic instead.
+      - record: slo:sli_requests:rate1h
+        labels:
+          slo: api-availability
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[1h]))
+      - record: slo:sli_requests:rate6h
+        labels:
+          slo: api-availability
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[6h]))
+      - record: slo:sli_requests:rate3d
+        labels:
+          slo: api-availability
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[3d]))
+
+  # Error ratio = responses slower than 500 ms / all responses, from the
+  # cumulative bucket le="0.5" (responses that took 500 ms or less).
+  - name: api-slo-latency
+    rules:
+      - record: slo:sli_error:ratio_rate5m
+        labels:
+          slo: api-latency
+        expr: |
+          1 - (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[5m]))
+            /
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[5m]))
+          )
+      - record: slo:sli_error:ratio_rate30m
+        labels:
+          slo: api-latency
+        expr: |
+          1 - (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[30m]))
+            /
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[30m]))
+          )
+      - record: slo:sli_error:ratio_rate1h
+        labels:
+          slo: api-latency
+        expr: |
+          1 - (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[1h]))
+            /
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[1h]))
+          )
+      - record: slo:sli_error:ratio_rate6h
+        labels:
+          slo: api-latency
+        expr: |
+          1 - (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[6h]))
+            /
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[6h]))
+          )
+      - record: slo:sli_error:ratio_rate3d
+        labels:
+          slo: api-latency
+        expr: |
+          1 - (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[3d]))
+            /
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[3d]))
+          )
+      - record: slo:sli_requests:rate1h
+        labels:
+          slo: api-latency
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[1h]))
+      - record: slo:sli_requests:rate6h
+        labels:
+          slo: api-latency
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[6h]))
+      - record: slo:sli_requests:rate3d
+        labels:
+          slo: api-latency
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[3d]))
+
+  # The compliance window itself, for the SLO dashboard (the SLI and the
+  # error budget left over 30 days). Evaluated every 5 minutes: a 30-day rate
+  # moves slowly, and it is the most expensive rule here.
+  - name: api-slo-compliance
+    interval: 5m
+    rules:
+      - record: slo:sli_error:ratio_rate30d
+        labels:
+          slo: api-availability
+        expr: |
+          (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30d]))
+            or on (job, deployment_environment_name)
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30d]))
+          )
+          /
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30d]))
+      - record: slo:sli_error:ratio_rate30d
+        labels:
+          slo: api-latency
+        expr: |
+          1 - (
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[30d]))
+            /
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[30d]))
+          )
+
+  # Burn rate = error ratio / error budget. 14.4 over 1 hour spends 2 % of
+  # the 30-day budget in that hour (CRITICAL, page); 6 over 6 hours spends
+  # 5 %, and 1 over 3 days is on track to spend it all (WARNING, ticket).
+  # Each long window proves the burn is sustained, its short window that it
+  # is still going on, so the alert also stops soon after the burn does.
+  - name: api-slo-alerts
+    rules:
+      - alert: ApiAvailabilityBudgetFastBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate1h{slo="api-availability"} > (14.4 * 0.001)
+            and on (job, deployment_environment_name)
+            slo:sli_error:ratio_rate5m{slo="api-availability"} > (14.4 * 0.001)
+          )
+          and on (job, deployment_environment_name)
+          slo:sli_requests:rate1h{slo="api-availability"} * 3600 >= 100
+        labels:
+          severity: critical
+        annotations:
+          summary: 'API errors are burning the availability budget fast ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanizePercentage }} of the responses in the last hour were 5xx: at this rate the 30-day error budget of the 99.9 % availability SLO runs out in two days or less.'
+          runbook_url: docs/incident-response.md#5-high-5xx-rate
+          dashboard_uid: app-slo
+      - alert: ApiAvailabilityBudgetSlowBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate6h{slo="api-availability"} > (6 * 0.001)
+            and on (job, deployment_environment_name)
+            slo:sli_error:ratio_rate30m{slo="api-availability"} > (6 * 0.001)
+            and on (job, deployment_environment_name)
+            slo:sli_requests:rate6h{slo="api-availability"} * 21600 >= 100
+          )
+          or on (job, deployment_environment_name)
+          (
+            slo:sli_error:ratio_rate3d{slo="api-availability"} > 0.001
+            and on (job, deployment_environment_name)
+            slo:sli_error:ratio_rate6h{slo="api-availability"} > 0.001
+            and on (job, deployment_environment_name)
+            slo:sli_requests:rate3d{slo="api-availability"} * 259200 >= 100
+          )
+        labels:
+          severity: warning
+        annotations:
+          summary: 'API errors are steadily spending the availability budget ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanizePercentage }} of the responses were 5xx over the alert window (6 hours, or 3 days): the 99.9 % availability SLO runs out of budget before the 30 days end if this continues.'
+          runbook_url: docs/incident-response.md#5-high-5xx-rate
+          dashboard_uid: app-slo
+      - alert: ApiLatencyBudgetFastBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate1h{slo="api-latency"} > (14.4 * 0.05)
+            and on (job, deployment_environment_name)
+            slo:sli_error:ratio_rate5m{slo="api-latency"} > (14.4 * 0.05)
+          )
+          and on (job, deployment_environment_name)
+          slo:sli_requests:rate1h{slo="api-latency"} * 3600 >= 100
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Slow API responses are burning the latency budget fast ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanizePercentage }} of the responses in the last hour took longer than 500 ms: at this rate the 30-day budget of the latency SLO (95 % within 500 ms) runs out in two days or less.'
+          runbook_url: docs/incident-response.md#6-high-latency
+          dashboard_uid: app-slo
+      - alert: ApiLatencyBudgetSlowBurn
+        expr: |
+          (
+            slo:sli_error:ratio_rate6h{slo="api-latency"} > (6 * 0.05)
+            and on (job, deployment_environment_name)
+            slo:sli_error:ratio_rate30m{slo="api-latency"} > (6 * 0.05)
+            and on (job, deployment_environment_name)
+            slo:sli_requests:rate6h{slo="api-latency"} * 21600 >= 100
+          )
+          or on (job, deployment_environment_name)
+          (
+            slo:sli_error:ratio_rate3d{slo="api-latency"} > 0.05
+            and on (job, deployment_environment_name)
+            slo:sli_error:ratio_rate6h{slo="api-latency"} > 0.05
+            and on (job, deployment_environment_name)
+            slo:sli_requests:rate3d{slo="api-latency"} * 259200 >= 100
+          )
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Slow API responses are steadily spending the latency budget ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanizePercentage }} of the responses took longer than 500 ms over the alert window (6 hours, or 3 days): the latency SLO runs out of budget before the 30 days end if this continues.'
+          runbook_url: docs/incident-response.md#6-high-latency
+          dashboard_uid: app-slo

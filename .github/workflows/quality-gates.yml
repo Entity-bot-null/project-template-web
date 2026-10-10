@@ -88,6 +88,23 @@ jobs:
       # (docs/security.md#static-analysis). No install needed.
       - run: node scripts/sast.mjs
 
+  observability:
+    name: Observability as code (dashboards, alert rules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # The dashboards and rules of observability/: datasource references,
+      # runbook sections, only metrics the API exports; then promtool from the
+      # pinned image of .github/tool-images/Dockerfile checks the
+      # configuration, the rules and every dashboard query, and runs the
+      # rules' unit tests (docs/observability.md#dashboards-and-alerts-as-code).
+      - run: pnpm observability:check
+
   unit:
     name: Unit and component tests, coverage
     runs-on: ubuntu-latest

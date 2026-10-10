@@ -65,15 +65,16 @@ function dockerPull(reference) {
  * directory) and returns its exit status.
  * @param {string} name
  * @param {string[]} args
- * @param {{ env?: string[]; mount?: string; entrypoint?: string; source?: string }} [options]
+ * @param {{ env?: string[]; mount?: string; entrypoint?: string; source?: string; input?: string }} [options]
  *   variables passed through from this process; where the image expects the
  *   code (default /repo); another program of the image than its default one;
- *   the directory mounted (default the current one)
+ *   the directory mounted (default the current one); text written to the
+ *   tool's standard input
  */
 export function runTool(
   name,
   args,
-  { env = [], mount = '/repo', entrypoint, source = process.cwd() } = {},
+  { env = [], mount = '/repo', entrypoint, source = process.cwd(), input } = {},
 ) {
   const passEnv = env.filter((key) => process.env[key]).flatMap((key) => ['-e', key]);
   const run = spawnSync(
@@ -81,6 +82,7 @@ export function runTool(
     [
       'run',
       '--rm',
+      ...(input === undefined ? [] : ['-i']),
       '-v',
       `${source}:${mount}`,
       '-w',
@@ -90,7 +92,7 @@ export function runTool(
       pullableImage(toolImage(name)),
       ...args,
     ],
-    { stdio: 'inherit' },
+    input === undefined ? { stdio: 'inherit' } : { stdio: ['pipe', 'inherit', 'inherit'], input },
   );
   if (run.error) {
     console.error(

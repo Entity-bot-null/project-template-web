@@ -1,0 +1,120 @@
+{
+  "$comment": "The Prometheus series the API exports over OpenTelemetry, named as Prometheus stores them (dots become underscores; the unit and _total become suffixes; a histogram is <name>_bucket, _count and _sum), with their attribute labels. Resource labels (job, instance, service_version, deployment_environment_name...) are on every series and not listed. Dashboards and rules may read these and the series recording rules write, nothing else (pnpm observability:check). Rewritten from a running backend: node scripts/check-observability.mjs --update-catalog <prometheus URL>, after traffic that exercises every metric (docs/observability.md#metric-catalog). apps/api/src/observability/metrics-catalog.spec.ts checks the application's own metrics (app_*, process_*) against the code.",
+  "job": "api",
+  "metrics": {
+    "app_cache_operations_total": {
+      "type": "counter",
+      "labels": ["cache_namespace", "cache_result"]
+    },
+    "app_db_slow_queries_total": { "type": "counter", "labels": [] },
+    "app_degraded_operations_total": {
+      "type": "counter",
+      "labels": ["dependency_name", "feature"]
+    },
+    "app_dependency_duration_seconds": {
+      "type": "histogram",
+      "labels": ["dependency_name", "http_response_status_code", "outcome"]
+    },
+    "app_server_errors_total": { "type": "counter", "labels": ["error_origin", "http_route"] },
+    "db_client_connection_count": {
+      "type": "gauge",
+      "labels": [
+        "db_client_connection_pool_name",
+        "db_client_connection_state",
+        "db_namespace",
+        "db_system_name",
+        "redis_client_library",
+        "server_address",
+        "server_port"
+      ]
+    },
+    "db_client_connection_create_time_seconds": {
+      "type": "histogram",
+      "labels": [
+        "db_client_connection_pool_name",
+        "db_namespace",
+        "db_system_name",
+        "redis_client_library",
+        "server_address",
+        "server_port"
+      ]
+    },
+    "db_client_connection_max": { "type": "gauge", "labels": ["db_client_connection_pool_name"] },
+    "db_client_connection_pending_requests": {
+      "type": "gauge",
+      "labels": ["db_client_connection_pool_name"]
+    },
+    "db_client_operation_duration_seconds": {
+      "type": "histogram",
+      "labels": [
+        "db_namespace",
+        "db_operation_name",
+        "db_system_name",
+        "redis_client_library",
+        "server_address",
+        "server_port"
+      ]
+    },
+    "http_client_request_duration_seconds": {
+      "type": "histogram",
+      "labels": [
+        "error_type",
+        "http_request_method",
+        "http_response_status_code",
+        "network_protocol_version",
+        "server_address",
+        "server_port",
+        "url_scheme"
+      ]
+    },
+    "http_server_request_duration_seconds": {
+      "type": "histogram",
+      "labels": [
+        "error_type",
+        "http_request_method",
+        "http_response_status_code",
+        "http_route",
+        "network_protocol_version",
+        "url_scheme"
+      ]
+    },
+    "nodejs_eventloop_delay_max_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_mean_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_min_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_p50_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_p90_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_p99_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_stddev_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_time_seconds_total": {
+      "type": "counter",
+      "labels": ["nodejs_eventloop_state"]
+    },
+    "nodejs_eventloop_utilization_ratio": { "type": "gauge", "labels": [] },
+    "process_cpu_time_seconds_total": { "type": "counter", "labels": ["cpu_mode"] },
+    "process_memory_usage_bytes": { "type": "gauge", "labels": [] },
+    "redis_client_errors_total": {
+      "type": "counter",
+      "labels": [
+        "db_client_connection_pool_name",
+        "db_namespace",
+        "db_system_name",
+        "error_type",
+        "redis_client_errors_category",
+        "redis_client_errors_internal",
+        "redis_client_library"
+      ]
+    },
+    "v8js_gc_duration_seconds": { "type": "histogram", "labels": ["v8js_gc_type"] },
+    "v8js_memory_heap_space_available_size_bytes": {
+      "type": "gauge",
+      "labels": ["v8js_heap_space_name"]
+    },
+    "v8js_memory_heap_space_physical_size_bytes": {
+      "type": "gauge",
+      "labels": ["v8js_heap_space_name"]
+    },
+    "v8js_memory_heap_space_size_bytes": { "type": "gauge", "labels": ["v8js_heap_space_name"] },
+    "v8js_memory_heap_used_bytes": { "type": "gauge", "labels": ["v8js_heap_space_name"] },
+    "v8js_resource_active": { "type": "gauge", "labels": ["v8js_resource_type"] }
+  }
+}
