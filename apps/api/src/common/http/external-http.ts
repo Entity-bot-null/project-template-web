@@ -18,10 +18,11 @@ import { REQUEST_ID_HEADER } from '../logging/request-context.middleware.js';
 //     502/504 and reports as a dependency failure, not an application bug.
 //
 //   const billing = createExternalHttpClient({
-//     name: 'billing', baseUrl: env.BILLING_URL,
+//     name: 'billing', baseUrl: env.BILLING_URL, // https://billing.example.com/v1
 //     headers: () => ({ Authorization: `Bearer ${env.BILLING_API_KEY}` }),
 //   });
-//   const { body } = await billing.request<Invoice>({ path: `/invoices/${id}` });
+//   // GET https://billing.example.com/v1/invoices/<id, encoded>
+//   const { body } = await billing.request<Invoice>({ path: ['invoices', id] });
 
 export type FailureKind = 'timeout' | 'network' | 'status';
 
@@ -42,8 +43,14 @@ type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface ExternalRequest {
   method?: Method;
-  /** Relative to baseUrl; it can never point at another host. */
-  path: string;
+  /**
+   * Relative to baseUrl, without a leading "/" (which would drop the base
+   * path), and never outside it: a fixed path written in the code
+   * ('invoices'), or segments (['invoices', id]), each one encoded, so a value
+   * holding "/", "?" or "#" stays one segment. Never interpolate a value into
+   * a string path.
+   */
+  path: string | readonly string[];
   query?: Record<string, string>;
   /** Sent as JSON. */
   body?: unknown;
@@ -64,7 +71,10 @@ export interface ExternalResponse<T> {
 export interface ExternalHttpClientOptions {
   /** Low-cardinality name: metric attribute, log field, error report tag. */
   name: string;
-  /** From configuration, never from user input (SSRF). */
+  /**
+   * From configuration, never from user input (SSRF). Its path is kept, with
+   * or without a trailing "/"; no query string or fragment.
+   */
   baseUrl: string;
   /** Per attempt. */
   timeoutMs?: number;
@@ -87,7 +97,7 @@ export interface ExternalHttpClient {
 
 export function createExternalHttpClient(options: ExternalHttpClientOptions): ExternalHttpClient {
   const logger = new Logger(`External:${options.name}`);
-  const base = new URL(options.baseUrl);
+  const base = baseUrlOf(options.name, options.baseUrl);
   const timeoutMs = options.timeoutMs ?? 5_000;
   const retries = options.retries ?? 2;
   const doFetch = options.fetch ?? ((input, init) => fetch(input, init));
@@ -97,10 +107,7 @@ export function createExternalHttpClient(options: ExternalHttpClientOptions): Ex
   return {
     async request<T>(request: ExternalRequest): Promise<ExternalResponse<T>> {
       const method = request.method ?? 'GET';
-      const url = new URL(request.path, base);
-      if (url.origin !== base.origin) {
-        throw new Error(`${options.name}: path "${request.path}" leaves ${base.origin}`);
-      }
+      const url = resolve(options.name, base, request.path);
       for (const [key, value] of Object.entries(request.query ?? {})) {
         url.searchParams.set(key, value);
       }
@@ -177,6 +184,71 @@ export function createExternalHttpClient(options: ExternalHttpClientOptions): Ex
       }
     },
   };
+}
+
+/**
+ * The base URL, its path ending with "/": a relative path then extends it
+ * (`v1/` + `invoices` is `v1/invoices`) instead of replacing its last segment.
+ */
+function baseUrlOf(name: string, baseUrl: string): URL {
+  const base = new URL(baseUrl);
+  if (base.search !== '' || base.hash !== '') {
+    throw new Error(
+      `${name}: baseUrl must not have a query string or a fragment (every request would drop them)`,
+    );
+  }
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  return base;
+}
+
+// A dot segment as the URL parser reads one: ".", "..", or a percent-encoded
+// spelling ("%2e", ".%2E"...).
+const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
+// Characters the URL parser reads differently from what the code shows: in an
+// http(s) URL a backslash is a "/", and tabs and newlines are dropped (".\t."
+// is "..").
+const MISREAD = /[\\\t\n\r]/;
+
+/** The request URL: under the base URL, or an error before anything is sent. */
+function resolve(name: string, base: URL, path: string | readonly string[]): URL {
+  const relative =
+    typeof path === 'string'
+      ? checkedPath(name, base, path)
+      : path.map((segment) => encodedSegment(name, segment)).join('/');
+  const url = new URL(relative, base);
+  // The last word, whatever the parser made of the path: the same origin
+  // (SSRF), under the base path.
+  if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
+    throw new Error(`${name}: path "${relative}" leaves ${base.origin}${base.pathname}`);
+  }
+  return url;
+}
+
+/** A path written in the code, refused when it would not mean what it shows under the base path. */
+function checkedPath(name: string, base: URL, path: string): string {
+  if (path.startsWith('/')) {
+    throw new Error(
+      `${name}: path "${path}" starts with "/", which leaves the base path ${base.pathname}: make it relative`,
+    );
+  }
+  if (MISREAD.test(path)) {
+    throw new Error(`${name}: path "${path}" has a backslash, a tab or a newline`);
+  }
+  const segments = path.split(/[?#]/, 1)[0]?.split('/') ?? [];
+  if (segments.some((segment) => DOT_SEGMENT.test(segment))) {
+    throw new Error(`${name}: path "${path}" has a "." or ".." segment`);
+  }
+  return path;
+}
+
+/** One segment of the path, encoded: "/", "?", "#", "\" and "%" in a value stay in it. */
+function encodedSegment(name: string, segment: string): string {
+  // Encoding leaves dots alone: "." and ".." would still move up the path,
+  // and an empty segment would reach the collection instead of an item.
+  if (segment === '' || segment === '.' || segment === '..') {
+    throw new Error(`${name}: path segment "${segment}" would reach another resource`);
+  }
+  return encodeURIComponent(segment);
 }
 
 /** 200 ms, 400 ms, 800 ms... plus jitter, capped. */

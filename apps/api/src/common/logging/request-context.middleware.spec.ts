@@ -1,7 +1,10 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { createServer, type Server, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { Logger } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
+import { env } from '../../env/env.js';
 import { currentRequestId } from '../../observability/request-context.js';
 import {
   clientIp,
@@ -18,6 +21,8 @@ function exchange(url: string, headers: Record<string, string> = {}) {
   } as unknown as Request;
   const res = Object.assign(new EventEmitter(), {
     statusCode: 200,
+    headersSent: false,
+    writableFinished: false,
     setHeader: vi.fn(),
   }) as unknown as Response & EventEmitter;
   const next = vi.fn<() => void>();
@@ -86,12 +91,179 @@ describe('requestContext', () => {
     expect(currentRequestId()).toBeUndefined();
   });
 
+  it('logs once per request: a completed one at "finish", not again at "close"', () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { res } = exchange('/api/users');
+    Object.assign(res, { headersSent: true, writableFinished: true });
+    res.emit('finish');
+    res.emit('close');
+    expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).not.toContain('aborted');
+  });
+
+  it('logs a request the client gave up on (a proxy timeout, a shutdown), marked aborted', () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { req, res } = exchange('/api/reports?token=secret');
+    // The connection closed before the response was sent: no 'finish'.
+    res.emit('close');
+    res.emit('close');
+    expect(log).toHaveBeenCalledOnce();
+    const [line] = log.mock.calls[0] ?? [];
+    expect(String(line)).toMatch(/^GET \/api\/reports - \d+(\.\d+)?ms aborted ip=/);
+    expect(String(line)).toContain(req.id);
+    expect(String(line)).not.toContain('secret');
+  });
+
+  it('marks an aborted request in JSON lines, with no status when none was sent', () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const format = env.LOG_FORMAT;
+    env.LOG_FORMAT = 'json';
+    try {
+      const aborted = exchange('/api/reports?token=secret');
+      aborted.res.emit('close');
+      const completed = exchange('/api/users');
+      completed.res.emit('finish');
+      expect(log.mock.calls.map(([entry]): unknown => entry)).toEqual([
+        {
+          message: 'request aborted',
+          requestId: aborted.req.id,
+          method: 'GET',
+          path: '/api/reports',
+          statusCode: null,
+          durationMs: expect.any(Number) as number,
+          ip: 'unknown',
+          userId: null,
+          aborted: true,
+        },
+        {
+          message: 'request completed',
+          requestId: completed.req.id,
+          method: 'GET',
+          path: '/api/users',
+          statusCode: 200,
+          durationMs: expect.any(Number) as number,
+          ip: 'unknown',
+          userId: null,
+        },
+      ]);
+    } finally {
+      env.LOG_FORMAT = format;
+    }
+  });
+
   it('keeps health probes out of the default log level', () => {
     const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     const debug = vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     exchange('/api/health/live').res.emit('finish');
     expect(log).not.toHaveBeenCalled();
     expect(debug).toHaveBeenCalledOnce();
+  });
+});
+
+// Node's own events, not emitted by hand: "close" follows "finish" on every
+// response, and comes alone when the connection goes first.
+describe('requestContext on a real connection', () => {
+  /** Runs the middleware on an HTTP server; `handle` plays the route handler. */
+  async function withServer(
+    handle: (res: ServerResponse) => void,
+    run: (url: string, server: Server) => Promise<void>,
+  ): Promise<void> {
+    const server = createServer((req, res) => {
+      const request = Object.assign(req, {
+        originalUrl: req.url ?? '/',
+        get: (name: string) => req.headers[name.toLowerCase()],
+      });
+      requestContext(request as unknown as Request, res as unknown as Response, () => {
+        handle(res);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      await run(`http://127.0.0.1:${String(port)}`, server);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+
+  /**
+   * A handler that never finishes its answer, like a request stuck on a
+   * dependency: it does `start` (nothing by default) and hands the response over.
+   */
+  function stuckHandler(start: (res: ServerResponse) => void = () => undefined) {
+    let reached!: (res: ServerResponse) => void;
+    const response = new Promise<ServerResponse>((resolve) => {
+      reached = resolve;
+    });
+    const handle = (res: ServerResponse) => {
+      start(res);
+      reached(res);
+    };
+    return { handle, response };
+  }
+
+  it('logs a completed request once, although "close" follows "finish"', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    let closed!: Promise<unknown>;
+    await withServer(
+      (res) => {
+        closed = once(res, 'close');
+        res.end('ok');
+      },
+      async (url) => {
+        await (await fetch(`${url}/api/things`)).text();
+        await closed;
+      },
+    );
+    expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/^GET \/api\/things 200 [\d.]+ms ip=/);
+  });
+
+  it('logs a request the client or the proxy gave up on, once, marked aborted', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const stuck = stuckHandler();
+    await withServer(stuck.handle, async (url) => {
+      const client = new AbortController();
+      const pending = fetch(`${url}/api/slow?token=secret`, { signal: client.signal }).catch(
+        () => undefined,
+      );
+      const closed = once(await stuck.response, 'close');
+      client.abort(); // the proxy in front timed out (504), or the user left
+      await Promise.all([pending, closed]);
+    });
+    expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/^GET \/api\/slow - [\d.]+ms aborted ip=/);
+  });
+
+  it('keeps the status of a response cut after its headers were sent', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const streaming = stuckHandler((res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' }).write('first rows');
+    });
+    await withServer(streaming.handle, async (url) => {
+      const client = new AbortController();
+      const answer = await fetch(`${url}/api/export`, { signal: client.signal });
+      const closed = once(await streaming.response, 'close');
+      client.abort();
+      await Promise.all([answer.text().catch(() => undefined), closed]);
+    });
+    expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/^GET \/api\/export 200 [\d.]+ms aborted /);
+  });
+
+  it('logs the requests a shutdown cuts, marked aborted', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const stuck = stuckHandler();
+    await withServer(stuck.handle, async (url, server) => {
+      const pending = fetch(`${url}/api/slow`).catch(() => undefined);
+      const closed = once(await stuck.response, 'close');
+      // What GracefulShutdown does once the drain timeout has passed.
+      server.closeAllConnections();
+      await Promise.all([pending, closed]);
+    });
+    expect(log).toHaveBeenCalledOnce();
+    expect(String(log.mock.calls[0]?.[0])).toMatch(/^GET \/api\/slow - [\d.]+ms aborted /);
   });
 });
 

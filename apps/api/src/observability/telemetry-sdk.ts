@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'node:http';
-import { metrics, type ObservableResult } from '@opentelemetry/api';
+import { type AttributeValue, metrics, type ObservableResult } from '@opentelemetry/api';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
@@ -31,7 +31,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { OpenTelemetry as RedisTelemetry } from '@redis/client';
 import { register as registerEsmHooks } from 'import-in-the-middle/register-hooks.mjs';
-import { redactText, redactUrl } from './redact.js';
+import { REDACTED, redactText, redactUrl } from './redact.js';
 import type { Telemetry } from './telemetry.js';
 
 // The OpenTelemetry SDK, imported only when telemetry is on (telemetry.ts).
@@ -194,8 +194,10 @@ const URL_ATTRIBUTES = new Set(['url.full', 'http.url', 'http.target', 'url.quer
 /**
  * The last word on what a span may carry: query strings and URL credentials
  * are removed (tokens and personal data travel there), and every string
- * attribute is redacted like a log line. Runs in onEnding, the last moment a
- * span can still be changed, so it covers every instrumentation.
+ * attribute is redacted like a log line: the span's own, those of its events
+ * (an exception event carries the error's message and stack trace, written by
+ * whatever threw it) and its status message. Runs in onEnding, the last moment
+ * a span can still be changed, so it covers every instrumentation.
  */
 export class RedactingSpanProcessor implements SpanProcessor {
   onStart(): void {
@@ -204,18 +206,24 @@ export class RedactingSpanProcessor implements SpanProcessor {
 
   onEnding(span: Span): void {
     for (const [key, value] of Object.entries(span.attributes)) {
-      if (typeof value !== 'string') continue;
-      if (key === 'url.query') {
-        span.setAttribute(key, '[REDACTED]');
-      } else if (URL_ATTRIBUTES.has(key)) {
-        span.setAttribute(
-          key,
-          key === 'http.target' ? (value.split('?', 1)[0] ?? '') : redactUrl(value),
-        );
-      } else {
-        const redacted = redactText(value);
-        if (redacted !== value) span.setAttribute(key, redacted);
+      const redacted = redactAttribute(key, value);
+      if (redacted !== undefined && redacted !== value) span.setAttribute(key, redacted);
+    }
+    // Events have no setter: their attributes are rewritten in place, before
+    // any processor or exporter reads them.
+    for (const event of span.events) {
+      const attributes = event.attributes;
+      if (attributes === undefined) continue;
+      for (const [key, value] of Object.entries(attributes)) {
+        attributes[key] = redactAttribute(key, value);
       }
+    }
+    // Only an ERROR status keeps a message (the SDK drops it on the others),
+    // and setStatus still accepts it: the span has not ended yet.
+    const { code, message } = span.status;
+    if (message !== undefined) {
+      const redacted = redactText(message);
+      if (redacted !== message) span.setStatus({ code, message: redacted });
     }
   }
 
@@ -230,4 +238,17 @@ export class RedactingSpanProcessor implements SpanProcessor {
   shutdown(): Promise<void> {
     return Promise.resolve();
   }
+}
+
+/** An attribute value safe to export: URLs without credentials or query, any other text redacted. */
+function redactAttribute(
+  key: string,
+  value: AttributeValue | undefined,
+): AttributeValue | undefined {
+  if (typeof value !== 'string') return value;
+  if (key === 'url.query') return REDACTED;
+  if (URL_ATTRIBUTES.has(key)) {
+    return key === 'http.target' ? (value.split('?', 1)[0] ?? '') : redactUrl(value);
+  }
+  return redactText(value);
 }

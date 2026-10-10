@@ -20,7 +20,7 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 | A07 Identification and authentication | Short access tokens in memory; rotating refresh tokens in families with reuse detection and a 90-day absolute lifetime; timing-safe sign-in; per-IP sign-in limit that a forged `X-Forwarded-For` cannot escape                                                                                                                                           | `auth/`, `web/src/auth/`                                                                       |
 | A08 Software and data integrity       | Frozen lockfile installs with sha512 integrity, lockfile diffs visible in review; committed migrations only; CI gates before merge; workflows audited (zizmor) with least-privilege tokens; deploys only commits on `main`, gates re-run on the exact SHA; immutable release tags; SBOM per release; provenance and SBOM attestations on published images | `.github/workflows/`, `.github/rulesets/`, `scripts/check-dependencies.mjs`                    |
 | A09 Logging and monitoring failures   | Structured logs with request ids shared by nginx and the API, automatic redaction of credentials in every log line, error report and span; 5xx logged with stack and origin; access logs without query strings or bodies; theft of a refresh token logged as a warning; optional error tracking and tracing with the same redaction                       | `common/logging/`, `observability/`, `web/nginx`, docs/observability.md                        |
-| A10 Server-side request forgery       | The API makes no outbound requests; any feature that fetches a user-supplied URL needs an allowlist (REQUIERE CONFIGURACIÓN). nginx forwards its own upstream name as `Host`, never the client's                                                                                                                                                          | `web/nginx`                                                                                    |
+| A10 Server-side request forgery       | The API makes no outbound requests of its own; integrations use `createExternalHttpClient`, which keeps every path under the configured base URL (values encoded as segments). Any feature that fetches a user-supplied URL needs an allowlist (REQUIERE CONFIGURACIÓN). nginx forwards its own upstream name as `Host`, never the client's               | `common/http/external-http.ts`, `web/nginx`                                                    |
 
 ## Authentication and tokens
 
@@ -305,7 +305,8 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
   error tracking off silently. Use separate Sentry projects for API and web, restrict who can read
   them, and set the data retention the project's policy allows.
 - Telemetry follows the same rules: spans carry statements with placeholders, never values; URL
-  attributes lose their query string and credentials; string attributes are redacted
+  attributes lose their query string and credentials; string attributes are redacted, on the span,
+  on its events (exception messages and stack traces) and in its status message
   (`RedactingSpanProcessor`). Provider credentials (`OTEL_EXPORTER_OTLP_HEADERS`) are read by the
   exporters from the environment, never by application code.
 

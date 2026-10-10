@@ -65,7 +65,12 @@ Every JSON log line, error report and span says which deployment and build produ
 - Use `new Logger(ClassName.name)`; never `console.log` in application code (lint rule).
 - **Access log:** one line per request with `requestId`, method, path, status, `durationMs`, the
   client `ip` and the `userId` when a guard identified one
-  (`common/logging/request-context.middleware.ts`). Health probes log at `debug`.
+  (`common/logging/request-context.middleware.ts`), written when the response is sent
+  (`request completed`). Health probes log at `debug`. A request whose connection closes first (the
+  client or the proxy gave up, a shutdown cut it) gets its one line then: `request aborted` with
+  `aborted: true` (`aborted` after the duration in text lines), the time until the connection
+  closed, and the status only if the response had started (`statusCode: null` otherwise, `-` in
+  text lines). Many of them on one route point at a slow dependency behind it.
 - **Web server access log** (nginx, `apps/web/nginx/default.conf.template`): address, time, method,
   path without the query string, status, bytes, duration, user agent and `request_id`, the same id
   the API logs for that request.
@@ -122,7 +127,8 @@ answers.
 On SIGTERM (`app.enableShutdownHooks()`, `lifecycle/shutdown.ts`):
 
 1. readiness starts answering 503 and the HTTP server stops accepting connections;
-2. requests in flight finish (at most 10 seconds, then their connections are closed);
+2. requests in flight finish (at most 10 seconds, then their connections are closed: each request
+   cut leaves an access line marked aborted);
 3. the modules close: database pool, Redis connection, timers;
 4. buffered spans, metrics and error reports are flushed; the process exits.
 
@@ -210,8 +216,10 @@ NestJS handler spans are not included: the official instrumentation does not sup
 with `import()`, so the SDK also registers an in-thread ESM loader hook (`import-in-the-middle`)
 limited to the instrumented modules (`http`, `https`, `express`, `pg`, `pg-pool`).
 
-Health probes are never traced. Every span is checked before export: query strings and URL
-credentials removed, string attributes redacted like log lines (`RedactingSpanProcessor`).
+Health probes are never traced. Every span is checked before export (`RedactingSpanProcessor`):
+query strings and URL credentials removed, and string attributes redacted like log lines, on the
+span and on its events (an exception event carries the error's message and stack trace), and so is
+its status message.
 
 **Where it goes:** OTLP over HTTP (JSON) to `<OTEL_EXPORTER_OTLP_ENDPOINT>/v1/traces` and
 `/v1/metrics`, metrics every `OTEL_METRIC_EXPORT_INTERVAL` ms (default 60 s). Provider credentials
