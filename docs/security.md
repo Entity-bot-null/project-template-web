@@ -468,11 +468,13 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
 **Semgrep** runs Semgrep's curated rulesets (`scripts/sast.mjs`) on everything `.semgrepignore`
 does not exclude, tests included: the files git tracks plus the new ones it does not ignore, copied
 to a temporary directory first, so a local run never walks `node_modules` or build output through
-Docker's file sharing. Symbolic links are not followed. Any finding fails: on this code base the rulesets report nothing,
-so a finding is worth a look. A false positive is suppressed on its line with the reason, which
-review sees: `// nosemgrep: <rule-id> -- why it is safe`. The rulesets are fetched from the
-Semgrep registry at each run, so a new rule can flag existing code; fix or suppress it in its own
-pull request.
+Docker's file sharing. Symbolic links are not followed. An nginx template (`*.conf.template`) is
+copied under the name nginx renders it to (`default.conf.template` as `default.conf`): the nginx
+rules only read `*.conf` files, and would otherwise skip the configuration the web image runs.
+Any finding fails: on this code base the rulesets report nothing, so a finding is worth a look. A
+false positive is suppressed on its line with the reason, which review sees:
+`// nosemgrep: <rule-id> -- why it is safe`. The rulesets are fetched from the Semgrep registry at
+each run, so a new rule can flag existing code; fix or suppress it in its own pull request.
 
 **CodeQL** (OPCIONAL) adds the cross-file analysis Semgrep's open-source engine does not do. It
 needs a public repository or GitHub Advanced Security: enable it with the repository variable
