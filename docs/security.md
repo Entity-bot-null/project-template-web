@@ -414,7 +414,9 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   dependencies (the Prisma CLI is one), the CLI's schema engine and the migrations, with no source
   code and no development tools. Every image applies the operating system fixes published after
   its base was built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web
-  image), so a fixed advisory in the base does not wait for the next base release.
+  image), so a fixed advisory in the base does not wait for the next base release. CI passes the
+  day as `OS_UPGRADE_DATE`, part of that step's cache key: the build cache replays an upgrade for
+  one day at most, never until the base digest changes.
 - The files of an image belong to root: the user it runs as can read and run them, never change
   them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
   - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`, and

@@ -195,7 +195,9 @@ migrations) and `web`, tagged with the commit SHA and built with `APP_RELEASE=<c
 release every log line, error report and span of the image carries
 (docs/observability.md#identity), cached in the GitHub Actions cache, and scans
 each one with Trivy before any push: a fixable HIGH or CRITICAL advisory fails the job
-(docs/security.md#container-images). To publish, set `IMAGE_PREFIX` (for example
+(docs/security.md#container-images). The builds pass the day as `OS_UPGRADE_DATE`: the operating
+system upgrade in the Dockerfiles runs again once a day instead of coming from the cache until the
+base image changes. To publish, set `IMAGE_PREFIX` (for example
 `ghcr.io/owner/repo`), add the registry login step marked in the file (and `packages: write` for
 GHCR), and call it with `push: true`. Pushed images carry their SBOM and SLSA provenance as
 attestations; signed GitHub attestations are one commented step away
