@@ -18,6 +18,9 @@ export default defineConfig({
       // Suites send many requests from one address; the limiter itself is
       // covered by its own spec with the route limits.
       RATE_LIMIT_MAX: '100000',
+      // The public origin the app is served from, behind a proxy that does
+      // not pass the client's Host (src/common/guards/fetch-metadata.int.spec.ts).
+      APP_ORIGIN: 'https://app.example.com',
       LOG_LEVEL: 'warn',
     },
     globalSetup: ['./test/global-setup.ts'],

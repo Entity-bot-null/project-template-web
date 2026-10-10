@@ -584,12 +584,12 @@ openssl rand -hex 32
 
 Edita cada fichero (`nano <fichero>`, guarda con `Ctrl+O`, sal con `Ctrl+X`):
 
-| Fichero       | Define                                                                                                                                                                                                                   |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server.env`  | `APP_DOMAIN=app.acme.com`                                                                                                                                                                                                |
-| `api.env`     | `DATABASE_URL=postgresql://app_runtime:<contraseña de app_runtime>@<host de la base de datos>:5432/app?sslmode=require`, `JWT_ACCESS_SECRET=<el valor que imprimió openssl>`, `APP_ENVIRONMENT=production` (o `staging`) |
-| `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                                                                |
-| `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                               |
+| Fichero       | Define                                                                                                                                                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.env`  | `APP_DOMAIN=app.acme.com`                                                                                                                                                                                                                                   |
+| `api.env`     | `DATABASE_URL=postgresql://app_runtime:<contraseña de app_runtime>@<host de la base de datos>:5432/app?sslmode=require`, `JWT_ACCESS_SECRET=<el valor que imprimió openssl>`, `APP_ENVIRONMENT=production` (o `staging`), `APP_ORIGIN=https://app.acme.com` |
+| `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                                                                                                   |
+| `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                                                                  |
 
 **Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
 puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).

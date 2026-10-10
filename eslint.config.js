@@ -6,6 +6,20 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+// SQL injection: the tagged templates ($queryRaw`...${value}`) parameterize
+// every value; the *Unsafe variants do not. Banned everywhere, scripts and
+// tests included.
+const RAW_SQL_BAN = [
+  {
+    property: '$queryRawUnsafe',
+    message: 'Use the $queryRaw tagged template (docs/security.md#sql-injection).',
+  },
+  {
+    property: '$executeRawUnsafe',
+    message: 'Use the $executeRaw tagged template (docs/security.md#sql-injection).',
+  },
+];
+
 // One configuration for the whole repository: `pnpm lint` runs it once from
 // the root, the pre-commit hook runs it on staged files, CI runs it on
 // everything. Type-aware rules read each file's own tsconfig. Formatting is
@@ -61,16 +75,7 @@ export default defineConfig(
           property: 'env',
           message: 'Import the validated `env` (apps/api/src/env/env.ts) instead.',
         },
-        // SQL injection: the tagged templates ($queryRaw`...${value}`)
-        // parameterize every value; the *Unsafe variants do not.
-        {
-          property: '$queryRawUnsafe',
-          message: 'Use the $queryRaw tagged template (docs/security.md#sql-injection).',
-        },
-        {
-          property: '$executeRawUnsafe',
-          message: 'Use the $executeRaw tagged template (docs/security.md#sql-injection).',
-        },
+        ...RAW_SQL_BAN,
       ],
     },
   },
@@ -177,6 +182,7 @@ export default defineConfig(
 
   // The only files that may read process.env or print to the console:
   // the env module itself, command-line entry points, configs and tooling.
+  // The raw SQL ban stays.
   {
     files: [
       'apps/api/src/env/env.ts',
@@ -193,7 +199,7 @@ export default defineConfig(
       'playwright.config.ts',
     ],
     rules: {
-      'no-restricted-properties': 'off',
+      'no-restricted-properties': ['error', ...RAW_SQL_BAN],
       'no-console': 'off',
     },
   },

@@ -208,7 +208,7 @@ describe('SessionsService', () => {
       rowFor('other device', { familyId: OTHER_FAMILY }),
     ];
     const { prisma } = fakePrisma(rows);
-    await new SessionsService(prisma).retire('previous');
+    await new SessionsService(prisma).retire('previous', 'sign-in');
     expect(rows[1]?.revokedAt).toBeInstanceOf(Date);
     expect(rows[2]?.revokedAt).toBeNull();
     // Within the leeway: a client race, not a theft.
@@ -219,15 +219,25 @@ describe('SessionsService', () => {
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const rows = [rowFor('stolen', rotatedAgo(REFRESH_REUSE_LEEWAY_SEC + 5)), rowFor('current')];
     const { prisma } = fakePrisma(rows);
-    await new SessionsService(prisma).retire('stolen');
+    await new SessionsService(prisma).retire('stolen', 'logout');
     expect(rows[1]?.revokedAt).toBeInstanceOf(Date);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('(at logout)'));
+  });
+
+  it('reports a long-rotated token presented at sign-in as theft, at sign-in', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const rows = [rowFor('stolen', rotatedAgo(REFRESH_REUSE_LEEWAY_SEC + 5)), rowFor('current')];
+    const { prisma } = fakePrisma(rows);
+    await new SessionsService(prisma).retire('stolen', 'sign-in');
+    expect(rows[1]?.revokedAt).toBeInstanceOf(Date);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('(at sign-in)'));
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('(at logout)'));
   });
 
   it('ignores an unknown token at logout', async () => {
     const rows = [rowFor('mine')];
     const { prisma } = fakePrisma(rows);
-    await expect(new SessionsService(prisma).retire('unknown')).resolves.toBeUndefined();
+    await expect(new SessionsService(prisma).retire('unknown', 'logout')).resolves.toBeUndefined();
     expect(rows[0]?.revokedAt).toBeNull();
   });
 

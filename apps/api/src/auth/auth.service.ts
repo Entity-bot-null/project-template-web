@@ -42,7 +42,7 @@ export class AuthService implements OnModuleInit {
     const valid = await verifyPassword(user?.passwordHash ?? (await dummyPasswordHash()), password);
     if (!user || !valid) throw new UnauthorizedException('Invalid email or password');
     const { passwordHash, ...authUser } = user;
-    if (previousToken !== undefined) await this.sessions.retire(previousToken);
+    if (previousToken !== undefined) await this.sessions.retire(previousToken, 'sign-in');
     const refresh = await this.sessions.create(authUser.id, passwordHash);
     return { session: await this.sessionFor(authUser), refresh };
   }
@@ -53,7 +53,7 @@ export class AuthService implements OnModuleInit {
   }
 
   logout(token: string): Promise<void> {
-    return this.sessions.retire(token);
+    return this.sessions.retire(token, 'logout');
   }
 
   // The access token carries only the id and the role, read fresh from the

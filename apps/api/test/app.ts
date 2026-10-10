@@ -37,5 +37,6 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   `;
   if (tables.length === 0) return;
   const list = tables.map(({ tablename }) => `"${tablename.replaceAll('"', '""')}"`).join(', ');
+  // eslint-disable-next-line no-restricted-properties -- table names are identifiers, which no query can bind as parameters; each one comes from pg_tables and is quoted above
   await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} CASCADE`);
 }

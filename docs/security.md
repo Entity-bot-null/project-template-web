@@ -141,8 +141,14 @@ API decides what is **allowed**. Never rely on a hidden link or a client guard a
 - **CSRF:** `FetchMetadataGuard` runs first on **every** route (a global guard, before the rate
   limiter): a request whose `Sec-Fetch-Site` says another origin made the browser send it
   (`cross-site`, and `same-site`: a sibling subdomain) is refused with 403 unless its `Origin` is in
-  `CORS_ORIGINS`. Requests without the header pass: older browsers still apply SameSite, and
-  non-browser clients carry no victim's cookies. Bearer-token routes cannot be forged anyway
+  `CORS_ORIGINS`. Browsers that send no Fetch Metadata (Safari before 16.4, and any browser on a page
+  served over plain HTTP from a non-local address) still send `Origin` on cross-origin requests and
+  on same-origin POSTs: without `Sec-Fetch-Site`, an `Origin` must be the app's own (`APP_ORIGIN`,
+  or the scheme and host the request was sent to) or one of `CORS_ORIGINS`, and `Origin: null` is
+  refused. Set `APP_ORIGIN` in production: behind the web image, nginx sends the API its own
+  upstream name as `Host`, so nothing else tells the API its public origin (it warns at boot
+  without it). Requests with neither header pass: non-browser clients carry no victim's cookies,
+  and a browser that sends neither still applies SameSite. Bearer-token routes cannot be forged anyway
   (browsers never attach the header), and the API accepts JSON bodies only
   (`common/http/json-only.middleware.ts`, 415 otherwise): HTML forms, the one kind of body another
   site can send without a CORS preflight, never reach a handler.
@@ -198,8 +204,13 @@ IPv6.
 
 ## Rate limiting
 
-`@nestjs/throttler`, per client IP and per route: `RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_SEC`
-(default 100/60 s), sign-in 10/min, refresh 30/min, health probes exempt; `429` with `Retry-After`.
+`@nestjs/throttler`, per client IP and per route, by two throttlers that both count
+(`common/guards/rate-limit.guard.ts`): the global limit on every route, `RATE_LIMIT_MAX` per
+`RATE_LIMIT_WINDOW_SEC` (default 100/60 s), and on top of it a tighter limit of the route's own,
+declared with `@RouteRateLimit`: sign-in 10/min, refresh 30/min. Whichever runs out first blocks;
+health probes are exempt; `429` with `Retry-After`. Never set a route's limit with
+`@Throttle({ default: ... })`: that replaces the global limit for the route instead of adding to
+it.
 
 The counters live in a **store** chosen by `RATE_LIMIT_STORE`
 (`infrastructure/rate-limit/rate-limit.store.ts`); the guard, the limits and the routes are the same
@@ -224,8 +235,10 @@ capped at 100 kB.
 ## SQL injection
 
 Prisma parameterizes every query. Raw SQL only through tagged templates (`$queryRaw\`...${value}\``),
-never the `*Unsafe`variants with interpolated input (the one use,`$executeRawUnsafe` in the test reset
-helper, interpolates table names read from the database catalog).
+never the `*Unsafe`variants with interpolated input: an ESLint rule refuses them everywhere,
+scripts and tests included. The one use,`$executeRawUnsafe` in the test reset helper, interpolates
+table names read from the database catalog (identifiers cannot be bound as parameters) and carries
+a disable comment that says so.
 
 ## Secrets
 

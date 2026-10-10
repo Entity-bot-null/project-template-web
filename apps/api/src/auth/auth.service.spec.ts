@@ -61,7 +61,8 @@ describe('AuthService', () => {
   it('ends the session this browser already had before starting a new one', async () => {
     const { service, sessions } = setup({ ...USER, passwordHash });
     await service.signIn(USER.email, 'right password', 'previous-token');
-    expect(sessions.retire).toHaveBeenCalledWith('previous-token');
+    // Named as a sign-in in the theft warning, if the token turns out stolen.
+    expect(sessions.retire).toHaveBeenCalledWith('previous-token', 'sign-in');
     expect(sessions.retire.mock.invocationCallOrder[0]).toBeLessThan(
       sessions.create.mock.invocationCallOrder[0] ?? 0,
     );
@@ -107,6 +108,6 @@ describe('AuthService', () => {
   it('logs out by retiring the session family', async () => {
     const { service, sessions } = setup(null);
     await service.logout('a-token');
-    expect(sessions.retire).toHaveBeenCalledWith('a-token');
+    expect(sessions.retire).toHaveBeenCalledWith('a-token', 'logout');
   });
 });

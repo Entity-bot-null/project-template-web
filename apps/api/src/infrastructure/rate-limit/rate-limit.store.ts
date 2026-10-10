@@ -28,6 +28,8 @@ export class InMemoryRateLimitStore extends ThrottlerStorageService implements R
 //     dropped first, so the count is a sliding window of `ttl`;
 //   - more than `limit` hits blocks the key for `blockDuration`, during which
 //     hits are not counted; the first hit after the block starts afresh;
+//   - with no block period (blockDuration 0), a hit past the limit is refused
+//     and not counted, until the oldest counted hit leaves the window;
 //   - a separate key tracks the fixed window behind the Reset header.
 // Time comes from the Redis server, so instances with skewed clocks agree.
 // Keys share a hash tag ({...}): the script works on Redis Cluster too.
@@ -49,6 +51,18 @@ local windowLeft = redis.call('PTTL', windowKey)
 if windowLeft <= 0 then
   redis.call('SET', windowKey, '1', 'PX', ttl)
   windowLeft = ttl
+end
+if blockDuration <= 0 then
+  local counted = redis.call('ZCARD', hits)
+  if counted < limit then
+    redis.call('ZADD', hits, now + ttl, member)
+    redis.call('PEXPIRE', hits, ttl)
+    return { counted + 1, windowLeft, 0, 0 }
+  end
+  local oldest = redis.call('ZRANGE', hits, 0, 0, 'WITHSCORES')
+  local retryIn = windowLeft
+  if oldest[2] then retryIn = tonumber(oldest[2]) - now end
+  return { counted + 1, windowLeft, 1, retryIn }
 end
 if not blocked then
   redis.call('ZADD', hits, now + ttl, member)

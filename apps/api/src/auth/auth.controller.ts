@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { seconds, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { RouteRateLimit } from '../common/guards/rate-limit.guard.js';
 import type { ApiEnvelope } from '../common/interceptors/transform.interceptor.js';
 import { ApiData, ApiErrors, ZodBody } from '../common/openapi/index.js';
 import {
@@ -30,9 +30,7 @@ export class AuthController {
 
   @Post('sign-in')
   @HttpCode(200)
-  @Throttle({
-    default: { limit: SIGN_IN_RATE_LIMIT.limit, ttl: seconds(SIGN_IN_RATE_LIMIT.ttlSec) },
-  })
+  @RouteRateLimit(SIGN_IN_RATE_LIMIT)
   @ApiOperation({
     summary: 'Sign in with email and password',
     description:
@@ -59,9 +57,7 @@ export class AuthController {
   // fine: a database failover must not sign everyone out).
   @Post('refresh')
   @HttpCode(200)
-  @Throttle({
-    default: { limit: REFRESH_RATE_LIMIT.limit, ttl: seconds(REFRESH_RATE_LIMIT.ttlSec) },
-  })
+  @RouteRateLimit(REFRESH_RATE_LIMIT)
   @ApiOperation({
     summary: 'Rotate the refresh cookie and mint a new access token',
     description:

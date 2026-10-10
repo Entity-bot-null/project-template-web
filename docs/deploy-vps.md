@@ -73,7 +73,7 @@ files on the server, readable by the deploy user only.
 | `rollback.sh`          | back to the previous release, without the registry                                       | yes              |
 | `*.env.example`        | the settings to fill in                                                                  | yes              |
 | `server.env`           | `APP_DOMAIN`                                                                             | no (server only) |
-| `api.env`              | `DATABASE_URL` (runtime role), `JWT_ACCESS_SECRET`, `APP_ENVIRONMENT`, optional settings | no (server only) |
+| `api.env`              | `DATABASE_URL` (runtime role), `JWT_ACCESS_SECRET`, `APP_ENVIRONMENT`, `APP_ORIGIN`, ... | no (server only) |
 | `migrate.env`          | `DATABASE_URL` (migrator role)                                                           | no (server only) |
 | `web.env`              | `APP_ENVIRONMENT`, optional `WEB_SENTRY_DSN`                                             | no (server only) |
 | `release.env`          | the digests and release running now (written by `deploy.sh`)                             | no (server only) |
@@ -215,7 +215,7 @@ cp migrate.env.example migrate.env
 cp web.env.example web.env
 chmod 600 api.env migrate.env
 nano server.env      # APP_DOMAIN=app.example.com
-nano api.env         # DATABASE_URL (app_runtime, ?sslmode=require), JWT_ACCESS_SECRET, APP_ENVIRONMENT
+nano api.env         # DATABASE_URL (app_runtime, ?sslmode=require), JWT_ACCESS_SECRET, APP_ENVIRONMENT, APP_ORIGIN
 nano migrate.env     # DATABASE_URL (app_migrator, ?sslmode=require)
 nano web.env         # APP_ENVIRONMENT
 ```

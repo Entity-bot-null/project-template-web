@@ -87,6 +87,11 @@ export const EnvSchema = z
     // Browser origins allowed to call the API cross-origin with credentials.
     // Empty (default): no CORS headers at all, same-origin only.
     CORS_ORIGINS: originList,
+    // The origin the web app is served from, e.g. https://app.example.com.
+    // The CSRF guard accepts it from browsers that send no Fetch Metadata;
+    // behind a proxy that does not pass the client's Host (the web image),
+    // nothing else tells the API its public origin.
+    APP_ORIGIN: optional(origin),
     // Which proxy hops may set X-Forwarded-For (client IP for rate limits and
     // logs). Required in production, where the right value depends on the
     // topology and a wrong one lets clients choose their own IP; loopback
@@ -94,8 +99,9 @@ export const EnvSchema = z
     TRUST_PROXY: optional(trustProxy),
     AUTH_COOKIE_SAMESITE: z.enum(['strict', 'lax', 'none']).default('strict'),
 
-    // Per client IP and per route, fixed window (sign-in and refresh have
-    // tighter limits of their own).
+    // Per client IP and per route, over a sliding window. Sign-in and refresh
+    // also have tighter limits of their own (auth.constants.ts), counted on
+    // top of this one: whichever runs out first blocks.
     RATE_LIMIT_MAX: emptyAsUnset(z.coerce.number().int().positive().default(100)),
     RATE_LIMIT_WINDOW_SEC: emptyAsUnset(z.coerce.number().int().positive().default(60)),
 
