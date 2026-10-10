@@ -58,6 +58,8 @@
         "db_namespace",
         "db_operation_name",
         "db_system_name",
+        "error_type",
+        "redis_client_errors_category",
         "redis_client_library",
         "server_address",
         "server_port"

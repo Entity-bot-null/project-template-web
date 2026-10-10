@@ -207,10 +207,10 @@ IPv6.
 `@nestjs/throttler`, per client IP and per route, by two throttlers that both count
 (`common/guards/rate-limit.guard.ts`): the global limit on every route, `RATE_LIMIT_MAX` per
 `RATE_LIMIT_WINDOW_SEC` (default 100/60 s), and on top of it a tighter limit of the route's own,
-declared with `@RouteRateLimit`: sign-in 10/min, refresh 30/min. Whichever runs out first blocks;
-health probes are exempt; `429` with `Retry-After`. Never set a route's limit with
-`@Throttle({ default: ... })`: that replaces the global limit for the route instead of adding to
-it.
+declared with `@RouteRateLimit`: sign-in 10/min, refresh 30/min, Web Vitals 60/min. Whichever runs
+out first blocks; health probes are exempt; `429` with `Retry-After`. Never set a route's limit
+with `@Throttle({ default: ... })`: that replaces the global limit for the route instead of adding
+to it.
 
 The counters live in a **store** chosen by `RATE_LIMIT_STORE`
 (`infrastructure/rate-limit/rate-limit.store.ts`); the guard, the limits and the routes are the same
@@ -284,6 +284,26 @@ Logs, error reports and spans leave the process; credentials must not. Three lay
 
 Redaction is a safety net, not a license: it recognizes credential shapes, not every piece of
 personal data. Log ids, not emails, names or free text.
+
+## Web Vitals
+
+`POST /api/telemetry/web-vitals` is public: the web app sends the Web Vitals of its page loads
+there with `navigator.sendBeacon`, signed in or not (docs/observability.md#web-vitals). What
+protects it:
+
+- **The rules of every route:** the Fetch Metadata guard refuses what another site made a browser
+  send, only JSON bodies are accepted (a beacon of a JSON `Blob` is), bodies are capped at 100 kB,
+  and the global rate limit applies, with a limit of the route's own on top: 60 a minute.
+- **A strict schema, bounded values:** known metric names, values within what a page load can
+  measure (two minutes, a layout shift of 50), at most 10 per batch, no field but those of the
+  contract; anything else is a 400 and nothing is recorded.
+- **Bounded labels, no personal data:** the page is a route pattern from a closed list (the app's
+  routes), never a URL, a path value or a query string, so ids, emails and tokens in a URL never
+  leave the browser; the rating is computed by the API. Nothing identifies the visitor: no user
+  id, no session, no user agent. The browser attaches its cookies to a same-origin beacon, but the
+  route reads none, and the client's IP serves the rate limit only.
+- **Nothing stored but metrics:** the values become histogram samples, aggregated per label set. A
+  client can at worst skew the distribution of the pages it reports, within the rate limit.
 
 ## Error tracking data
 

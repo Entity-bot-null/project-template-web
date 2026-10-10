@@ -1,0 +1,1131 @@
+{
+  "uid": "app-web-vitals",
+  "title": "Web Vitals",
+  "description": "Core Web Vitals (LCP, INP, CLS) and FCP, TTFB of real page loads, reported by the web app to POST /api/telemetry/web-vitals (docs/observability.md#web-vitals). Pages are route patterns, never URLs.",
+  "tags": ["application", "web"],
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "version": 1,
+  "links": [
+    {
+      "type": "dashboards",
+      "title": "Application dashboards",
+      "tags": ["application"],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "external link",
+      "targetBlank": false
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "job",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(app_web_vitals_duration_seconds_count, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "definition": "label_values(app_web_vitals_duration_seconds_count, job)",
+        "current": {},
+        "hide": 0,
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(app_web_vitals_duration_seconds_count{job=\"$job\"}, deployment_environment_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "definition": "label_values(app_web_vitals_duration_seconds_count{job=\"$job\"}, deployment_environment_name)",
+        "current": {},
+        "hide": 0,
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "options": [],
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false
+      },
+      {
+        "name": "route",
+        "label": "Page",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(app_web_vitals_duration_seconds_count{job=\"$job\", deployment_environment_name=~\"$environment\"}, page_route)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "definition": "label_values(app_web_vitals_duration_seconds_count{job=\"$job\", deployment_environment_name=~\"$environment\"}, page_route)",
+        "current": {},
+        "hide": 0,
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "options": [],
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "Core Web Vitals, p75 of the time range",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "LCP, p75",
+      "description": "Largest Contentful Paint (LCP): when the main content was painted. 75th percentile of the page loads in the selected time range, the figure Google rates (good up to 2.5 s, poor above 4 s).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le) (increase(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"LCP\"}[$__range])))",
+          "legendFormat": "LCP",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2.5
+              },
+              {
+                "color": "red",
+                "value": 4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "INP, p75",
+      "description": "Interaction to Next Paint (INP): how long the page took to respond to the slowest interactions. 75th percentile of the page loads in the selected time range, the figure Google rates (good up to 0.2 s, poor above 0.5 s).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le) (increase(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"INP\"}[$__range])))",
+          "legendFormat": "INP",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "CLS, p75",
+      "description": "Cumulative Layout Shift (CLS): how much the layout moved unexpectedly. 75th percentile of the page loads in the selected time range, the figure Google rates (good up to 0.1, poor above 0.25).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le) (increase(app_web_vitals_cls_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\"}[$__range])))",
+          "legendFormat": "CLS",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 3,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "row",
+      "id": 5,
+      "title": "Loading: FCP and TTFB, p75 of the time range",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "FCP, p75",
+      "description": "First Contentful Paint (FCP): when the first content was painted. 75th percentile of the page loads in the selected time range, the figure Google rates (good up to 1.8 s, poor above 3 s).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le) (increase(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"FCP\"}[$__range])))",
+          "legendFormat": "FCP",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1.8
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "TTFB, p75",
+      "description": "Time to First Byte (TTFB): when the first byte of the page arrived. 75th percentile of the page loads in the selected time range, the figure Google rates (good up to 0.8 s, poor above 1.8 s).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le) (increase(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"TTFB\"}[$__range])))",
+          "legendFormat": "TTFB",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 1.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "row",
+      "id": 8,
+      "title": "p75 by page, previous hour",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "LCP p75 by page",
+      "description": "Largest Contentful Paint (LCP), 75th percentile over the previous hour, per route pattern. The line marks \"good\"; above it the page load is rated \"needs improvement\", above the red area \"poor\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 11
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le, page_route) (rate(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"LCP\"}[1h])))",
+          "legendFormat": "{{page_route}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2.5
+              },
+              {
+                "color": "red",
+                "value": 4
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "INP p75 by page",
+      "description": "Interaction to Next Paint (INP), 75th percentile over the previous hour, per route pattern. The line marks \"good\"; above it the page load is rated \"needs improvement\", above the red area \"poor\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 11
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le, page_route) (rate(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"INP\"}[1h])))",
+          "legendFormat": "{{page_route}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "CLS p75 by page",
+      "description": "Cumulative Layout Shift (CLS), 75th percentile over the previous hour, per route pattern. The line marks \"good\"; above it the page load is rated \"needs improvement\", above the red area \"poor\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 11
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le, page_route) (rate(app_web_vitals_cls_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\"}[1h])))",
+          "legendFormat": "{{page_route}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "FCP p75 by page",
+      "description": "First Contentful Paint (FCP), 75th percentile over the previous hour, per route pattern. The line marks \"good\"; above it the page load is rated \"needs improvement\", above the red area \"poor\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le, page_route) (rate(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"FCP\"}[1h])))",
+          "legendFormat": "{{page_route}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1.8
+              },
+              {
+                "color": "red",
+                "value": 3
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "TTFB p75 by page",
+      "description": "Time to First Byte (TTFB), 75th percentile over the previous hour, per route pattern. The line marks \"good\"; above it the page load is rated \"needs improvement\", above the red area \"poor\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le, page_route) (rate(app_web_vitals_duration_seconds_bucket{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"TTFB\"}[1h])))",
+          "legendFormat": "{{page_route}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 1.8
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 14,
+      "title": "Page loads",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 15,
+      "title": "Good page loads by metric",
+      "description": "Share of the page loads rated \"good\" over the previous hour (thresholds of web.dev). The Core Web Vitals pass when LCP, INP and CLS are all good for at least 75 % of the page loads.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (web_vital_name) (increase(app_web_vitals_duration_seconds_count{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_rating=\"good\"}[1h])) / sum by (web_vital_name) (increase(app_web_vitals_duration_seconds_count{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\"}[1h]))",
+          "legendFormat": "{{web_vital_name}}",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(increase(app_web_vitals_cls_count{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_rating=\"good\"}[1h])) / sum(increase(app_web_vitals_cls_count{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\"}[1h]))",
+          "legendFormat": "CLS",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 16,
+      "title": "Page loads reported, by page and navigation",
+      "description": "Page loads that reported their Web Vitals, per minute (each reports one TTFB), by route pattern and navigation type: navigate, reload, back-forward, back-forward-cache (restored from the cache), prerender. Bounded by WEB_VITALS_SAMPLE_RATE.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "60 * sum by (page_route, web_vital_navigation_type) (rate(app_web_vitals_duration_seconds_count{job=\"$job\", deployment_environment_name=~\"$environment\", page_route=~\"$route\", web_vital_name=\"TTFB\"}[$__rate_interval]))",
+          "legendFormat": "{{page_route}} {{web_vital_navigation_type}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "Web Vitals alerts firing or pending",
+      "description": "The alerts of observability/prometheus/rules/web-vitals-alerts.yaml: p75 of LCP, INP or CLS above \"good\" on a page for 30 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (alertname, alertstate, page_route) (ALERTS{alertname=~\"WebVitals.*\", job=\"$job\", deployment_environment_name=~\"$environment\"})",
+          "legendFormat": "{{alertname}} {{page_route}} {{alertstate}}",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

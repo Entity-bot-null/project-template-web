@@ -1,0 +1,129 @@
+# Unit tests of web-vitals-alerts.yaml with synthetic series: `pnpm observability:check`
+# runs them with promtool (docs/observability.md#dashboards-and-alerts-as-code).
+# Each minute, "/" reports 10 page loads: 6 within the "good" threshold, all
+# 10 within "poor", so p75 lies in the "needs improvement" bucket. Another
+# page is good, and a third is as slow as "/" with too few page loads to judge.
+rule_files:
+  - ../rules/web-vitals-alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # p75 = 2.5 + (7.5 - 6) / (10 - 6) × (4 - 2.5) s = 3.0625 s.
+  - name: LCP p75 above 2.5 s on a page with enough traffic warns
+    interval: 1m
+    input_series:
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/", le="2.5"}'
+        values: '0+6x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/", le="4"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/", le="+Inf"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/admin/users", le="2.5"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/admin/users", le="+Inf"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/admin/users"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/sign-in", le="2.5"}'
+        values: '0x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/sign-in", le="+Inf"}'
+        values: '0+1x70'
+      - series: 'app_web_vitals_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/sign-in"}'
+        values: '0+1x70'
+    alert_rule_test:
+      # Pending: above the threshold for less than the 30 minutes of "for".
+      - eval_time: 25m
+        alertname: WebVitalsLcpPoor
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: WebVitalsLcpPoor
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              page_route: /
+            exp_annotations:
+              summary: '/ loads slowly: LCP p75 above 2.5 s (api, production)'
+              description: 'Largest Contentful Paint at the 75th percentile over the last hour: 3.062s (good: 2.5 s or less), for more than 30 minutes.'
+              runbook_url: docs/incident-response.md#15-poor-web-vitals
+              dashboard_uid: app-web-vitals
+
+  # p75 = 0.2 + (7.5 - 6) / (10 - 6) × (0.5 - 0.2) s = 312.5 ms.
+  - name: INP p75 above 200 ms on a page with enough traffic warns
+    interval: 1m
+    input_series:
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="INP", page_route="/admin/users", le="0.2"}'
+        values: '0+6x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="INP", page_route="/admin/users", le="0.5"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="INP", page_route="/admin/users", le="+Inf"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="INP", page_route="/admin/users"}'
+        values: '0+10x70'
+      # LCP is slow on the same page, but this alert reads INP only.
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/", le="0.2"}'
+        values: '0x70'
+      - series: 'app_web_vitals_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/", le="+Inf"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", web_vital_name="LCP", page_route="/"}'
+        values: '0+10x70'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: WebVitalsInpPoor
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: WebVitalsInpPoor
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              page_route: /admin/users
+            exp_annotations:
+              summary: '/admin/users responds slowly to input: INP p75 above 200 ms (api, production)'
+              description: 'Interaction to Next Paint at the 75th percentile over the last hour: 312.5ms (good: 200 ms or less), for more than 30 minutes.'
+              runbook_url: docs/incident-response.md#15-poor-web-vitals
+              dashboard_uid: app-web-vitals
+
+  # p75 = 0.1 + (7.5 - 6) / (10 - 6) × (0.25 - 0.1) = 0.156; "/sign-in"
+  # shifts as much with too few page loads.
+  - name: CLS p75 above 0.1 on a page with enough traffic warns
+    interval: 1m
+    input_series:
+      - series: 'app_web_vitals_cls_bucket{job="api", deployment_environment_name="staging", instance="i-1", page_route="/", le="0.1"}'
+        values: '0+6x70'
+      - series: 'app_web_vitals_cls_bucket{job="api", deployment_environment_name="staging", instance="i-1", page_route="/", le="0.25"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_cls_bucket{job="api", deployment_environment_name="staging", instance="i-1", page_route="/", le="+Inf"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_cls_count{job="api", deployment_environment_name="staging", instance="i-1", page_route="/"}'
+        values: '0+10x70'
+      - series: 'app_web_vitals_cls_bucket{job="api", deployment_environment_name="staging", instance="i-1", page_route="/sign-in", le="0.1"}'
+        values: '0+0.6x70'
+      - series: 'app_web_vitals_cls_bucket{job="api", deployment_environment_name="staging", instance="i-1", page_route="/sign-in", le="0.25"}'
+        values: '0+1x70'
+      - series: 'app_web_vitals_cls_bucket{job="api", deployment_environment_name="staging", instance="i-1", page_route="/sign-in", le="+Inf"}'
+        values: '0+1x70'
+      - series: 'app_web_vitals_cls_count{job="api", deployment_environment_name="staging", instance="i-1", page_route="/sign-in"}'
+        values: '0+1x70'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: WebVitalsClsPoor
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: WebVitalsClsPoor
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: staging
+              page_route: /
+            exp_annotations:
+              summary: '/ shifts while loading: CLS p75 above 0.1 (api, staging)'
+              description: 'Cumulative Layout Shift at the 75th percentile over the last hour: 0.156 (good: 0.1 or less), for more than 30 minutes.'
+              runbook_url: docs/incident-response.md#15-poor-web-vitals
+              dashboard_uid: app-web-vitals

@@ -6,22 +6,23 @@ and how the signals answer the questions of an incident. Alerts and SLOs built o
 
 ## What is included
 
-| Capability                                                                    | Class                  | On by default | Needs                                           |
-| ----------------------------------------------------------------------------- | ---------------------- | ------------- | ----------------------------------------------- |
-| Structured logs (JSON in production) with automatic redaction                 | CORE                   | yes           | nothing                                         |
-| Request ids on every response, log line, error report and outgoing call       | CORE                   | yes           | nothing                                         |
-| Deployment identity (environment, release) on every log line and report       | CORE                   | yes           | the image build (release) and `APP_ENVIRONMENT` |
-| Liveness and readiness probes (database, Redis when configured)               | CORE                   | yes           | nothing                                         |
-| Graceful shutdown (drain, close, flush)                                       | CORE                   | yes           | nothing                                         |
-| Error classification (application, database, dependency) and the error metric | CORE                   | yes           | nothing                                         |
-| Slow query log (statement only)                                               | CORE                   | yes (500 ms)  | nothing                                         |
-| Shared client for external services (timeouts, retries, correlation)          | CORE                   | yes           | nothing                                         |
-| Error tracking, API and web (Sentry)                                          | OPTIONAL               | no            | REQUIRES CONFIGURATION: a Sentry project        |
-| Tracing and metrics (OpenTelemetry, OTLP)                                     | OPTIONAL               | no            | REQUIRES CONFIGURATION: a collector or provider |
-| Local observability backend (Grafana, Prometheus, Tempo, Loki)                | OPTIONAL (development) | no            | Docker                                          |
-| Uptime monitoring                                                             | REQUIRES CONFIGURATION | no            | an external uptime service                      |
-| Dashboards, SLOs and alert rules as code, tested (`observability/`)           | OPTIONAL               | locally       | Grafana and a Prometheus-compatible backend     |
-| Alert routing (who is paged, where warnings go)                               | REQUIRES CONFIGURATION | no            | Alertmanager, Grafana contact points or similar |
+| Capability                                                                    | Class                  | On by default                  | Needs                                           |
+| ----------------------------------------------------------------------------- | ---------------------- | ------------------------------ | ----------------------------------------------- |
+| Structured logs (JSON in production) with automatic redaction                 | CORE                   | yes                            | nothing                                         |
+| Request ids on every response, log line, error report and outgoing call       | CORE                   | yes                            | nothing                                         |
+| Deployment identity (environment, release) on every log line and report       | CORE                   | yes                            | the image build (release) and `APP_ENVIRONMENT` |
+| Liveness and readiness probes (database, Redis when configured)               | CORE                   | yes                            | nothing                                         |
+| Graceful shutdown (drain, close, flush)                                       | CORE                   | yes                            | nothing                                         |
+| Error classification (application, database, dependency) and the error metric | CORE                   | yes                            | nothing                                         |
+| Slow query log (statement only)                                               | CORE                   | yes (500 ms)                   | nothing                                         |
+| Shared client for external services (timeouts, retries, correlation)          | CORE                   | yes                            | nothing                                         |
+| Error tracking, API and web (Sentry)                                          | OPTIONAL               | no                             | REQUIRES CONFIGURATION: a Sentry project        |
+| Tracing and metrics (OpenTelemetry, OTLP)                                     | OPTIONAL               | no                             | REQUIRES CONFIGURATION: a collector or provider |
+| Web Vitals of real page loads (LCP, INP, CLS, FCP, TTFB), per page            | OPTIONAL               | sent; recorded with metrics on | OpenTelemetry metrics                           |
+| Local observability backend (Grafana, Prometheus, Tempo, Loki)                | OPTIONAL (development) | no                             | Docker                                          |
+| Uptime monitoring                                                             | REQUIRES CONFIGURATION | no                             | an external uptime service                      |
+| Dashboards, SLOs and alert rules as code, tested (`observability/`)           | OPTIONAL               | locally                        | Grafana and a Prometheus-compatible backend     |
+| Alert routing (who is paged, where warnings go)                               | REQUIRES CONFIGURATION | no                             | Alertmanager, Grafana contact points or similar |
 
 Nothing optional is needed to run, test or deploy the template: without `SENTRY_DSN` and
 `OTEL_EXPORTER_OTLP_ENDPOINT` the SDKs are not even loaded.
@@ -259,7 +260,8 @@ Tempo, Loki, Grafana in one image, development only), with the dashboards and ru
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` in `apps/api/.env`, restart `pnpm dev`, send a
 few requests, and open Grafana at http://localhost:3001:
 
-- Dashboards → Application: "API service" and "API SLOs";
+- Dashboards → Application: "API service", "API SLOs" and "Web Vitals" (browse the app of
+  `pnpm dev`, then switch tabs: a page load reports when it is hidden);
 - Alerting → Alert rules: the Prometheus rules, under data source-managed, evaluated every 30
   seconds (nothing is notified: routing is not configured locally);
 - Explore → Tempo for traces, Prometheus for metrics; Prometheus itself on http://localhost:9090.
@@ -275,16 +277,18 @@ The dashboards, the SLOs and the alert rules are files in `observability/`, revi
 like code, and tied to no vendor: Grafana dashboards that read any Prometheus-compatible data
 source, and Prometheus rule files that Prometheus, Grafana Mimir and Grafana Cloud load unchanged.
 
-| File                                                | What                                                                                                                                                    |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `observability/grafana/dashboards/api-service.json` | "API service": rate, errors and latency per route, 5xx by origin, readiness, Node.js runtime, database, cache, Redis, external calls, degraded features |
-| `observability/grafana/dashboards/api-slo.json`     | "API SLOs": objective, SLI and error budget over 30 days, burn rate per alert window, the SLO alerts                                                    |
-| `observability/prometheus/rules/api-slo.yaml`       | the availability and latency SLOs: recording rules and multiwindow burn-rate alerts ([alerting.md](alerting.md#slis-and-slos))                          |
-| `observability/prometheus/rules/api-alerts.yaml`    | symptom alerts ([below](#alerts))                                                                                                                       |
-| `observability/prometheus/tests/*.test.yaml`        | unit tests of the rules with synthetic series (`promtool test rules`)                                                                                   |
-| `observability/prometheus/prometheus.yaml`          | the local backend's Prometheus configuration, which loads the rules                                                                                     |
-| `observability/grafana/dashboards.yaml`             | the local backend's dashboard provider (folder "Application")                                                                                           |
-| `observability/api-metrics.json`                    | the series the API exports ([Metric catalog](#metric-catalog))                                                                                          |
+| File                                                    | What                                                                                                                                                                             |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `observability/grafana/dashboards/api-service.json`     | "API service": rate, errors and latency per route, 5xx by origin, readiness, Node.js runtime, database, cache, Redis, external calls, degraded features                          |
+| `observability/grafana/dashboards/api-slo.json`         | "API SLOs": objective, SLI and error budget over 30 days, burn rate per alert window, the SLO alerts                                                                             |
+| `observability/grafana/dashboards/web-vitals.json`      | "Web Vitals": p75 of LCP, INP, CLS, FCP and TTFB, per page over time, share of good page loads, page loads by navigation type, the Web Vitals alerts ([Web Vitals](#web-vitals)) |
+| `observability/prometheus/rules/api-slo.yaml`           | the availability and latency SLOs: recording rules and multiwindow burn-rate alerts ([alerting.md](alerting.md#slis-and-slos))                                                   |
+| `observability/prometheus/rules/api-alerts.yaml`        | symptom alerts ([below](#alerts))                                                                                                                                                |
+| `observability/prometheus/rules/web-vitals-alerts.yaml` | Core Web Vitals at p75 above "good" on a page ([below](#alerts))                                                                                                                 |
+| `observability/prometheus/tests/*.test.yaml`            | unit tests of the rules with synthetic series (`promtool test rules`)                                                                                                            |
+| `observability/prometheus/prometheus.yaml`              | the local backend's Prometheus configuration, which loads the rules                                                                                                              |
+| `observability/grafana/dashboards.yaml`                 | the local backend's dashboard provider (folder "Application")                                                                                                                    |
+| `observability/api-metrics.json`                        | the series the API exports ([Metric catalog](#metric-catalog))                                                                                                                   |
 
 **Rules of the files**, checked by `pnpm observability:check` (CI job "Observability as code";
 needs Docker, and the part that does not also runs in `pnpm test:scripts`):
@@ -312,21 +316,24 @@ backend per environment.
 Thresholds are starting points ([alerting.md](alerting.md#alert-catalog)); a change comes with its
 unit test.
 
-| Alert                           | Severity | Fires when                                                                                 | Runbook                                                                              |
-| ------------------------------- | -------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `ApiAvailabilityBudgetFastBurn` | critical | 5xx burn rate above 14.4 over 1 hour and over 5 minutes, at least 100 requests in the hour | [5. High 5xx rate](incident-response.md#5-high-5xx-rate)                             |
-| `ApiAvailabilityBudgetSlowBurn` | warning  | burn rate above 6 over 6 hours and 30 minutes, or above 1 over 3 days and 6 hours          | [5. High 5xx rate](incident-response.md#5-high-5xx-rate)                             |
-| `ApiLatencyBudgetFastBurn`      | critical | the same burn rates, counting responses slower than 500 ms (authentication excluded)       | [6. High latency](incident-response.md#6-high-latency)                               |
-| `ApiLatencyBudgetSlowBurn`      | warning  | as the availability slow burn, for the latency SLO                                         | [6. High latency](incident-response.md#6-high-latency)                               |
-| `ApiReadinessFailing`           | critical | an instance's readiness answered 503 in every 2-minute window for 2 minutes                | [2. Readiness failing](incident-response.md#2-readiness-failing)                     |
-| `ApiDatabaseErrors`             | critical | 5xx with origin `database` for 2 minutes                                                   | [3. Database unavailable](incident-response.md#3-database-unavailable)               |
-| `ApiRouteErrorRatioHigh`        | warning  | a route's 5xx above 5 % for 10 minutes, with at least 20 requests                          | [5. High 5xx rate](incident-response.md#5-high-5xx-rate)                             |
-| `ApiRouteLatencyHigh`           | warning  | a route's p95 above 500 ms for 15 minutes (authentication excluded)                        | [6. High latency](incident-response.md#6-high-latency)                               |
-| `ApiDegradedMode`               | warning  | a feature served by its fallback for 5 minutes (Redis or the cache store down)             | [4. Redis unavailable](incident-response.md#4-redis-unavailable)                     |
-| `ApiDependencyFailing`          | warning  | over 5 % of a dependency's calls failing for 10 minutes, with at least 20 calls            | [12. External dependency outage](incident-response.md#12-external-dependency-outage) |
-| `ApiDatabasePoolSaturated`      | warning  | requests waiting for a database connection for 5 minutes                                   | [6. High latency](incident-response.md#6-high-latency)                               |
-| `ApiEventLoopDelayHigh`         | warning  | event loop p99 above 200 ms for 15 minutes                                                 | [7. Memory or CPU pressure](incident-response.md#7-memory-or-cpu-pressure)           |
-| `ApiMetricsAbsent`              | warning  | no metrics from the API for 10 minutes (the dead man's switch: every other alert is blind) | [1. API down](incident-response.md#1-api-down)                                       |
+| Alert                           | Severity | Fires when                                                                                   | Runbook                                                                              |
+| ------------------------------- | -------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `ApiAvailabilityBudgetFastBurn` | critical | 5xx burn rate above 14.4 over 1 hour and over 5 minutes, at least 100 requests in the hour   | [5. High 5xx rate](incident-response.md#5-high-5xx-rate)                             |
+| `ApiAvailabilityBudgetSlowBurn` | warning  | burn rate above 6 over 6 hours and 30 minutes, or above 1 over 3 days and 6 hours            | [5. High 5xx rate](incident-response.md#5-high-5xx-rate)                             |
+| `ApiLatencyBudgetFastBurn`      | critical | the same burn rates, counting responses slower than 500 ms (authentication excluded)         | [6. High latency](incident-response.md#6-high-latency)                               |
+| `ApiLatencyBudgetSlowBurn`      | warning  | as the availability slow burn, for the latency SLO                                           | [6. High latency](incident-response.md#6-high-latency)                               |
+| `ApiReadinessFailing`           | critical | an instance's readiness answered 503 in every 2-minute window for 2 minutes                  | [2. Readiness failing](incident-response.md#2-readiness-failing)                     |
+| `ApiDatabaseErrors`             | critical | 5xx with origin `database` for 2 minutes                                                     | [3. Database unavailable](incident-response.md#3-database-unavailable)               |
+| `ApiRouteErrorRatioHigh`        | warning  | a route's 5xx above 5 % for 10 minutes, with at least 20 requests                            | [5. High 5xx rate](incident-response.md#5-high-5xx-rate)                             |
+| `ApiRouteLatencyHigh`           | warning  | a route's p95 above 500 ms for 15 minutes (authentication excluded)                          | [6. High latency](incident-response.md#6-high-latency)                               |
+| `ApiDegradedMode`               | warning  | a feature served by its fallback for 5 minutes (Redis or the cache store down)               | [4. Redis unavailable](incident-response.md#4-redis-unavailable)                     |
+| `ApiDependencyFailing`          | warning  | over 5 % of a dependency's calls failing for 10 minutes, with at least 20 calls              | [12. External dependency outage](incident-response.md#12-external-dependency-outage) |
+| `ApiDatabasePoolSaturated`      | warning  | requests waiting for a database connection for 5 minutes                                     | [6. High latency](incident-response.md#6-high-latency)                               |
+| `ApiEventLoopDelayHigh`         | warning  | event loop p99 above 200 ms for 15 minutes                                                   | [7. Memory or CPU pressure](incident-response.md#7-memory-or-cpu-pressure)           |
+| `ApiMetricsAbsent`              | warning  | no metrics from the API for 10 minutes (the dead man's switch: every other alert is blind)   | [1. API down](incident-response.md#1-api-down)                                       |
+| `WebVitalsLcpPoor`              | warning  | a page's LCP p75 over the last hour above 2.5 s for 30 minutes, from at least 100 page loads | [15. Poor Web Vitals](incident-response.md#15-poor-web-vitals)                       |
+| `WebVitalsInpPoor`              | warning  | the same for INP above 200 ms                                                                | [15. Poor Web Vitals](incident-response.md#15-poor-web-vitals)                       |
+| `WebVitalsClsPoor`              | warning  | the same for CLS above 0.1                                                                   | [15. Poor Web Vitals](incident-response.md#15-poor-web-vitals)                       |
 
 Health probes are not in the HTTP metrics: `ApiReadinessFailing` counts the 503s the error filter
 records (`app_server_errors_total{error_origin="unavailable", http_route="/api/health/ready"}`),
@@ -393,6 +400,68 @@ come from the platform (cAdvisor, the cloud provider's metrics), not from inside
 
 Add a metric for a feature in `observability/metrics.ts`, with low-cardinality attributes only:
 never user ids, emails or raw paths as attribute values.
+
+## Web Vitals
+
+How fast and stable the pages are for real users, measured in their browsers: the five metrics of
+Google's [web-vitals](https://github.com/GoogleChrome/web-vitals) library for each page load. Sent
+by default (`WEB_VITALS_SAMPLE_RATE`, 1); recorded only when the API's metrics are on
+([OpenTelemetry](#opentelemetry)).
+
+| Metric                         | Measures                                    | Good     | Poor above |
+| ------------------------------ | ------------------------------------------- | -------- | ---------- |
+| LCP, Largest Contentful Paint  | when the main content is painted            | ≤ 2.5 s  | 4 s        |
+| INP, Interaction to Next Paint | how long the page takes to respond to input | ≤ 200 ms | 500 ms     |
+| CLS, Cumulative Layout Shift   | how much the layout moves unexpectedly      | ≤ 0.1    | 0.25       |
+| FCP, First Contentful Paint    | when the first content is painted           | ≤ 1.8 s  | 3 s        |
+| TTFB, Time to First Byte       | when the first byte of the page arrives     | ≤ 0.8 s  | 1.8 s      |
+
+LCP, INP and CLS are the Core Web Vitals: a page passes when all three are good for at least 75 %
+of its page loads, so the dashboard and the alerts read the 75th percentile.
+
+**From the browser to the metrics:**
+
+1. After the first render, the app loads `monitoring/webVitals.ts` (a chunk of its own; the
+   deployment settings are another, shared with error tracking) and, for the page loads the sample
+   rate picks, the library with `monitoring/webVitalsReporter.ts` (3.7 kB gzip). Neither is in the
+   initial bundle (budgets in `apps/web/performance-budget.json`); `WEB_VITALS_SAMPLE_RATE=0`
+   loads no library at all.
+2. The values are queued and sent in one request when the page is hidden (`visibilitychange`, or
+   `pagehide`), the moment the library reports its final CLS, INP and LCP: with
+   `navigator.sendBeacon`, which survives the page closing, or `fetch` with `keepalive` where a
+   beacon is refused. A queue of 10 is sent at once.
+3. `POST /api/telemetry/web-vitals` validates the batch and records two histograms; with metrics
+   off it validates and answers 204 all the same, at the cost of a few function calls. The route is
+   public and protected like every other ([security.md](security.md#web-vitals)).
+
+| Metric (Prometheus name)                                                           | Attributes                                                                      |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `app.web_vitals.duration` (`app_web_vitals_duration_seconds`): LCP, INP, FCP, TTFB | `web_vital.name`, `web_vital.rating`, `web_vital.navigation_type`, `page.route` |
+| `app.web_vitals.cls` (`app_web_vitals_cls`)                                        | `web_vital.rating`, `web_vital.navigation_type`, `page.route`                   |
+
+- `page.route` is the route pattern of the page as loaded (`/admin/users`, `/` for the index, `/*`
+  for the not-found page), attributed to the page load like in the Chrome UX Report: never its URL
+  or query string. The API accepts only the patterns of the app's routes (`WEB_VITALS_ROUTES` in
+  `apps/api/src/telemetry/web-vitals.schemas.ts`), so no client can create series at will.
+  **Adding a page:** add its pattern there and run `pnpm contract`; `webVitalsReporter.spec.ts`
+  fails until the app's routes and the list match.
+- `web_vital.rating` (`good`, `needs-improvement`, `poor`) is computed by the API from the value
+  with the thresholds above, never taken from the client. The histograms' buckets hold every
+  threshold, so a p75 compared with one, and the share of good page loads, are exact.
+- `web_vital.navigation_type`: `navigate`, `reload`, `back-forward`, `back-forward-cache` (restored
+  from the browser's cache, near-instant: read it apart), `prerender`, `restore`.
+
+```promql
+# LCP at the 75th percentile per page, over the last hour
+histogram_quantile(0.75, sum by (le, page_route) (rate(app_web_vitals_duration_seconds_bucket{web_vital_name="LCP"}[1h])))
+# Share of page loads with a good INP
+sum(rate(app_web_vitals_duration_seconds_count{web_vital_name="INP", web_vital_rating="good"}[1h]))
+  / sum(rate(app_web_vitals_duration_seconds_count{web_vital_name="INP"}[1h]))
+```
+
+The "Web Vitals" dashboard shows them, and three alerts warn when a page's LCP, INP or CLS p75
+stays above "good" ([Alerts](#alerts)). With a lot of traffic, lower `WEB_VITALS_SAMPLE_RATE`: a
+p75 is stable from a few hundred page loads per page and hour, and the alerts need 100.
 
 ## Database
 
