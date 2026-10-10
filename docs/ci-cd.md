@@ -308,7 +308,8 @@ Two release paths follow the gates:
 - **The reference target, one Linux server with Docker** (repository variable
   `DEPLOY_TARGET=vps`, [deploy-vps.md](deploy-vps.md)), implemented: `publish` pushes the three
   images to ghcr.io once per commit, scans the digests it pushed and records them in the run
-  (production reuses the digests staging recorded), and `release-vps`, in the GitHub environment,
+  (production reuses the digests staging recorded, and scans them again), and `release-vps`, in the
+  GitHub environment,
   checks that the server's copy of `deploy/vps` matches the release, runs `deploy.sh` on the
   server over SSH with the recorded digests (pull by digest, migrate, roll out, back to the running
   release when the rollout fails), runs the smoke test and calls `rollback.sh` when it fails.

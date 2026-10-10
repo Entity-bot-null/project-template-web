@@ -34,7 +34,7 @@ Nothing optional is needed to run, test or deploy the template: without `SENTRY_
 | Is the application failing?                          | Uptime checks and readiness; 5xx rate (`app.server.errors`, `http.server.request.duration` by status); new issues in Sentry                                     |
 | When did it start?                                   | The metric's time series; the issue's first-seen time in Sentry                                                                                                 |
 | How many users does it affect?                       | Sentry's users per issue (opaque user ids); share of requests failing; distinct `userId` in error log lines                                                     |
-| Which endpoint is failing?                           | `http.route` on metrics, spans, error reports and the error log line (`GET /api/users/:id -> 500`)                                                              |
+| Which endpoint is failing?                           | `http.route` on metrics, spans and error reports; the path in the error log line (`GET /api/users/7 -> 500`)                                                    |
 | Which version introduced it?                         | `release` (the commit SHA) on every log line, error report and span; Sentry's "first seen in release"; compare by `service.version`                             |
 | Where exactly?                                       | The stack trace (Sentry, error log line); the trace's spans: route, Express handler, query, outgoing call                                                       |
 | Application, database, infrastructure or dependency? | `error.origin` (`application`, `database`, `dependency`, `unavailable`) on the error metric, log line and report; readiness checks; pool and dependency metrics |
@@ -56,7 +56,7 @@ Every JSON log line, error report and span says which deployment and build produ
   lines in production** (`{"level","pid","timestamp","message","context","service","environment",
 "release","requestId","traceId","spanId"}`), readable text in development. `LOG_LEVEL` sets the
   minimum level; `LOG_FORMAT` overrides the format.
-- **Redaction, automatic** (`observability/redact.ts`): every message, object, error and stack trace
+- **Redaction, automatic** (`apps/api/src/observability/redact.ts`): every message, object, error and stack trace
   is masked before it is printed: values under sensitive keys (`password`, `token`, `authorization`,
   `cookie`, `apiKey`, `secret`...), and credentials written inline in strings (connection strings,
   bearer tokens, JWTs, `token=` in URLs, private keys, well-known provider tokens). A secret handed to
@@ -165,7 +165,7 @@ page path and the source (`route`, `window`). Nothing else.
 **Never sent** ([security.md](security.md#error-tracking-data)): passwords, tokens, cookies,
 `Authorization` headers, request and response bodies, query strings, local variables, console
 output. The SDK's own data collection is switched off category by category (`DATA_COLLECTION` in
-`observability/sentry.ts` and `apps/web/src/monitoring/sentry.ts`), and every event is scrubbed again
+`apps/api/src/observability/sentry.ts` and `apps/web/src/monitoring/sentry.ts`), and every event is scrubbed again
 before it leaves (`scrubEvent`), with the same redaction as the logs.
 
 **Setup:**
@@ -202,16 +202,16 @@ off, the SDK is never imported and nothing is patched, so development and tests 
 
 **What it generates:**
 
-| Signal                        | Instrumentation                   | Data                                                                                                       |
-| ----------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Server spans + request metric | HTTP (`instrumentation-http`)     | one span per request; `http.server.request.duration` (method, route, status)                               |
-| Route spans                   | Express                           | the route pattern of each request (`GET /api/users/:id`) and its handler, also on the HTTP metrics         |
-| Database spans + pool metrics | PostgreSQL (`instrumentation-pg`) | one span per query (statement with placeholders, never values); connection pool usage and waiting requests |
-| Client spans + client metric  | fetch (`instrumentation-undici`)  | outgoing calls; `http.client.request.duration`; W3C trace context injected                                 |
-| Redis metrics                 | node-redis's own                  | command duration and errors, connections                                                                   |
-| Runtime metrics               | Node.js runtime                   | event loop delay and utilization, heap, garbage collection                                                 |
-| Process metrics               | built in                          | `process.cpu.time`, `process.memory.usage` (RSS)                                                           |
-| Application metrics           | `observability/metrics.ts`        | see [Metrics](#metrics)                                                                                    |
+| Signal                        | Instrumentation                         | Data                                                                                                       |
+| ----------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Server spans + request metric | HTTP (`instrumentation-http`)           | one span per request; `http.server.request.duration` (method, route, status)                               |
+| Route spans                   | Express                                 | the route pattern of each request (`GET /api/users/:id`) and its handler, also on the HTTP metrics         |
+| Database spans + pool metrics | PostgreSQL (`instrumentation-pg`)       | one span per query (statement with placeholders, never values); connection pool usage and waiting requests |
+| Client spans + client metric  | fetch (`instrumentation-undici`)        | outgoing calls; `http.client.request.duration`; W3C trace context injected                                 |
+| Redis metrics                 | node-redis's own                        | command duration and errors, connections                                                                   |
+| Runtime metrics               | Node.js runtime                         | event loop delay and utilization, heap, garbage collection                                                 |
+| Process metrics               | built in                                | `process.cpu.time`, `process.memory.usage` (RSS)                                                           |
+| Application metrics           | `apps/api/src/observability/metrics.ts` | see [Metrics](#metrics)                                                                                    |
 
 NestJS handler spans are not included: the official instrumentation does not support Nest 12 yet
 (add `@opentelemetry/instrumentation-nestjs-core` when it does). Nest 12 loads its HTTP platform
@@ -398,7 +398,7 @@ Percentiles are computed by the backend from histogram buckets; the API exports 
 precomputed percentiles. CPU and memory of the container itself (limits, throttling, OOM kills)
 come from the platform (cAdvisor, the cloud provider's metrics), not from inside the process.
 
-Add a metric for a feature in `observability/metrics.ts`, with low-cardinality attributes only:
+Add a metric for a feature in `apps/api/src/observability/metrics.ts`, with low-cardinality attributes only:
 never user ids, emails or raw paths as attribute values.
 
 ## Web Vitals

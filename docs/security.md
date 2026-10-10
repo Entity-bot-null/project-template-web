@@ -273,7 +273,7 @@ Logs, error reports and spans leave the process; credentials must not. Three lay
 1. **Nothing sensitive is logged on purpose:** the access log records method, path (no query
    string), status, duration, IP and user id; error lines record the stack; no code logs headers,
    cookies, bodies, tokens or env values (review rule, ENGINEERING_STANDARDS.md).
-2. **Automatic redaction** (`observability/redact.ts`) of everything the logger prints, whatever a
+2. **Automatic redaction** (`apps/api/src/observability/redact.ts`) of everything the logger prints, whatever a
    developer passes to it: values under sensitive keys (`password`, `passwordHash`, `token`,
    `accessToken`, `refreshToken`, `authorization`, `cookie`, `set-cookie`, `apiKey`, `secret`,
    `privateKey`, `credential`, `signature`, `sessionId`, `dsn`, in any letter case and at any depth),
@@ -534,14 +534,14 @@ reaches; authenticated scanning is per project (OPCIONAL: a ZAP context with a t
 
 ## Artifact integrity
 
-| What                                    | Status                              | How                                                                                                                                                    |
-| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                                                   |
-| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)                               |
-| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image                              |
-| Scanned image = shipped image           | Obligatorio                         | The VPS deployment scans the digest it pushed and deploys that digest from the run's record; production reuses staging's record, never the mutable tag |
-| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud                              |
-| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                                                |
+| What                                    | Status                              | How                                                                                                                                                                        |
+| --------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                                                                       |
+| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)                                                   |
+| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image                                                  |
+| Scanned image = shipped image           | Obligatorio                         | The VPS deployment scans the digest it pushed and deploys that digest from the run's record; production reuses staging's record, never the mutable tag, and scans it again |
+| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud                                                  |
+| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                                                                    |
 
 Signing with a separate tool (cosign with keys) is not included: GitHub attestations are already
 Sigstore signatures, verifiable without managing keys. To see what a pushed image carries:

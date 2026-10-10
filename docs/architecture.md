@@ -142,7 +142,7 @@ a code change, and feature code never depends on the provider (ESLint keeps `@re
   environment when they share a Redis. Every key the template writes has a TTL (cache generations
   excepted: a few bytes per namespace).
 - **ACL for production:** a user limited to `~<prefix>*` and the commands the adapters run:
-  `+get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zremrangebyscore`
+  `+get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zrange +zremrangebyscore`
   (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake).
 - **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development uses
   `redis:8-alpine` (`docker compose --profile redis up -d`); production settings:

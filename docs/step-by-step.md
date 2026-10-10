@@ -103,8 +103,8 @@ an answer.
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------ |
 | Git                 | Windows: [Git for Windows](https://git-scm.com/download/win) (includes Git Bash and `openssl`); macOS: `xcode-select --install`; Linux: your package manager                 | `git --version`          | any current version                                          |
 | Node.js 24          | [nvm](https://github.com/nvm-sh/nvm) (macOS/Linux): `nvm install 24`; Windows: [fnm](https://github.com/Schniz/fnm) or the [official installer](https://nodejs.org) (24 LTS) | `node --version`         | `v24.15.0` or later                                          |
-| pnpm                | `corepack enable` (once; comes with Node.js)                                                                                                                                 | `pnpm --version`         | `12.5.1` (inside the project)                                |
-| Docker              | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows, macOS) or Docker Engine (Linux)                                                                  | `docker compose version` | `Docker Compose version v2…`                                 |
+| pnpm                | `corepack enable` (once; Node.js 24 includes Corepack, from Node.js 25 install it first: `npm install -g corepack`)                                                          | `pnpm --version`         | `12.5.1` (inside the project)                                |
+| Docker              | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows, macOS) or Docker Engine (Linux)                                                                  | `docker compose version` | `Docker Compose version v2` or later                         |
 | GitHub CLI          | [cli.github.com](https://cli.github.com)                                                                                                                                     | `gh --version`           | any current version                                          |
 | VS Code (suggested) | [code.visualstudio.com](https://code.visualstudio.com)                                                                                                                       |                          | it offers the project's recommended extensions on first open |
 
@@ -115,7 +115,8 @@ an answer.
 
 - `node` prints an older version: `nvm use 24` / `fnm use 24`, then open a new terminal.
 - `pnpm` is not found: run `corepack enable` again in a terminal opened as administrator
-  (Windows) or with `sudo` (macOS/Linux).
+  (Windows) or with `sudo` (macOS/Linux). `corepack` is not found (Node.js 25 or later):
+  `npm install -g corepack`, or `npm install -g pnpm@12.5.1`.
 - `docker compose version` fails: start Docker Desktop and wait until it says it is running.
 
 ### 1.2 Sign in to GitHub from the terminal
@@ -178,9 +179,10 @@ Open the project in your editor (`code .`) and change:
 
 The packages `apps/api` and `apps/web` keep their names (`api`, `web`): they are private.
 
-**Check:** searching the project for `example.com` finds only `.env.example` files, tests and
-documentation examples; searching for `REQUIERE CONFIGURACIÓN` lists the items still open (most are
-in later phases).
+**Check:** searching the project for `example.com` finds only examples and placeholders for later:
+the `.env.example` files (those of `deploy/vps` too), tests, the development seed accounts, comments
+and documentation, and the defaults of `infra/`, `dast.yml` and the smoke test (phases 7 to 9);
+searching for `REQUIERE CONFIGURACIÓN` lists the items still open (most are in later phases).
 
 ---
 
@@ -191,10 +193,14 @@ in later phases).
 ```
 corepack enable
 pnpm install
+pnpm contract
 ```
 
-**Check:** it ends with `Done in …`, and `git config core.hooksPath` prints `.husky/_` (the Git
-hooks are installed).
+`pnpm contract` writes the API's new title (2.2) into the committed contract, `openapi/openapi.json`,
+and the web client's types: until then the contract drift test of 4.1 fails.
+
+**Check:** `pnpm install` ends with `Done in …`, and `git config core.hooksPath` prints `.husky/_`
+(the Git hooks are installed); `pnpm contract` ends without errors.
 
 **If it fails:** `ERR_PNPM_UNSUPPORTED_ENGINE` → Node.js is older than 24.15 (phase 1).
 `ERR_PNPM_NO_MATURE_MATCHING_VERSION` → a dependency is younger than seven days (the supply-chain
@@ -210,8 +216,9 @@ openssl rand -hex 32
 Open `apps/api/.env` and paste the printed value after `JWT_ACCESS_SECRET=`. Nothing else is needed
 locally.
 
-**Check:** `grep JWT_ACCESS_SECRET apps/api/.env` shows a 64-character value. `git status` does
-**not** list `apps/api/.env` (it is ignored: never commit it).
+**Check:** `grep -cE '^JWT_ACCESS_SECRET=[0-9a-f]{64}$' apps/api/.env` prints `1` (the secret is
+set, without printing it). `git status` does **not** list `apps/api/.env` (it is ignored: never
+commit it).
 
 ### 3.3 Start the database
 
@@ -281,8 +288,9 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-**Check:** both report every test passed (`passed`, no `failed`). The end-to-end tests use ports
-3100 and 4173: stop `pnpm dev` first.
+**Check:** both report their tests passed (`passed`, no `failed`); the integration run also lists
+the Redis adapter suite as skipped, which runs where `REDIS_TEST_URL` is set (CI). The end-to-end
+tests use ports 3100 and 4173: stop `pnpm dev` first.
 
 ### 4.3 The Docker-based checks
 
@@ -299,11 +307,12 @@ copy of the files git tracks); the first run also pulls the Semgrep image.
 
 ### 4.4 The production images on your machine
 
-Add a secret for the local production stack to the root `.env` (create it with
-`cp .env.example .env` if you have not):
+Set a secret for the local production stack in the root `.env` (create it with
+`cp .env.example .env` if you have not): open it and paste the value the first command prints after
+`JWT_ACCESS_SECRET=`, then start the stack:
 
 ```
-echo "JWT_ACCESS_SECRET=$(openssl rand -hex 32)" >> .env
+openssl rand -hex 32
 docker compose --profile stack up --build
 ```
 
@@ -314,7 +323,8 @@ pnpm smoke --url http://localhost:8080
 ```
 
 **Check:** the smoke test ends with `Smoke test passed (public URL only).` and http://localhost:8080
-shows the app (an empty database: no accounts, which is expected).
+shows the app. The stack uses the development database (the same `db` service and volume), so the
+accounts of 3.3 sign in there too.
 
 Stop: `Ctrl+C`, then `docker compose --profile stack down`.
 
@@ -454,9 +464,9 @@ Terraform can build the same ones instead: do 7.0, skip 7.1 to 7.5, and go on at
 ### 7.0 On DigitalOcean, 7.1 to 7.5 with Terraform (optional)
 
 What Terraform creates, what it costs and why:
-[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). You need Terraform 1.16
-([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
-`terraform version` prints `Terraform v1.16.` and the patch number) and a DigitalOcean API token
+[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). You need Terraform 1.16.5 or a
+later 1.16 ([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
+`terraform version` prints `Terraform v1.16.` and a patch number of 5 or more) and a DigitalOcean API token
 that can write (**API → Tokens**).
 
 On your computer, the deploy key of this environment (as in 7.4), then the settings file:
@@ -552,7 +562,7 @@ sudo apt-get install -y unattended-upgrades
 sudo dpkg-reconfigure --priority=low unattended-upgrades
 ```
 
-**Check:** `docker compose version` prints `Docker Compose version v2…`; `sudo ufw status` lists
+**Check:** `docker compose version` prints `Docker Compose version v2` or later; `sudo ufw status` lists
 OpenSSH, 80 and 443 as `ALLOW`.
 
 ### 7.4 Create the deploy user

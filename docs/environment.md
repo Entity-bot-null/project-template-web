@@ -13,13 +13,14 @@
 
 ## Files
 
-| File                    | Read by                                                  | Committed |
-| ----------------------- | -------------------------------------------------------- | --------- |
-| `apps/api/.env`         | the API and the Prisma CLI, development                  | no        |
-| `apps/api/.env.example` | documentation of every API variable                      | yes       |
-| `.env` (root)           | `docker compose` (ports, stack secret, `REDIS_PASSWORD`) | no        |
-| `.env.example` (root)   | documentation of the compose variables                   | yes       |
-| `apps/web/.env.example` | the web app's optional settings                          | yes       |
+| File                       | Read by                                                                                    | Committed |
+| -------------------------- | ------------------------------------------------------------------------------------------ | --------- |
+| `apps/api/.env`            | the API and the Prisma CLI, development                                                    | no        |
+| `apps/api/.env.example`    | documentation of every API variable                                                        | yes       |
+| `.env` (root)              | `docker compose` (ports, stack secret, `REDIS_PASSWORD`)                                   | no        |
+| `.env.example` (root)      | documentation of the compose variables                                                     | yes       |
+| `apps/web/.env.example`    | the web app's optional settings                                                            | yes       |
+| `deploy/vps/*.env.example` | the server's container settings ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)) | yes       |
 
 ## API variables
 
