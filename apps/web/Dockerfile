@@ -11,7 +11,7 @@
 # (.nvmrc) from ECR Public's mirror of Docker's official images, nginx from
 # NGINX's own registry on GHCR: the same images as Docker Hub, without its
 # anonymous pull limit.
-FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
+FROM public.ecr.aws/docker/library/node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS build
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     CI=true \
