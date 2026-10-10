@@ -1,11 +1,16 @@
 {
-  "$comment": "Gzip size budgets for the built web assets, checked by `pnpm perf:check` after `pnpm build`. Set from the template's measured build rounded up: the initial JavaScript (every visit) 104 kB, the error tracking chunk (fetched only when WEB_SENTRY_DSN is set) 31 kB, CSS 0.5 kB. The total keeps a new lazy chunk from hiding outside the named ones. Each project sets its own from its performance targets (docs/testing.md#performance-budget).",
+  "$comment": "Gzip size budgets for the built web assets, checked by `pnpm perf:check` after `pnpm build`. Set from the template's measured build rounded up: the initial JavaScript (every visit) 104 kB, the error tracking chunk (fetched only when WEB_SENTRY_DSN is set) 31 kB, the Web Vitals chunks (fetched after the first render, the library only for sampled page loads) 4.2 kB, CSS 0.5 kB. The total keeps a new lazy chunk from hiding outside the named ones. Each project sets its own from its performance targets (docs/testing.md#performance-budget).",
   "budgets": [
     { "name": "JavaScript, initial", "pattern": "^index-[^.]+\\.js$", "maxGzipKb": 110 },
     {
       "name": "JavaScript, error tracking (lazy, only when configured)",
       "pattern": "^sentry-[^.]+\\.js$",
       "maxGzipKb": 35
+    },
+    {
+      "name": "JavaScript, Web Vitals (lazy, after the first render)",
+      "pattern": "^webVitals(Reporter)?-[^.]+\\.js$",
+      "maxGzipKb": 5
     },
     { "name": "JavaScript, total", "pattern": "\\.js$", "maxGzipKb": 145 },
     { "name": "CSS", "pattern": "\\.css$", "maxGzipKb": 5 }

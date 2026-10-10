@@ -35,9 +35,14 @@ describe('OpenAPI contract', () => {
     expect(document).toEqual(committed);
   });
 
-  it('declares the bearer requirement on every route outside /api/auth and /api/health', () => {
+  it('declares the bearer requirement on every route but the public ones', () => {
+    // Sign-in and its session cookies, the probes, and the Web Vitals the
+    // browser sends signed in or not (docs/security.md#web-vitals). A new
+    // public route is a decision: add it here with its reason.
     const publicRoute = (path: string) =>
-      path.startsWith('/api/auth/') || path.startsWith('/api/health/');
+      path.startsWith('/api/auth/') ||
+      path.startsWith('/api/health/') ||
+      path === '/api/telemetry/web-vitals';
     const unprotected = operations()
       .filter(({ path }) => !publicRoute(path))
       .filter(({ op }) => {

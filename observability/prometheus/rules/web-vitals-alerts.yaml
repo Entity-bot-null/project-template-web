@@ -1,0 +1,58 @@
+# Web Vitals of real page loads (docs/observability.md#web-vitals), reported
+# by the web app and recorded by the API: the Core Web Vitals at the 75th
+# percentile, the figure Google rates, above "good" on a page. Per route
+# pattern, over the previous hour, from at least 100 page loads (with fewer,
+# a handful of slow devices moves the p75), for 30 minutes. Warnings: slow or
+# jumpy pages hurt users and search ranking, but nobody is paged at night for
+# them. The thresholds are the bucket boundaries of the histograms, so the
+# comparison is exact.
+groups:
+  - name: web-vitals
+    rules:
+      - alert: WebVitalsLcpPoor
+        expr: |
+          histogram_quantile(0.75,
+            sum by (le, job, deployment_environment_name, page_route) (rate(app_web_vitals_duration_seconds_bucket{web_vital_name="LCP"}[1h]))
+          ) > 2.5
+          and on (job, deployment_environment_name, page_route)
+          sum by (job, deployment_environment_name, page_route) (increase(app_web_vitals_duration_seconds_count{web_vital_name="LCP"}[1h])) >= 100
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.page_route }} loads slowly: LCP p75 above 2.5 s ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'Largest Contentful Paint at the 75th percentile over the last hour: {{ $value | humanizeDuration }} (good: 2.5 s or less), for more than 30 minutes.'
+          runbook_url: docs/incident-response.md#15-poor-web-vitals
+          dashboard_uid: app-web-vitals
+
+      - alert: WebVitalsInpPoor
+        expr: |
+          histogram_quantile(0.75,
+            sum by (le, job, deployment_environment_name, page_route) (rate(app_web_vitals_duration_seconds_bucket{web_vital_name="INP"}[1h]))
+          ) > 0.2
+          and on (job, deployment_environment_name, page_route)
+          sum by (job, deployment_environment_name, page_route) (increase(app_web_vitals_duration_seconds_count{web_vital_name="INP"}[1h])) >= 100
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.page_route }} responds slowly to input: INP p75 above 200 ms ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'Interaction to Next Paint at the 75th percentile over the last hour: {{ $value | humanizeDuration }} (good: 200 ms or less), for more than 30 minutes.'
+          runbook_url: docs/incident-response.md#15-poor-web-vitals
+          dashboard_uid: app-web-vitals
+
+      - alert: WebVitalsClsPoor
+        expr: |
+          histogram_quantile(0.75,
+            sum by (le, job, deployment_environment_name, page_route) (rate(app_web_vitals_cls_bucket[1h]))
+          ) > 0.1
+          and on (job, deployment_environment_name, page_route)
+          sum by (job, deployment_environment_name, page_route) (increase(app_web_vitals_cls_count[1h])) >= 100
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.page_route }} shifts while loading: CLS p75 above 0.1 ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'Cumulative Layout Shift at the 75th percentile over the last hour: {{ $value | printf "%.3f" }} (good: 0.1 or less), for more than 30 minutes.'
+          runbook_url: docs/incident-response.md#15-poor-web-vitals
+          dashboard_uid: app-web-vitals

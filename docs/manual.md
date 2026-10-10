@@ -442,7 +442,8 @@ Vite dev and preview servers read the same names from their environment:
 
 `API_UPSTREAM` (http://api:3000, the API the web server forwards `/api` to), `APP_ENVIRONMENT`
 (production), `APP_RELEASE` (set by the image build), `WEB_SENTRY_DSN` (empty: off),
-`WEB_SENTRY_SAMPLE_RATE` (1). Development only: `API_PROXY_TARGET` (http://127.0.0.1:3000).
+`WEB_SENTRY_SAMPLE_RATE` (1), `WEB_VITALS_SAMPLE_RATE` (1, share of page loads that report their
+Web Vitals; 0: off). Development only: `API_PROXY_TARGET` (http://127.0.0.1:3000).
 Anything named `VITE_*` is compiled into the public bundle: never a secret.
 
 ### 6.4 Compose variables (root `.env`)

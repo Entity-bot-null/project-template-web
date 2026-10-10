@@ -31,13 +31,13 @@ REST over JSON, everything under `/api`. The contract is `openapi/openapi.json`
 
 ## Methods and status codes
 
-| Method   | Use                            | Success                        |
-| -------- | ------------------------------ | ------------------------------ |
-| `GET`    | read, never changes state      | `200`                          |
-| `POST`   | create, or run an action       | `201` (create), `200` (action) |
-| `PATCH`  | partial update                 | `200` with the updated record  |
-| `PUT`    | full replacement (rarely used) | `200`                          |
-| `DELETE` | delete, idempotent             | `204`                          |
+| Method   | Use                            | Success                                                                                      |
+| -------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
+| `GET`    | read, never changes state      | `200`                                                                                        |
+| `POST`   | create, or run an action       | `201` (create), `200` (action), `204` (an action with nothing to return: logout, Web Vitals) |
+| `PATCH`  | partial update                 | `200` with the updated record                                                                |
+| `PUT`    | full replacement (rarely used) | `200`                                                                                        |
+| `DELETE` | delete, idempotent             | `204`                                                                                        |
 
 Errors: `400` validation, `401` not authenticated, `403` authenticated but not allowed, `404` not
 found (also for records the caller may not see), `409` conflict, `413` body too large, `429` rate

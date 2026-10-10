@@ -794,6 +794,158 @@
           "health"
         ]
       }
+    },
+    "/api/telemetry/web-vitals": {
+      "post": {
+        "description": "Sent by the web app when the page is hidden. Recorded as metrics by route pattern, metric, rating and navigation type (docs/observability.md#web-vitals); answered 204 also when metrics are off.",
+        "operationId": "WebVitalsController_report",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "route": {
+                    "type": "string",
+                    "enum": [
+                      "/",
+                      "/sign-in",
+                      "/admin/users",
+                      "/*"
+                    ]
+                  },
+                  "metrics": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "enum": [
+                                "FCP",
+                                "INP",
+                                "LCP",
+                                "TTFB"
+                              ]
+                            },
+                            "value": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 120000
+                            },
+                            "navigationType": {
+                              "type": "string",
+                              "enum": [
+                                "navigate",
+                                "reload",
+                                "back-forward",
+                                "back-forward-cache",
+                                "prerender",
+                                "restore",
+                                "soft-navigation"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "value",
+                            "navigationType"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "enum": [
+                                "CLS"
+                              ]
+                            },
+                            "value": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 50
+                            },
+                            "navigationType": {
+                              "type": "string",
+                              "enum": [
+                                "navigate",
+                                "reload",
+                                "back-forward",
+                                "back-forward-cache",
+                                "prerender",
+                                "restore",
+                                "soft-navigation"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "value",
+                            "navigationType"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "route",
+                  "metrics"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Report the Web Vitals of a page load",
+        "tags": [
+          "telemetry"
+        ]
+      }
     }
   },
   "info": {

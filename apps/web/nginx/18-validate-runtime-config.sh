@@ -36,6 +36,8 @@ if [ -n "${WEB_SENTRY_DSN:-}" ]; then
 fi
 matches "${WEB_SENTRY_SAMPLE_RATE:-}" '^(0(\.[0-9]+)?|1(\.0+)?)$' ||
   fail WEB_SENTRY_SAMPLE_RATE 'a number from 0 to 1'
+matches "${WEB_VITALS_SAMPLE_RATE:-}" '^(0(\.[0-9]+)?|1(\.0+)?)$' ||
+  fail WEB_VITALS_SAMPLE_RATE 'a number from 0 to 1'
 # From /etc/resolv.conf (15-local-resolvers.envsh): nginx looks API_UPSTREAM up
 # again through it (default.conf.template).
 [ -n "${NGINX_LOCAL_RESOLVERS:-}" ] ||

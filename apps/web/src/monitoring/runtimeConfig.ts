@@ -9,6 +9,8 @@ export interface RuntimeConfig {
   release: string;
   /** Error tracking is on only with a DSN (docs/observability.md#error-tracking). */
   errorTracking?: { dsn: string; sampleRate: number };
+  /** Share of page loads that report Web Vitals; absent when none (docs/observability.md#web-vitals). */
+  webVitals?: { sampleRate: number };
 }
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
@@ -18,6 +20,13 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
 
 const CONFIG_URL = '/app-config.json';
 const TIMEOUT_MS = 3_000;
+
+let shared: Promise<RuntimeConfig> | undefined;
+
+/** The deployment's settings, fetched once per page load for everything that reads them. */
+export function runtimeConfig(): Promise<RuntimeConfig> {
+  return (shared ??= loadRuntimeConfig());
+}
 
 /** The deployment's settings; the defaults (everything optional off) on any problem. */
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
@@ -33,7 +42,10 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   }
 }
 
-/** Validates the file's shape: `sentryDsn` empty means error tracking off. */
+/**
+ * Validates the file's shape: `sentryDsn` empty means error tracking off,
+ * `webVitalsSampleRate` 0 (or anything but a number up to 1) Web Vitals off.
+ */
 export function parseRuntimeConfig(raw: unknown): RuntimeConfig {
   if (typeof raw !== 'object' || raw === null) return DEFAULT_RUNTIME_CONFIG;
   const fields = raw as Record<string, unknown>;
@@ -54,5 +66,7 @@ export function parseRuntimeConfig(raw: unknown): RuntimeConfig {
         Number.isFinite(sampleRate) && sampleRate >= 0 && sampleRate <= 1 ? sampleRate : 1,
     };
   }
+  const vitalsRate = Number(text('webVitalsSampleRate', '0'));
+  if (vitalsRate > 0 && vitalsRate <= 1) config.webVitals = { sampleRate: vitalsRate };
   return config;
 }

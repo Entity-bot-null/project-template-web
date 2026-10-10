@@ -132,7 +132,8 @@ export default defineConfig(
     },
   },
 
-  // The adapters those imports are reserved for, and the readiness probe.
+  // The adapters those imports are reserved for, the readiness probe, and the
+  // specs and test helper that read metrics from an in-memory SDK.
   {
     files: [
       'apps/api/src/infrastructure/**',
@@ -141,6 +142,7 @@ export default defineConfig(
       'apps/api/src/observability/telemetry-sdk.ts',
       'apps/api/src/observability/telemetry.spec.ts',
       'apps/api/src/observability/metrics-catalog.spec.ts',
+      'apps/api/test/metrics.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

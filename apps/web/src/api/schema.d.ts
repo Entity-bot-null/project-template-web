@@ -146,6 +146,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/telemetry/web-vitals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report the Web Vitals of a page load
+         * @description Sent by the web app when the page is hidden. Recorded as metrics by route pattern, metric, rating and navigation type (docs/observability.md#web-vitals); answered 204 also when metrics are off.
+         */
+        post: operations["WebVitalsController_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -606,6 +626,71 @@ export interface operations {
             };
             /** @description Service unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    WebVitalsController_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    route: "/" | "/sign-in" | "/admin/users" | "/*";
+                    metrics: ({
+                        /** @enum {string} */
+                        name: "FCP" | "INP" | "LCP" | "TTFB";
+                        value: number;
+                        /** @enum {string} */
+                        navigationType: "navigate" | "reload" | "back-forward" | "back-forward-cache" | "prerender" | "restore" | "soft-navigation";
+                    } | {
+                        /** @enum {string} */
+                        name: "CLS";
+                        value: number;
+                        /** @enum {string} */
+                        navigationType: "navigate" | "reload" | "back-forward" | "back-forward-cache" | "prerender" | "restore" | "soft-navigation";
+                    })[];
+                };
+            };
+        };
+        responses: {
+            /** @description Recorded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

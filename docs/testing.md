@@ -106,7 +106,7 @@ their own stricter numbers with glob keys, for example
 
 `pnpm perf:check` (after `pnpm build`; in `pnpm verify` and CI) compares the gzip size of the
 built web assets with `apps/web/performance-budget.json`. The template's budget is its measured
-build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, all JavaScript
-145 kB, CSS 5 kB). Each project should set its own from its targets (device class, network, Core
-Web Vitals goals) and raise it only deliberately. Load testing of the API is OPTIONAL and
-project-specific: [load-testing.md](load-testing.md).
+build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
+Vitals chunks 5 kB, all JavaScript 145 kB, CSS 5 kB). Each project should set its own from its
+targets (device class, network, Core Web Vitals goals) and raise it only deliberately. Load
+testing of the API is OPTIONAL and project-specific: [load-testing.md](load-testing.md).

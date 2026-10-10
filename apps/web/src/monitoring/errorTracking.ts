@@ -1,11 +1,12 @@
-import { loadRuntimeConfig, type RuntimeConfig } from './runtimeConfig';
+import type { RuntimeConfig } from './runtimeConfig';
 
 // Error tracking in the browser (docs/observability.md#error-tracking).
 // OPTIONAL: without a DSN in /app-config.json nothing is loaded and errors only
 // reach the console. With one, the Sentry SDK is fetched as a separate chunk
 // after the app has rendered, and it captures uncaught errors and unhandled
 // rejections from then on; errors from before it loaded are kept (a few) and
-// sent once it is ready.
+// sent once it is ready. The configuration is read by a chunk of its own,
+// shared with Web Vitals, which keeps it out of the initial bundle.
 
 export interface ErrorReport {
   /** Where the error was caught: "route", "window", a component name. */
@@ -50,7 +51,7 @@ export interface InitConfig {
 
 /** Starts error tracking if the deployment configured it. Never throws. */
 export async function startErrorTracking({
-  loadConfig = loadRuntimeConfig,
+  loadConfig = () => import('./runtimeConfig').then((config) => config.runtimeConfig()),
   loadSdk = () => import('./sentry'),
 }: StartOptions = {}): Promise<boolean> {
   // Until the SDK takes over, errors are kept for it.

@@ -14,6 +14,7 @@ import {
   recordDependencyCall,
   recordServerError,
   recordSlowQuery,
+  recordWebVital,
 } from './metrics.js';
 import { startOpenTelemetry } from './telemetry-sdk.js';
 
@@ -104,6 +105,9 @@ describe('observability/api-metrics.json', () => {
       recordCacheRead('profiles', 'hit');
       recordDegradation('cache', 'redis');
       recordSlowQuery();
+      const page = { rating: 'good', navigationType: 'navigate', route: '/' } as const;
+      recordWebVital('LCP', 1.2, page);
+      recordWebVital('CLS', 0.05, page);
       await telemetry.flush();
 
       const exported = exporter

@@ -48,6 +48,7 @@ a share of users degraded (CRITICAL or persistent WARNING); SEV3 = minor, no use
 | Is the database the problem?  | Readiness `Database unreachable`, `error.origin=database`, `db_client_connection_*` pool metrics, `Slow query` warnings                    |
 | Is Redis the problem?         | Readiness `checks.redis`, `Redis unavailable`, `Redis is not answering` and the matching recovery lines, `app_degraded_operations_total`   |
 | The overall picture?          | Grafana → Application: "API service" (traffic, errors by origin, runtime, database, Redis, dependencies), "API SLOs" (budget, burn rates)  |
+| Do pages feel slow?           | Grafana → Application → "Web Vitals": LCP, INP, CLS, FCP and TTFB at p75 per page, from real page loads                                    |
 | Is a provider the problem?    | `app_dependency_duration_seconds` by `dependency_name` and `outcome`, `External:<name>` log lines, the provider's status page              |
 
 PromQL for each metric: docs/observability.md#metrics. Log patterns: [alerting.md](alerting.md#log-patterns).
@@ -394,6 +395,31 @@ time`) on the routes that call a provider; 5xx lines ending `dependency: <name>)
 - **Validate after:** the checks of disaster-recovery.md#restore-testing on the repaired tables.
 - **Document:** affected records and users, the window of lost or wrong data, the notification
   decision (REQUIERE CONFIGURACIÓN: data protection obligations).
+
+### 15. Poor Web Vitals
+
+- **Alerts:** `WebVitalsLcpPoor`, `WebVitalsInpPoor`, `WebVitalsClsPoor` (`page_route` label).
+- **Symptoms:** a page's p75 above "good" for 30 minutes: LCP above 2.5 s (the main content
+  appears late), INP above 200 ms (clicks and typing respond late), CLS above 0.1 (the layout
+  jumps); users reporting a slow or jumpy page.
+- **Impact:** slower, less usable pages for a quarter or more of their visits, and lower search
+  ranking if it lasts; nothing is down.
+- **First checks:** on the "Web Vitals" dashboard, which pages and since when; whether it started
+  with a release (`release` in `/app-config.json`); the navigation types (a cold `navigate` versus
+  `back-forward-cache`); LCP together with TTFB and FCP: a high TTFB is the server or the network
+  (the API's latency on the "API service" dashboard, nginx), a high FCP with a normal TTFB is
+  render-blocking JavaScript or CSS (`pnpm perf:check`, the bundle budget), a late LCP alone is
+  the page's main content (an API call it waits for, a large image).
+- **Immediate actions:** none urgent. If it started with a release and is severe, roll back.
+- **Mitigation:** INP: long tasks in event handlers (split the work, defer what is not visible);
+  CLS: give images and late content a reserved size, avoid inserting content above what is shown;
+  LCP: make the main content's API call faster or earlier, lazy-load what is below it.
+- **Roll back when:** a release caused it and the page is critical (sign-in, the main flow).
+- **Recovered when:** the page's p75 is back under "good" for an hour of normal traffic.
+- **Validate after:** the page's p75 on the dashboard over the next day; Lighthouse or the browser's
+  performance panel on the page for the cause.
+- **Document:** the page, the metric, the cause, the release, and a budget or test that would have
+  caught it.
 
 ## After the incident
 
