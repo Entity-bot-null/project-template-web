@@ -459,6 +459,72 @@ pronto, para que cada cambio mergeado se pueda probar en un servidor real.
 Haz esta fase dos veces: una para **staging** y otra para **producción**. Los comandos usan
 `app.acme.com`; usa el dominio del entorno que estás configurando.
 
+Los pasos 7.1 a 7.5 construyen el servidor y la base de datos a mano, con cualquier proveedor. En
+DigitalOcean, Terraform puede construir los mismos: haz el 7.0, sáltate del 7.1 al 7.5 y sigue en
+el 7.6.
+
+### 7.0 En DigitalOcean, del 7.1 al 7.5 con Terraform (opcional)
+
+Qué crea Terraform, cuánto cuesta y por qué:
+[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). Necesitas Terraform 1.16
+([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
+`terraform version` imprime `Terraform v1.16.` y el número de parche) y un token de la API de
+DigitalOcean con permiso de escritura (**API → Tokens**).
+
+En tu equipo, la clave de despliegue de este entorno (como en el 7.4) y después el fichero de
+ajustes:
+
+```
+ssh-keygen -t ed25519 -N "" -C "github-deploy-production" -f deploy_production
+cd infra/terraform/digitalocean
+cp terraform.tfvars.example production.tfvars
+```
+
+Edita `production.tfvars`: `project_name`, `environment`, `domain`, tu clave pública SSH
+(`admin_ssh_public_key`, el contenido de tu `~/.ssh/id_ed25519.pub`), el contenido de
+`deploy_production.pub` (`deploy_ssh_public_key`) y `alert_emails` (miembros verificados de tu
+equipo de DigitalOcean). Deja `admin_cidrs = ["0.0.0.0/0"]`: los runners de GitHub se conectan por
+SSH desde direcciones que cambian. Después (pega el token cuando `read` espere, y pulsa Enter):
+
+```
+read -rs DIGITALOCEAN_TOKEN && export DIGITALOCEAN_TOKEN
+terraform init
+terraform workspace new production
+terraform plan -var-file=production.tfvars -out=production.tfplan
+terraform apply production.tfplan
+rm production.tfplan
+ssh "$(terraform output -raw ssh_admin)" cloud-init status --wait
+```
+
+La primera conexión SSH pregunta si confías en la clave del servidor: compara su huella con la que
+muestra el servidor en la **Droplet Console** de DigitalOcean (entra como `ops` y ejecuta
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`). Después apunta el dominio al servidor, salvo
+que lo haya hecho `manage_dns = true`: el registro que muestra `terraform output dns_record`, en
+tu proveedor de DNS. Por último, los roles de la base de datos y la clave del servidor para GitHub:
+
+```
+cd ../../..
+pnpm iac:database
+ssh-keyscan -t ed25519 app.acme.com > known_hosts_production
+```
+
+**Comprueba:** `cloud-init status --wait` termina con `status: done`; `pnpm iac:database` termina
+con `Done: the database app (owner app_migrator) and the role app_runtime.`;
+`ssh -i deploy_production deploy@app.acme.com 'docker ps'` imprime una tabla vacía (solo las
+cabeceras); `ssh-keygen -lf known_hosts_production` muestra la huella que comparaste.
+
+**Si falla:**
+
+| Mensaje                                              | Causa y solución                                                                                                                                                                                                                          |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`, `Unable to authenticate you`                  | `DIGITALOCEAN_TOKEN` no está exportado en esta terminal, o el token no puede escribir                                                                                                                                                     |
+| `Invalid value for variable`                         | el valor que nombra en `production.tfvars`; `variables.tf` dice qué acepta cada uno                                                                                                                                                       |
+| `SSH Key is already in use on your account`          | esta clave de despliegue ya está en DigitalOcean (otro entorno, un intento anterior): una clave de despliegue por entorno, o borra la antigua allí (**Settings → Security**)                                                              |
+| `Provider produced inconsistent result after apply`  | la nueva IP reservada tardó en aparecer en la API de DigitalOcean: `terraform import -var-file=production.tfvars digitalocean_reserved_ip.app <dirección>` (la dirección en **Networking → Reserved IPs**), después plan y apply de nuevo |
+| `The workspace (...) is not the environment (...)`   | `terraform workspace select production`                                                                                                                                                                                                   |
+| `status: error`                                      | `/var/log/cloud-init-output.log` en el servidor dice qué comando falló                                                                                                                                                                    |
+| `pnpm iac:database`: `Permission denied (publickey)` | tu clave SSH no es la de `admin_ssh_public_key`                                                                                                                                                                                           |
+
 ### 7.1 Crea el servidor
 
 En la consola de tu proveedor: un servidor con **Ubuntu 24.04 LTS**, 2 vCPU y 4 GB de RAM o más,
@@ -598,6 +664,10 @@ Edita cada fichero (`nano <fichero>`, guarda con `Ctrl+O`, sal con `Ctrl+X`):
 | `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                                                                                                   |
 | `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                                                                  |
 
+Con Terraform (7.0), los dos valores de `DATABASE_URL` ya están completos: en
+`infra/terraform/digitalocean` en tu equipo, `terraform output -raw database_runtime_url`
+(`api.env`) y `terraform output -raw database_migrator_url` (`migrate.env`).
+
 **Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
 puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).
 
@@ -628,7 +698,7 @@ Guarda `deploy_production` en el gestor de contraseñas, y después bórralo de 
 `PUBLIC_URL` y los secretos `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`; **Settings → Secrets and
 variables → Actions → Variables** lista `DEPLOY_TARGET` e `IMAGE_PREFIX`.
 
-Ahora repite 7.1–7.7 para el otro entorno.
+Ahora repite la fase para el otro entorno: 7.0 o 7.1–7.5, y después 7.6 y 7.7.
 
 ---
 

@@ -174,6 +174,7 @@ pnpm test:scripts                        # tests of the repository scripts (Semg
 pnpm sast                                # Semgrep (Docker; a few minutes, see 14)
 pnpm lint:workflows                      # actionlint + zizmor + shellcheck (Docker)
 pnpm observability:check                 # dashboards and alert rules, promtool tests (Docker)
+pnpm iac:check                           # Terraform, TFLint, Trivy, cloud-init, database roles (Docker)
 docker compose --profile stack up --build   # production images at http://localhost:8080
 ```
 
@@ -491,6 +492,8 @@ Every command the template ships.
 | `pnpm sast`                                                       | Semgrep with the pinned image (Docker)                                                                                                      |
 | `pnpm lint:workflows`                                             | actionlint, zizmor and shellcheck with the pinned images (Docker)                                                                           |
 | `pnpm observability:check`                                        | the dashboards and alert rules of `observability/` (data sources, runbooks, metric names), then promtool and the rules' unit tests (Docker) |
+| `pnpm iac:check`                                                  | the checks of `infra/terraform`: fmt, validate, tests, TFLint, Trivy, cloud-init, database roles (Docker)                                   |
+| `pnpm iac:database`                                               | the database roles of a DigitalOcean environment made with Terraform (`deploy-vps.md`)                                                      |
 | `pnpm sbom:generate`                                              | CycloneDX SBOM of the production dependencies in `dist/sbom/sbom.cdx.json`                                                                  |
 | `pnpm perf:check`                                                 | gzip size of the built web assets against `apps/web/performance-budget.json` (after `pnpm build`)                                           |
 | `pnpm smoke --url <public URL> --api <API URL> [--release <sha>]` | read-only smoke test of a running deployment ([10.3](#103-smoke-test))                                                                      |
@@ -535,14 +538,15 @@ Every command the template ships.
 
 ### 7.4 Repository scripts run directly
 
-| Command                                                                                                         | What it does                                                                                                          |
-| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `node scripts/check-branch-name.mjs [branch]`                                                                   | checks a branch name (default: the current one)                                                                       |
-| `node scripts/tool-image.mjs <name>`                                                                            | prints the pinned image of a tool: `actionlint`, `zizmor`, `semgrep`, `gitleaks`, `trivy`, `postgres`, `redis`, `zap` |
-| `node scripts/smoke-test.mjs ...`                                                                               | the smoke test (`pnpm smoke`)                                                                                         |
-| `node apps/web/scripts/api-types.mjs [--check]`                                                                 | regenerates, or checks, the web client types                                                                          |
-| `scripts/git/pre-push.mjs`, `scripts/forbid-env-files.mjs`                                                      | used by the Git hooks                                                                                                 |
-| `scripts/check-dependencies.mjs`, `scan-secrets.mjs`, `sast.mjs`, `lint-workflows.mjs`, `check-bundle-size.mjs` | behind the root scripts of the same purpose                                                                           |
+| Command                                                                                                         | What it does                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `node scripts/check-branch-name.mjs [branch]`                                                                   | checks a branch name (default: the current one)                                                                                                        |
+| `node scripts/tool-image.mjs <name>`                                                                            | prints the pinned image of a tool: `actionlint`, `zizmor`, `semgrep`, `gitleaks`, `trivy`, `terraform`, `tflint`, `ubuntu`, `postgres`, `redis`, `zap` |
+| `node scripts/smoke-test.mjs ...`                                                                               | the smoke test (`pnpm smoke`)                                                                                                                          |
+| `node apps/web/scripts/api-types.mjs [--check]`                                                                 | regenerates, or checks, the web client types                                                                                                           |
+| `scripts/git/pre-push.mjs`, `scripts/forbid-env-files.mjs`                                                      | used by the Git hooks                                                                                                                                  |
+| `scripts/check-dependencies.mjs`, `scan-secrets.mjs`, `sast.mjs`, `lint-workflows.mjs`, `check-bundle-size.mjs` | behind the root scripts of the same purpose                                                                                                            |
+| `scripts/check-iac.mjs`, `scripts/iac-database.mjs`                                                             | behind `pnpm iac:check` and `pnpm iac:database`                                                                                                        |
 
 ### 7.5 Docker Compose
 
@@ -588,23 +592,23 @@ runs `prisma migrate deploy` by default; the same image answers the other migrat
 
 ### 8.1 Workflows
 
-| Workflow                    | Runs                                                            | Does                                                                                                              |
-| --------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ci.yml` (**CI**)           | every pull request, every push to `main`, by hand               | dependency review (opt-in), every gate, the images; one check: **CI passed**                                      |
-| `conventions.yml`           | every pull request, again when its title is edited              | branch name and title (Conventional Commits); its check **Conventions** is required                               |
-| `quality-gates.yml`         | called by CI and Deploy                                         | format, lint, types, workflows, Semgrep, tests with coverage, integration, security, build, E2E, images           |
-| `docker-images.yml`         | called by the gates (build and scan) and by a deployment (push) | builds `api`, `api-migrate`, `web`, scans them with Trivy; pushes with SBOM and provenance when asked             |
-| `codeql.yml`                | pull requests, `main`, weekly, when `ENABLE_CODEQL=true`        | cross-file security analysis (ADVISORY)                                                                           |
-| `dast.yml`                  | Mondays 04:41 UTC, by hand                                      | production images on the runner, smoke test, ZAP baseline and API scan; or the passive scan of staging (ADVISORY) |
-| `release.yml`               | pushes to `main`                                                | the release pull request; once merged, the tag, the GitHub release and the SBOM                                   |
-| `main-guard.yml`            | every push to `main`                                            | checks that each pushed commit is a merged pull request; otherwise fails and opens an issue                       |
-| `dependabot-auto-merge.yml` | an approval of a Dependabot pull request                        | merges a patch or minor update once **CI passed** (checks the approval and CI itself)                             |
-| `deploy.yml` (**Deploy**)   | by hand, from `main`                                            | resolves the ref to a commit on `main`, re-runs the gates, releases (the VPS target, or a job of your own)        |
+| Workflow                    | Runs                                                            | Does                                                                                                                            |
+| --------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml` (**CI**)           | every pull request, every push to `main`, by hand               | dependency review (opt-in), every gate, the images; one check: **CI passed**                                                    |
+| `conventions.yml`           | every pull request, again when its title is edited              | branch name and title (Conventional Commits); its check **Conventions** is required                                             |
+| `quality-gates.yml`         | called by CI and Deploy                                         | format, lint, types, workflows, Semgrep, infrastructure as code, tests with coverage, integration, security, build, E2E, images |
+| `docker-images.yml`         | called by the gates (build and scan) and by a deployment (push) | builds `api`, `api-migrate`, `web`, scans them with Trivy; pushes with SBOM and provenance when asked                           |
+| `codeql.yml`                | pull requests, `main`, weekly, when `ENABLE_CODEQL=true`        | cross-file security analysis (ADVISORY)                                                                                         |
+| `dast.yml`                  | Mondays 04:41 UTC, by hand                                      | production images on the runner, smoke test, ZAP baseline and API scan; or the passive scan of staging (ADVISORY)               |
+| `release.yml`               | pushes to `main`                                                | the release pull request; once merged, the tag, the GitHub release and the SBOM                                                 |
+| `main-guard.yml`            | every push to `main`                                            | checks that each pushed commit is a merged pull request; otherwise fails and opens an issue                                     |
+| `dependabot-auto-merge.yml` | an approval of a Dependabot pull request                        | merges a patch or minor update once **CI passed** (checks the approval and CI itself)                                           |
+| `deploy.yml` (**Deploy**)   | by hand, from `main`                                            | resolves the ref to a commit on `main`, re-runs the gates, releases (the VPS target, or a job of your own)                      |
 
 Dependabot opens grouped update pull requests every week (npm, GitHub Actions, base images, tool
-images), with the same seven-day delay as the install policy. You approve each one; a patch or
-minor update then merges itself once CI passes, and majors or workflow updates you merge by hand
-([ci-cd.md](ci-cd.md#dependency-updates)).
+images, Terraform providers), with the same seven-day delay as the install policy. You approve each
+one; a patch or minor update then merges itself once CI passes, and majors or workflow updates you
+merge by hand ([ci-cd.md](ci-cd.md#dependency-updates)).
 
 ### 8.2 Running and reading them
 
@@ -623,7 +627,7 @@ BLOCKING and what is ADVISORY, and why: [ci-cd.md](ci-cd.md#quality-gates-blocki
 Every failure message with its fix: [troubleshooting.md](troubleshooting.md).
 
 The same checks locally: `pnpm verify`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm sast`,
-`pnpm lint:workflows`, `pnpm observability:check`.
+`pnpm lint:workflows`, `pnpm observability:check`, `pnpm iac:check`.
 
 ## 9. Releases
 
@@ -645,8 +649,10 @@ close and reopen it ([ci-cd.md](ci-cd.md#releases)).
 
 **Ready-made target:** one Linux server per environment with Docker and a managed PostgreSQL. Set
 the repository variable `DEPLOY_TARGET=vps` and follow [deploy-vps.md](deploy-vps.md) (step by step:
-[step-by-step.md](step-by-step.md#phase-7-production-servers)); nothing below needs writing. For any
-other platform:
+[step-by-step.md](step-by-step.md#phase-7-production-servers)); nothing below needs writing. On
+DigitalOcean, Terraform (`infra/terraform/digitalocean`) can create the servers and databases
+instead of the manual steps, with the same result
+([deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean)). For any other platform:
 
 `.github/workflows/deploy.yml` re-runs every gate on the exact commit, then hands over to the
 protected environment, where the release job fails on purpose until it is written for your
@@ -878,6 +884,7 @@ openapi/openapi.json      the API contract (generated, committed)
 e2e/                      Playwright tests
 scripts/                  repository tooling (checks, smoke test, tool images)
 docs/                     this manual and the guides
+infra/terraform/          infrastructure as code: the DigitalOcean server and database (optional)
 .github/                  workflows, rulesets, Dependabot, templates, pinned tool images
 docker-compose.yml        database, optional services, production-like stack
 ```

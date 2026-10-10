@@ -22,6 +22,21 @@ blob-report/
 *.env
 .envrc
 
+# Terraform (infra/terraform): the state holds every password of an
+# environment, .terraform/ the downloaded providers, and the variable and
+# backend files one environment's values; only their examples, the tests'
+# synthetic values and the lock file are committed.
+*.tfstate*
+.terraform/
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!infra/terraform/*/tests/*.tfvars
+*.tfplan
+backend.hcl
+crash.log
+crash.*.log
+
 # Logs
 *.log
 logs/

@@ -1,0 +1,115 @@
+#cloud-config
+# docs/deploy-vps.md sections 3 and 4, run by cloud-init once, at the first
+# boot of the server (main.tf). Terraform fills the template's values; the
+# result is the server's user data, which any process on the server can read
+# from the metadata service: nothing secret belongs here. `pnpm iac:check`
+# validates the rendered file against cloud-init's schema.
+
+# Section 4: deploy runs Docker for the Deploy workflow (its key belongs to the
+# GitHub environment only); the administrator is for people (sudo). Both log
+# in with their key only. The docker group is added below, once Docker exists.
+users:
+  - name: ${jsonencode(admin_username)}
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${jsonencode(admin_ssh_public_key)}
+  - name: deploy
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${jsonencode(deploy_ssh_public_key)}
+
+# root never logs in over SSH, and nobody logs in with a password.
+disable_root: true
+ssh_pwauth: false
+
+# Section 3: Docker Engine from Docker's own repository. Its signing key is the
+# one committed in files/docker.asc (fingerprint 9DC8 5822 9FC7 DD38 854A E2D8
+# 8D81 803C 0EBF CD88, checked by `pnpm iac:check`), and apt trusts it for this
+# repository only ($KEY_FILE).
+apt:
+  sources:
+    docker.list:
+      source: "deb [signed-by=$KEY_FILE] https://download.docker.com/linux/ubuntu $RELEASE stable"
+      key: |
+        ${indent(8, docker_apt_key)}
+
+# The security updates published since the image was built, then the
+# packages of sections 3 and 4.
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  # SSH hardening. sshd reads sshd_config.d/ in name order before its main
+  # file and keeps the first value of each setting, so these win.
+  - path: /etc/ssh/sshd_config.d/10-hardening.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitEmptyPasswords no
+      AuthenticationMethods publickey
+      X11Forwarding no
+      AllowUsers ${admin_username} deploy
+  # Automatic security updates: what `dpkg-reconfigure unattended-upgrades`
+  # writes when answered yes.
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root:root
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+# The guide's commands, after the packages are installed. Any failure stops
+# here and shows in `cloud-init status` (status: error) and in
+# /var/log/cloud-init-output.log.
+runcmd:
+  - |
+    set -eu
+    # Section 3: the host firewall, behind the cloud firewall (main.tf).
+    # Docker publishes the proxy's ports around ufw; nothing else publishes any.
+    ufw allow OpenSSH
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow 443/udp
+    ufw --force enable
+    # Section 4: deploy may run Docker (equivalent to root on this machine)
+    # and owns /srv/app, where the deployment files go (section 6).
+    usermod -aG docker deploy
+    install -d -m 755 -o deploy -g deploy /srv/app
+    # sshd starts with the hardening above already in place; reload one that
+    # runs already, after checking the configuration (a broken one would lock
+    # everybody out). The check needs sshd's runtime directory, which exists
+    # only once the service has started (Ubuntu starts it on the first
+    # connection).
+    install -d -m 755 /run/sshd
+    sshd -t
+    systemctl try-reload-or-restart ssh.service
+    # The guide's checks, the daemon included (`docker version` fails when it
+    # does not answer): a server without a running Docker ends in
+    # status: error, not done.
+    docker version
+    docker compose version
+
+# A kernel or library upgraded above needs a reboot: done now, before any
+# traffic, once everything else has finished.
+power_state:
+  mode: reboot
+  delay: now
+  message: Rebooting to finish the first boot's upgrades.
+  condition: test -f /var/run/reboot-required

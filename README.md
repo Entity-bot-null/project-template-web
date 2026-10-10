@@ -59,6 +59,7 @@ Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `m
 | `pnpm deps:check`                                   | Dependency policy: registry sources, licenses, install settings, release-delay exemptions             |
 | `pnpm sast` / `pnpm lint:workflows`                 | Semgrep / actionlint + zizmor, the pinned images CI runs (need Docker)                                |
 | `pnpm observability:check`                          | Dashboards and alert rules of `observability/`: metric names, runbooks, promtool tests (Docker)       |
+| `pnpm iac:check`                                    | Terraform checks and tests, TFLint, Trivy, cloud-init, database roles (`infra/`, needs Docker)        |
 | `pnpm sbom:generate`                                | CycloneDX SBOM of the production dependencies in `dist/sbom/`                                         |
 | `pnpm perf:check`                                   | Web bundle size against its budget (after `pnpm build`)                                               |
 | `pnpm smoke --url <public URL> --api <API URL>`     | Read-only smoke test of a running deployment (after a rollout, a restore, an incident)                |
@@ -77,6 +78,7 @@ openapi/      the API contract
 e2e/          Playwright tests
 scripts/      repository tooling
 docs/         standards and guides
+infra/        infrastructure as code: Terraform for the DigitalOcean server target (optional)
 .github/      CI/CD, templates, Dependabot, CODEOWNERS, rulesets, pinned tool images
 .zap/         DAST rule levels
 ```
@@ -92,8 +94,9 @@ docs/         standards and guides
 - [DEFINITION_OF_DONE.md](DEFINITION_OF_DONE.md) and [docs/definition-of-ready.md](docs/definition-of-ready.md).
 - [SECURITY.md](SECURITY.md) and [docs/security.md](docs/security.md).
 - **Going to production?** [docs/deploy-vps.md](docs/deploy-vps.md): the ready-made deployment to a
-  Linux server with Docker (`DEPLOY_TARGET=vps`); [docs/production-readiness.md](docs/production-readiness.md): the
-  checklist. Operating it: [docs/incident-response.md](docs/incident-response.md) (runbooks),
+  Linux server with Docker (`DEPLOY_TARGET=vps`), by hand or, on DigitalOcean, with Terraform;
+  [docs/production-readiness.md](docs/production-readiness.md): the checklist. Operating it:
+  [docs/incident-response.md](docs/incident-response.md) (runbooks),
   [docs/alerting.md](docs/alerting.md) (SLOs and alerts),
   [docs/disaster-recovery.md](docs/disaster-recovery.md) (backups, restore, RPO/RTO),
   [docs/load-testing.md](docs/load-testing.md) (optional).

@@ -181,6 +181,7 @@ pnpm test:scripts                        # tests de los scripts del repositorio 
 pnpm sast                                # Semgrep (Docker; unos minutos, ver 14)
 pnpm lint:workflows                      # actionlint + zizmor + shellcheck (Docker)
 pnpm observability:check                 # dashboards y reglas de alerta, promtool (Docker)
+pnpm iac:check                           # Terraform, TFLint, Trivy, cloud-init, roles de la base de datos (Docker)
 docker compose --profile stack up --build   # imágenes de producción en http://localhost:8080
 ```
 
@@ -510,6 +511,8 @@ Todos los comandos que trae la plantilla.
 | `pnpm sast`                                                              | Semgrep con la imagen fijada (Docker)                                                                                                                                      |
 | `pnpm lint:workflows`                                                    | actionlint, zizmor y shellcheck con las imágenes fijadas (Docker)                                                                                                          |
 | `pnpm observability:check`                                               | los dashboards y las reglas de alerta de `observability/` (fuentes de datos, runbooks, nombres de métricas), después promtool y los tests unitarios de las reglas (Docker) |
+| `pnpm iac:check`                                                         | las comprobaciones de `infra/terraform`: fmt, validate, tests, TFLint, Trivy, cloud-init, roles de la base de datos (Docker)                                               |
+| `pnpm iac:database`                                                      | los roles de la base de datos de un entorno de DigitalOcean hecho con Terraform (`deploy-vps.md`)                                                                          |
 | `pnpm sbom:generate`                                                     | SBOM CycloneDX de las dependencias de producción en `dist/sbom/sbom.cdx.json`                                                                                              |
 | `pnpm perf:check`                                                        | tamaño gzip de los assets web compilados frente a `apps/web/performance-budget.json` (después de `pnpm build`)                                                             |
 | `pnpm smoke --url <URL pública> --api <URL de la API> [--release <sha>]` | smoke test de solo lectura de un despliegue en marcha ([10.3](#103-smoke-test))                                                                                            |
@@ -554,14 +557,15 @@ Todos los comandos que trae la plantilla.
 
 ### 7.4 Scripts del repositorio que se ejecutan directamente
 
-| Comando                                                                                                         | Qué hace                                                                                                                        |
-| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `node scripts/check-branch-name.mjs [rama]`                                                                     | comprueba el nombre de una rama (por defecto, la actual)                                                                        |
-| `node scripts/tool-image.mjs <nombre>`                                                                          | imprime la imagen fijada de una herramienta: `actionlint`, `zizmor`, `semgrep`, `gitleaks`, `trivy`, `postgres`, `redis`, `zap` |
-| `node scripts/smoke-test.mjs ...`                                                                               | el smoke test (`pnpm smoke`)                                                                                                    |
-| `node apps/web/scripts/api-types.mjs [--check]`                                                                 | regenera, o comprueba, los tipos del cliente web                                                                                |
-| `scripts/git/pre-push.mjs`, `scripts/forbid-env-files.mjs`                                                      | los usan los hooks de Git                                                                                                       |
-| `scripts/check-dependencies.mjs`, `scan-secrets.mjs`, `sast.mjs`, `lint-workflows.mjs`, `check-bundle-size.mjs` | están detrás de los scripts de la raíz con el mismo propósito                                                                   |
+| Comando                                                                                                         | Qué hace                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node scripts/check-branch-name.mjs [rama]`                                                                     | comprueba el nombre de una rama (por defecto, la actual)                                                                                                         |
+| `node scripts/tool-image.mjs <nombre>`                                                                          | imprime la imagen fijada de una herramienta: `actionlint`, `zizmor`, `semgrep`, `gitleaks`, `trivy`, `terraform`, `tflint`, `ubuntu`, `postgres`, `redis`, `zap` |
+| `node scripts/smoke-test.mjs ...`                                                                               | el smoke test (`pnpm smoke`)                                                                                                                                     |
+| `node apps/web/scripts/api-types.mjs [--check]`                                                                 | regenera, o comprueba, los tipos del cliente web                                                                                                                 |
+| `scripts/git/pre-push.mjs`, `scripts/forbid-env-files.mjs`                                                      | los usan los hooks de Git                                                                                                                                        |
+| `scripts/check-dependencies.mjs`, `scan-secrets.mjs`, `sast.mjs`, `lint-workflows.mjs`, `check-bundle-size.mjs` | están detrás de los scripts de la raíz con el mismo propósito                                                                                                    |
+| `scripts/check-iac.mjs`, `scripts/iac-database.mjs`                                                             | están detrás de `pnpm iac:check` y `pnpm iac:database`                                                                                                           |
 
 ### 7.5 Docker Compose
 
@@ -607,21 +611,22 @@ demás comandos de migración ([7.7](#77-comandos-de-operación)).
 
 ### 8.1 Workflows
 
-| Workflow                    | Se ejecuta                                                   | Hace                                                                                                                |
-| --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml` (**CI**)           | en cada pull request, en cada push a `main`, a mano          | dependency review (opcional), todos los gates, las imágenes; un check: **CI passed**                                |
-| `conventions.yml`           | en cada pull request, y otra vez al editar su título         | nombre de la rama y título (Conventional Commits); su check **Conventions** es obligatorio                          |
-| `quality-gates.yml`         | lo llaman CI y Deploy                                        | formato, lint, tipos, workflows, Semgrep, tests con cobertura, integración, seguridad, build, E2E, imágenes         |
-| `docker-images.yml`         | lo llaman los gates (build y escaneo) y un despliegue (push) | construye `api`, `api-migrate`, `web` y las escanea con Trivy; las publica con SBOM y provenance cuando se le pide  |
-| `codeql.yml`                | pull requests, `main`, semanal, si `ENABLE_CODEQL=true`      | análisis de seguridad entre ficheros (ADVISORY)                                                                     |
-| `dast.yml`                  | los lunes a las 04:41 UTC, a mano                            | imágenes de producción en el runner, smoke test, ZAP baseline y API scan; o el escaneo pasivo de staging (ADVISORY) |
-| `release.yml`               | pushes a `main`                                              | el pull request de release; una vez mergeado, el tag, la GitHub release y el SBOM                                   |
-| `main-guard.yml`            | en cada push a `main`                                        | comprueba que cada commit subido es un pull request mergeado; si no, falla y abre un issue                          |
-| `dependabot-auto-merge.yml` | al aprobar un pull request de Dependabot                     | mergea una actualización patch o minor cuando **CI passed** pasa (comprueba él mismo la aprobación y el CI)         |
-| `deploy.yml` (**Deploy**)   | a mano, desde `main`                                         | resuelve la ref a un commit de `main`, repite los gates y publica la release (el destino VPS, o un job propio)      |
+| Workflow                    | Se ejecuta                                                   | Hace                                                                                                                                     |
+| --------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml` (**CI**)           | en cada pull request, en cada push a `main`, a mano          | dependency review (opcional), todos los gates, las imágenes; un check: **CI passed**                                                     |
+| `conventions.yml`           | en cada pull request, y otra vez al editar su título         | nombre de la rama y título (Conventional Commits); su check **Conventions** es obligatorio                                               |
+| `quality-gates.yml`         | lo llaman CI y Deploy                                        | formato, lint, tipos, workflows, Semgrep, infraestructura como código, tests con cobertura, integración, seguridad, build, E2E, imágenes |
+| `docker-images.yml`         | lo llaman los gates (build y escaneo) y un despliegue (push) | construye `api`, `api-migrate`, `web` y las escanea con Trivy; las publica con SBOM y provenance cuando se le pide                       |
+| `codeql.yml`                | pull requests, `main`, semanal, si `ENABLE_CODEQL=true`      | análisis de seguridad entre ficheros (ADVISORY)                                                                                          |
+| `dast.yml`                  | los lunes a las 04:41 UTC, a mano                            | imágenes de producción en el runner, smoke test, ZAP baseline y API scan; o el escaneo pasivo de staging (ADVISORY)                      |
+| `release.yml`               | pushes a `main`                                              | el pull request de release; una vez mergeado, el tag, la GitHub release y el SBOM                                                        |
+| `main-guard.yml`            | en cada push a `main`                                        | comprueba que cada commit subido es un pull request mergeado; si no, falla y abre un issue                                               |
+| `dependabot-auto-merge.yml` | al aprobar un pull request de Dependabot                     | mergea una actualización patch o minor cuando **CI passed** pasa (comprueba él mismo la aprobación y el CI)                              |
+| `deploy.yml` (**Deploy**)   | a mano, desde `main`                                         | resuelve la ref a un commit de `main`, repite los gates y publica la release (el destino VPS, o un job propio)                           |
 
 Dependabot abre cada semana pull requests de actualización agrupados (npm, GitHub Actions, imágenes
-base, imágenes de herramientas), con el mismo retraso de siete días que la política de instalación.
+base, imágenes de herramientas, proveedores de Terraform), con el mismo retraso de siete días que la
+política de instalación.
 Tú apruebas cada uno; una actualización patch o minor se mergea sola cuando pasa el CI, y las
 majors o las de workflows las mergeas a mano ([ci-cd.md](ci-cd.md#dependency-updates)).
 
@@ -643,7 +648,7 @@ informes de ZAP). Qué es BLOCKING y qué es ADVISORY, y por qué:
 [troubleshooting.md](troubleshooting.md).
 
 Las mismas comprobaciones en local: `pnpm verify`, `pnpm test:integration`, `pnpm test:e2e`,
-`pnpm sast`, `pnpm lint:workflows`, `pnpm observability:check`.
+`pnpm sast`, `pnpm lint:workflows`, `pnpm observability:check`, `pnpm iac:check`.
 
 ## 9. Releases
 
@@ -667,7 +672,10 @@ ciérralo y vuelve a abrirlo ([ci-cd.md](ci-cd.md#releases)).
 **Destino listo para usar:** un servidor Linux por entorno con Docker y un PostgreSQL gestionado.
 Define la variable del repositorio `DEPLOY_TARGET=vps` y sigue [deploy-vps.md](deploy-vps.md) (paso a
 paso: [step-by-step.es.md](step-by-step.es.md#fase-7-servidores-de-producción)); no hay que escribir nada
-de lo que sigue. Para cualquier otra plataforma:
+de lo que sigue. En DigitalOcean, Terraform (`infra/terraform/digitalocean`) puede crear los
+servidores y las bases de datos en lugar de los pasos manuales, con el mismo resultado
+([deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean)). Para cualquier otra
+plataforma:
 
 `.github/workflows/deploy.yml` repite todos los gates sobre el commit exacto y después pasa al
 entorno protegido, donde el job de release falla a propósito hasta que se escribe para tu
@@ -903,6 +911,7 @@ openapi/openapi.json      el contrato de la API (generado, en git)
 e2e/                      tests de Playwright
 scripts/                  utilidades del repositorio (comprobaciones, smoke test, imágenes de herramientas)
 docs/                     este manual y las guías
+infra/terraform/          infraestructura como código: el servidor y la base de datos en DigitalOcean (opcional)
 .github/                  workflows, rulesets, Dependabot, plantillas, imágenes de herramientas fijadas
 docker-compose.yml        base de datos, servicios opcionales, stack tipo producción
 ```
