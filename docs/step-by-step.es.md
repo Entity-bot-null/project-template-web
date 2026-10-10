@@ -294,11 +294,14 @@ tests end-to-end usan los puertos 3100 y 4173: para `pnpm dev` antes.
 ```
 pnpm sast
 pnpm lint:workflows
+pnpm observability:check
 ```
 
 **Comprueba:** Semgrep termina con `0 findings`; la comprobación de los workflows imprime
-`No findings to report`. `pnpm sast` tarda unos minutos (analiza una copia temporal de los
-ficheros que git versiona); la primera vez también descarga la imagen de Semgrep.
+`No findings to report`; la de observabilidad imprime una línea que empieza por `ok` (dashboards,
+alertas, nombres de métricas) y después el `SUCCESS` de promtool en cada uno de sus pasos.
+`pnpm sast` tarda unos minutos (analiza una copia temporal de los ficheros que git versiona); la
+primera vez también descarga la imagen de Semgrep.
 
 ### 4.4 Las imágenes de producción en tu máquina
 

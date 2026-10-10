@@ -140,6 +140,7 @@ export default defineConfig(
       'apps/api/src/observability/sentry*.ts',
       'apps/api/src/observability/telemetry-sdk.ts',
       'apps/api/src/observability/telemetry.spec.ts',
+      'apps/api/src/observability/metrics-catalog.spec.ts',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

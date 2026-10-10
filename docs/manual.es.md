@@ -180,6 +180,7 @@ pnpm test:e2e                            # tests de navegador sobre el build (ne
 pnpm test:scripts                        # tests de los scripts del repositorio (selección de Semgrep, Doberman)
 pnpm sast                                # Semgrep (Docker; unos minutos, ver 14)
 pnpm lint:workflows                      # actionlint + zizmor + shellcheck (Docker)
+pnpm observability:check                 # dashboards y reglas de alerta, promtool (Docker)
 docker compose --profile stack up --build   # imágenes de producción en http://localhost:8080
 ```
 
@@ -486,35 +487,36 @@ Todos los comandos que trae la plantilla.
 
 ### 7.1 Scripts de la raíz (`pnpm <script>`)
 
-| Comando                                                                  | Qué hace                                                                                                                              |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`                                                           | instala el workspace; ejecuta `prepare` (instala los hooks de Git) y el `postinstall` de la API (`prisma generate`)                   |
-| `pnpm dev`                                                               | `pnpm db:up`, y después la API (`nest start --watch`) y la web (Vite) en paralelo                                                     |
-| `pnpm build`                                                             | compila todas las apps (`apps/*/dist`)                                                                                                |
-| `pnpm lint`                                                              | ESLint sobre todo el repositorio, sin warnings permitidos                                                                             |
-| `pnpm lint:fix`                                                          | lo mismo, aplicando los arreglos automáticos                                                                                          |
-| `pnpm format`                                                            | Prettier reescribe todos los ficheros                                                                                                 |
-| `pnpm format:check`                                                      | Prettier informa de los ficheros sin formatear                                                                                        |
-| `pnpm typecheck`                                                         | TypeScript en todas las apps, la comprobación de los tipos del contrato y los scripts del repositorio                                 |
-| `pnpm test`                                                              | tests unitarios y de componentes de todas las apps                                                                                    |
-| `pnpm test:coverage`                                                     | lo mismo con los umbrales de cobertura                                                                                                |
-| `pnpm test:integration`                                                  | la API contra PostgreSQL (y Redis si está configurado)                                                                                |
-| `pnpm test:e2e`                                                          | Playwright sobre la app compilada                                                                                                     |
-| `pnpm test:scripts`                                                      | los tests de los scripts del repositorio (`scripts/*.test.mjs`: selección de ficheros de Semgrep, motor de Doberman)                  |
-| `pnpm security`                                                          | `pnpm audit --audit-level=high`, después `pnpm deps:check`, después `pnpm secrets:scan`                                               |
-| `pnpm deps:check`                                                        | política de dependencias: orígenes del registro con integridad, licencias y los ajustes de supply chain de `pnpm-workspace.yaml`      |
-| `pnpm secrets:scan`                                                      | secretlint sobre todos los ficheros que git sigue o añadiría                                                                          |
-| `pnpm sast`                                                              | Semgrep con la imagen fijada (Docker)                                                                                                 |
-| `pnpm lint:workflows`                                                    | actionlint, zizmor y shellcheck con las imágenes fijadas (Docker)                                                                     |
-| `pnpm sbom:generate`                                                     | SBOM CycloneDX de las dependencias de producción en `dist/sbom/sbom.cdx.json`                                                         |
-| `pnpm perf:check`                                                        | tamaño gzip de los assets web compilados frente a `apps/web/performance-budget.json` (después de `pnpm build`)                        |
-| `pnpm smoke --url <URL pública> --api <URL de la API> [--release <sha>]` | smoke test de solo lectura de un despliegue en marcha ([10.3](#103-smoke-test))                                                       |
-| `pnpm contract`                                                          | exporta `openapi/openapi.json` y regenera los tipos del cliente web                                                                   |
-| `pnpm db:up`                                                             | `docker compose up --detach --wait db`                                                                                                |
-| `pnpm db:down`                                                           | `docker compose down`: retira el contenedor de la base de datos y conserva sus datos; los servicios opcionales se paran con su perfil |
-| `pnpm db:migrate [--name <nombre>]`                                      | crea una migración a partir de los cambios del esquema, aplica las pendientes y regenera el cliente (desarrollo)                      |
-| `pnpm db:seed`                                                           | cuentas de desarrollo (solo bases de datos locales; `--allow-remote-database` para una remota desechable)                             |
-| `pnpm verify`                                                            | `format:check` → `lint` → `typecheck` → `test:coverage` → `security` → `build` → `perf:check`                                         |
+| Comando                                                                  | Qué hace                                                                                                                                                                   |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                                           | instala el workspace; ejecuta `prepare` (instala los hooks de Git) y el `postinstall` de la API (`prisma generate`)                                                        |
+| `pnpm dev`                                                               | `pnpm db:up`, y después la API (`nest start --watch`) y la web (Vite) en paralelo                                                                                          |
+| `pnpm build`                                                             | compila todas las apps (`apps/*/dist`)                                                                                                                                     |
+| `pnpm lint`                                                              | ESLint sobre todo el repositorio, sin warnings permitidos                                                                                                                  |
+| `pnpm lint:fix`                                                          | lo mismo, aplicando los arreglos automáticos                                                                                                                               |
+| `pnpm format`                                                            | Prettier reescribe todos los ficheros                                                                                                                                      |
+| `pnpm format:check`                                                      | Prettier informa de los ficheros sin formatear                                                                                                                             |
+| `pnpm typecheck`                                                         | TypeScript en todas las apps, la comprobación de los tipos del contrato y los scripts del repositorio                                                                      |
+| `pnpm test`                                                              | tests unitarios y de componentes de todas las apps                                                                                                                         |
+| `pnpm test:coverage`                                                     | lo mismo con los umbrales de cobertura                                                                                                                                     |
+| `pnpm test:integration`                                                  | la API contra PostgreSQL (y Redis si está configurado)                                                                                                                     |
+| `pnpm test:e2e`                                                          | Playwright sobre la app compilada                                                                                                                                          |
+| `pnpm test:scripts`                                                      | los tests de los scripts del repositorio (`scripts/*.test.mjs`: selección de ficheros de Semgrep, motor de Doberman)                                                       |
+| `pnpm security`                                                          | `pnpm audit --audit-level=high`, después `pnpm deps:check`, después `pnpm secrets:scan`                                                                                    |
+| `pnpm deps:check`                                                        | política de dependencias: orígenes del registro con integridad, licencias y los ajustes de supply chain de `pnpm-workspace.yaml`                                           |
+| `pnpm secrets:scan`                                                      | secretlint sobre todos los ficheros que git sigue o añadiría                                                                                                               |
+| `pnpm sast`                                                              | Semgrep con la imagen fijada (Docker)                                                                                                                                      |
+| `pnpm lint:workflows`                                                    | actionlint, zizmor y shellcheck con las imágenes fijadas (Docker)                                                                                                          |
+| `pnpm observability:check`                                               | los dashboards y las reglas de alerta de `observability/` (fuentes de datos, runbooks, nombres de métricas), después promtool y los tests unitarios de las reglas (Docker) |
+| `pnpm sbom:generate`                                                     | SBOM CycloneDX de las dependencias de producción en `dist/sbom/sbom.cdx.json`                                                                                              |
+| `pnpm perf:check`                                                        | tamaño gzip de los assets web compilados frente a `apps/web/performance-budget.json` (después de `pnpm build`)                                                             |
+| `pnpm smoke --url <URL pública> --api <URL de la API> [--release <sha>]` | smoke test de solo lectura de un despliegue en marcha ([10.3](#103-smoke-test))                                                                                            |
+| `pnpm contract`                                                          | exporta `openapi/openapi.json` y regenera los tipos del cliente web                                                                                                        |
+| `pnpm db:up`                                                             | `docker compose up --detach --wait db`                                                                                                                                     |
+| `pnpm db:down`                                                           | `docker compose down`: retira el contenedor de la base de datos y conserva sus datos; los servicios opcionales se paran con su perfil                                      |
+| `pnpm db:migrate [--name <nombre>]`                                      | crea una migración a partir de los cambios del esquema, aplica las pendientes y regenera el cliente (desarrollo)                                                           |
+| `pnpm db:seed`                                                           | cuentas de desarrollo (solo bases de datos locales; `--allow-remote-database` para una remota desechable)                                                                  |
+| `pnpm verify`                                                            | `format:check` → `lint` → `typecheck` → `test:coverage` → `security` → `build` → `perf:check`                                                                              |
 
 ### 7.2 Scripts de la API (`pnpm --filter api <script>`)
 
@@ -561,19 +563,19 @@ Todos los comandos que trae la plantilla.
 
 ### 7.5 Docker Compose
 
-| Comando                                                                             | Qué arranca                                                                                                                  |
-| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5432}`                                                                            |
-| `docker compose --profile redis up -d`                                              | `redis`: Redis 8 con contraseña, `127.0.0.1:${REDIS_PORT:-6379}`, datos en el volumen `redis_data`                           |
-| `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki y Grafana; OTLP en el 4318, Grafana en http://localhost:3001                 |
-| `docker compose --profile stack up --build`                                         | `migrate` (se ejecuta una vez), `api`, `web`: las imágenes de producción en http://localhost:8080                            |
-| `docker compose --profile stack --profile redis --profile observability up --build` | el stack con todos los servicios opcionales (define las variables `STACK_*`, [6.4](#64-variables-de-compose-env-de-la-raíz)) |
-| `docker compose ps`                                                                 | qué está corriendo, con su estado de salud                                                                                   |
-| `docker compose logs -f <servicio>`                                                 | sigue el log de un servicio (`api`, `web`, `db`, `redis`, `migrate`)                                                         |
-| `docker compose --profile <perfil> down`                                            | para y retira esos contenedores; los volúmenes se quedan                                                                     |
-| `docker compose down -v`                                                            | **borra también los volúmenes**: se pierden los datos de la base de datos de desarrollo y de Redis                           |
-| `docker compose exec db psql -U app -d app`                                         | consola SQL                                                                                                                  |
-| `docker compose exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli'`       | consola de Redis (la contraseña no aparece en la línea de comandos)                                                          |
+| Comando                                                                             | Qué arranca                                                                                                                                                                             |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5432}`                                                                                                                                       |
+| `docker compose --profile redis up -d`                                              | `redis`: Redis 8 con contraseña, `127.0.0.1:${REDIS_PORT:-6379}`, datos en el volumen `redis_data`                                                                                      |
+| `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki y Grafana con los dashboards y las reglas de `observability/`; OTLP en el 4318, Grafana en http://localhost:3001, Prometheus en el 9090 |
+| `docker compose --profile stack up --build`                                         | `migrate` (se ejecuta una vez), `api`, `web`: las imágenes de producción en http://localhost:8080                                                                                       |
+| `docker compose --profile stack --profile redis --profile observability up --build` | el stack con todos los servicios opcionales (define las variables `STACK_*`, [6.4](#64-variables-de-compose-env-de-la-raíz))                                                            |
+| `docker compose ps`                                                                 | qué está corriendo, con su estado de salud                                                                                                                                              |
+| `docker compose logs -f <servicio>`                                                 | sigue el log de un servicio (`api`, `web`, `db`, `redis`, `migrate`)                                                                                                                    |
+| `docker compose --profile <perfil> down`                                            | para y retira esos contenedores; los volúmenes se quedan                                                                                                                                |
+| `docker compose down -v`                                                            | **borra también los volúmenes**: se pierden los datos de la base de datos de desarrollo y de Redis                                                                                      |
+| `docker compose exec db psql -U app -d app`                                         | consola SQL                                                                                                                                                                             |
+| `docker compose exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli'`       | consola de Redis (la contraseña no aparece en la línea de comandos)                                                                                                                     |
 
 ### 7.6 Imágenes sin Compose
 
@@ -639,7 +641,7 @@ informes de ZAP). Qué es BLOCKING y qué es ADVISORY, y por qué:
 [troubleshooting.md](troubleshooting.md).
 
 Las mismas comprobaciones en local: `pnpm verify`, `pnpm test:integration`, `pnpm test:e2e`,
-`pnpm sast`, `pnpm lint:workflows`.
+`pnpm sast`, `pnpm lint:workflows`, `pnpm observability:check`.
 
 ## 9. Releases
 
@@ -758,12 +760,15 @@ Rate limits compartidos entre instancias, una caché compartida, locks y claims 
 
 1. En local: `docker compose --profile observability up -d`, después
    `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` en `apps/api/.env` y reinicia `pnpm dev`.
-2. Haz unas cuantas peticiones; Grafana en http://localhost:3001: Explore → Tempo (trazas),
-   Prometheus (métricas).
+2. Haz unas cuantas peticiones; Grafana en http://localhost:3001: Dashboards → Application
+   ("API service", "API SLOs"), Alerting → Alert rules, Explore → Tempo (trazas), Prometheus
+   (métricas).
 3. Desplegado (REQUIERE CONFIGURACIÓN): el endpoint del collector o del proveedor, sus credenciales
    en `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER=parentbased_traceidratio` y
    `OTEL_TRACES_SAMPLER_ARG=0.1`. Interruptor de emergencia: `OTEL_SDK_DISABLED=true`.
-4. Dashboards y alertas a partir de [observability.md](observability.md#metrics) y
+4. Dashboards y reglas de alerta: los ficheros de `observability/`, importados en tu Grafana y
+   cargados en tu Prometheus o Grafana Cloud
+   ([observability.md](observability.md#use-them-with-your-backend)); el enrutado según
    [alerting.md](alerting.md).
 
 ### 11.4 El stack tipo producción con todo
@@ -859,6 +864,7 @@ que suelen aparecer:
 | 6379   | Redis (`REDIS_PORT`)                   | `docker compose --profile redis up -d`         |
 | 4318   | OTLP/HTTP (`OTLP_HTTP_PORT`)           | `docker compose --profile observability up -d` |
 | 3001   | Grafana (`GRAFANA_PORT`)               | `docker compose --profile observability up -d` |
+| 9090   | Prometheus (`PROMETHEUS_PORT`)         | `docker compose --profile observability up -d` |
 
 Todos los puertos publicados escuchan solo en 127.0.0.1.
 

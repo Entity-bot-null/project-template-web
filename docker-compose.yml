@@ -135,12 +135,21 @@ services:
   # apps/api/.env: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318, and
   # Grafana at http://localhost:3001 (anonymous admin: loopback only, never
   # deploy this service). docs/observability.md#local-backend.
+  # The dashboards and the alert rules of observability/ are mounted read-only:
+  # Grafana shows the dashboards in its "Application" folder and Prometheus
+  # evaluates the rules (docs/observability.md#dashboards-and-alerts-as-code).
   otel-lgtm:
     profiles: [observability]
     image: grafana/otel-lgtm:0.34.0
     ports:
       - '127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318'
       - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    volumes:
+      - ./observability/prometheus/prometheus.yaml:/otel-lgtm/prometheus.yaml:ro
+      - ./observability/prometheus/rules:/otel-lgtm/rules:ro
+      - ./observability/grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/application.yaml:ro
+      - ./observability/grafana/dashboards:/otel-lgtm/application-dashboards:ro
 
 volumes:
   db_data:

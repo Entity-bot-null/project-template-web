@@ -27,6 +27,7 @@
     "secrets:scan": "node scripts/scan-secrets.mjs",
     "sast": "node scripts/sast.mjs",
     "lint:workflows": "node scripts/lint-workflows.mjs",
+    "observability:check": "node scripts/check-observability.mjs",
     "sbom:generate": "pnpm sbom --sbom-format cyclonedx --sbom-type application --prod --out dist/sbom/sbom.cdx.json",
     "perf:check": "node scripts/check-bundle-size.mjs",
     "smoke": "node scripts/smoke-test.mjs",
@@ -54,6 +55,7 @@
     "prettier": "^3.9.9",
     "secretlint": "^13.0.7",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.71.0"
+    "typescript-eslint": "^8.71.0",
+    "yaml": "^2.9.1"
   }
 }

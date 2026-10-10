@@ -289,11 +289,13 @@ pnpm test:e2e
 ```
 pnpm sast
 pnpm lint:workflows
+pnpm observability:check
 ```
 
-**Check:** Semgrep ends with `0 findings`; the workflow check prints `No findings to report`.
-`pnpm sast` takes a few minutes (it scans a temporary copy of the files git tracks); the first run
-also pulls the Semgrep image.
+**Check:** Semgrep ends with `0 findings`; the workflow check prints `No findings to report`; the
+observability check prints a line starting with `ok` (dashboards, alerts, metric names), then
+promtool's `SUCCESS` for each of its steps. `pnpm sast` takes a few minutes (it scans a temporary
+copy of the files git tracks); the first run also pulls the Semgrep image.
 
 ### 4.4 The production images on your machine
 

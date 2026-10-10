@@ -7,6 +7,7 @@ push / pull request
        ├─ Gates (quality-gates.yml, reusable)
        │    ├─ Format, lint, types, workflows   prettier, eslint, tsc + contract types, script tests, actionlint + zizmor
        │    ├─ Static analysis (Semgrep)        SAST: code, Dockerfiles, nginx
+       │    ├─ Observability as code            dashboards and alert rules: metric names, runbooks, promtool tests
        │    ├─ Unit and component tests         vitest + coverage thresholds + OpenAPI drift
        │    ├─ Integration tests                API + PostgreSQL + Redis services (Redis adapters, degraded mode)
        │    ├─ Security                         pnpm audit (high+), dependency policy, secretlint, gitleaks
@@ -47,28 +48,29 @@ proven false positive, an inline suppression with its reason, visible in review)
 checks report without blocking: they depend on the GitHub plan, on a running environment, or
 produce findings that need judgment.
 
-| Gate                                                                        | Where                         | Level                   |
-| --------------------------------------------------------------------------- | ----------------------------- | ----------------------- |
-| Formatting (Prettier)                                                       | `pnpm verify`, pre-commit, CI | BLOCKING                |
-| Lint (ESLint, type-aware, security rules), zero warnings                    | `pnpm verify`, pre-commit, CI | BLOCKING                |
-| Types, contract types in sync with `openapi/openapi.json`                   | `pnpm verify`, pre-push, CI   | BLOCKING                |
-| Unit and component tests, coverage thresholds, OpenAPI drift                | `pnpm verify`, pre-push, CI   | BLOCKING                |
-| Integration tests (API + PostgreSQL + Redis adapters)                       | CI (`pnpm test:integration`)  | BLOCKING                |
-| End-to-end tests (Playwright)                                               | CI (`pnpm test:e2e`)          | BLOCKING                |
-| Dependency advisories, high and critical (`pnpm audit`)                     | `pnpm verify`, CI             | BLOCKING                |
-| Dependency policy: registry sources, licenses (`pnpm deps:check`)           | `pnpm verify`, CI             | BLOCKING                |
-| Secrets in the tree (secretlint)                                            | pre-commit, `pnpm verify`, CI | BLOCKING                |
-| Secrets in the git history (gitleaks)                                       | CI                            | BLOCKING                |
-| SAST (Semgrep)                                                              | CI, `pnpm sast`               | BLOCKING                |
-| Workflow lint and security (actionlint, zizmor), shell scripts (shellcheck) | CI, `pnpm lint:workflows`     | BLOCKING                |
-| Build, performance budget                                                   | `pnpm verify`, CI             | BLOCKING                |
-| Images build; fixable HIGH/CRITICAL advisories in them (Trivy)              | CI                            | BLOCKING                |
-| Branch name, Conventional Commit PR title                                   | pre-push, commit-msg, CI      | BLOCKING                |
-| Dependency review (new vulnerable dependencies in the diff)                 | CI, opt-in                    | BLOCKING when enabled   |
-| CodeQL                                                                      | CI, opt-in                    | ADVISORY (Security tab) |
-| DAST (OWASP ZAP)                                                            | weekly, on demand             | ADVISORY                |
-| Advisories below high (`pnpm audit` reports them), unfixed image CVEs       | CI logs                       | ADVISORY                |
-| Coverage and Playwright reports                                             | CI artifacts                  | ADVISORY                |
+| Gate                                                                        | Where                          | Level                   |
+| --------------------------------------------------------------------------- | ------------------------------ | ----------------------- |
+| Formatting (Prettier)                                                       | `pnpm verify`, pre-commit, CI  | BLOCKING                |
+| Lint (ESLint, type-aware, security rules), zero warnings                    | `pnpm verify`, pre-commit, CI  | BLOCKING                |
+| Types, contract types in sync with `openapi/openapi.json`                   | `pnpm verify`, pre-push, CI    | BLOCKING                |
+| Unit and component tests, coverage thresholds, OpenAPI drift                | `pnpm verify`, pre-push, CI    | BLOCKING                |
+| Integration tests (API + PostgreSQL + Redis adapters)                       | CI (`pnpm test:integration`)   | BLOCKING                |
+| End-to-end tests (Playwright)                                               | CI (`pnpm test:e2e`)           | BLOCKING                |
+| Dependency advisories, high and critical (`pnpm audit`)                     | `pnpm verify`, CI              | BLOCKING                |
+| Dependency policy: registry sources, licenses (`pnpm deps:check`)           | `pnpm verify`, CI              | BLOCKING                |
+| Secrets in the tree (secretlint)                                            | pre-commit, `pnpm verify`, CI  | BLOCKING                |
+| Secrets in the git history (gitleaks)                                       | CI                             | BLOCKING                |
+| SAST (Semgrep)                                                              | CI, `pnpm sast`                | BLOCKING                |
+| Workflow lint and security (actionlint, zizmor), shell scripts (shellcheck) | CI, `pnpm lint:workflows`      | BLOCKING                |
+| Dashboards and alert rules (`observability/`), their unit tests (promtool)  | CI, `pnpm observability:check` | BLOCKING                |
+| Build, performance budget                                                   | `pnpm verify`, CI              | BLOCKING                |
+| Images build; fixable HIGH/CRITICAL advisories in them (Trivy)              | CI                             | BLOCKING                |
+| Branch name, Conventional Commit PR title                                   | pre-push, commit-msg, CI       | BLOCKING                |
+| Dependency review (new vulnerable dependencies in the diff)                 | CI, opt-in                     | BLOCKING when enabled   |
+| CodeQL                                                                      | CI, opt-in                     | ADVISORY (Security tab) |
+| DAST (OWASP ZAP)                                                            | weekly, on demand              | ADVISORY                |
+| Advisories below high (`pnpm audit` reports them), unfixed image CVEs       | CI logs                        | ADVISORY                |
+| Coverage and Playwright reports                                             | CI artifacts                   | ADVISORY                |
 
 **Optional integrations never gate CI.** Sentry, OpenTelemetry backends, uptime services and
 production Redis are not needed by any job: unit and E2E suites run with them off (the default),
@@ -239,13 +241,13 @@ pull request; exceptions are listed with their reason in `.github/zizmor.yml`:
 
 ## Pinning
 
-| What                                                                                                                     | Pinned by                                          | Updated by                                     |
-| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- | ---------------------------------------------- |
-| GitHub Actions (`uses:`)                                                                                                 | commit SHA, tag in comment                         | Dependabot (`github-actions`)                  |
-| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, ZAP) and the CI PostgreSQL and Redis services | tag and digest in `.github/tool-images/Dockerfile` | Dependabot (`docker`), tag and digest together |
-| Base images in the Dockerfiles (Node.js from ECR Public's mirror of Docker's official images, nginx from NGINX's GHCR)   | tag and digest                                     | Dependabot (`docker`), tag and digest together |
-| Compose images                                                                                                           | tag                                                | Dependabot (`docker-compose`)                  |
-| npm packages                                                                                                             | `pnpm-lock.yaml` (integrity hashes)                | Dependabot (`npm`), `pnpm update`              |
+| What                                                                                                                               | Pinned by                                          | Updated by                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------- |
+| GitHub Actions (`uses:`)                                                                                                           | commit SHA, tag in comment                         | Dependabot (`github-actions`)                  |
+| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, ZAP, promtool) and the CI PostgreSQL and Redis services | tag and digest in `.github/tool-images/Dockerfile` | Dependabot (`docker`), tag and digest together |
+| Base images in the Dockerfiles (Node.js from ECR Public's mirror of Docker's official images, nginx from NGINX's GHCR)             | tag and digest                                     | Dependabot (`docker`), tag and digest together |
+| Compose images                                                                                                                     | tag                                                | Dependabot (`docker-compose`)                  |
+| npm packages                                                                                                                       | `pnpm-lock.yaml` (integrity hashes)                | Dependabot (`npm`), `pnpm update`              |
 
 The Dockerfiles' base images come from registries without Docker Hub's anonymous pull limit, which
 CI runners share and hit: the same images, with the same digests, as on Docker Hub.
@@ -259,11 +261,11 @@ repository (impostor commits).
 
 **Registries.** Docker Hub limits anonymous pulls per address, and CI runners share theirs, so a
 busy day of pull requests fails jobs with `toomanyrequests`. Where an image is published elsewhere
-with the same digest, the pin points there (GHCR, or Docker's mirror of its official images on
-Amazon ECR Public). The images only Docker Hub hosts are pulled in CI through `mirror.gcr.io` by
-their digest (`TOOL_IMAGE_MIRROR` in `quality-gates.yml`, read by `scripts/tool-image.mjs`):
-the digest makes the content identical whatever the source, Docker Hub stays the fallback, and
-Dependabot keeps updating the pins from their source.
+with the same digest, the pin points there (GHCR, Quay for promtool, or Docker's mirror of its
+official images on Amazon ECR Public). The images only Docker Hub hosts are pulled in CI through
+`mirror.gcr.io` by their digest (`TOOL_IMAGE_MIRROR` in `quality-gates.yml`, read by
+`scripts/tool-image.mjs`): the digest makes the content identical whatever the source, Docker Hub
+stays the fallback, and Dependabot keeps updating the pins from their source.
 
 ## Deployment
 
@@ -364,5 +366,6 @@ redeploy the recorded digests. Never roll back by reversing a migration in produ
 `pnpm verify` runs the fast gates (format, lint, typecheck, coverage, security with the dependency
 policy, build, budget). Before a large pull request also run `pnpm test:integration` (PostgreSQL
 from `pnpm db:up`; the Redis adapter specs run when `docker compose --profile redis up -d` is up
-and `REDIS_URL` is set in `apps/api/.env`, and are skipped when no Redis URL is set) and `pnpm test:e2e`. With Docker running, `pnpm sast` and `pnpm lint:workflows` run the same pinned
-images CI runs.
+and `REDIS_URL` is set in `apps/api/.env`, and are skipped when no Redis URL is set) and
+`pnpm test:e2e`. With Docker running, `pnpm sast`, `pnpm lint:workflows` and
+`pnpm observability:check` run the same pinned images CI runs.
