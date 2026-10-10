@@ -122,4 +122,27 @@ describe('runtime configuration', () => {
       parseRuntimeConfig({ sentryDsn: 'https://k@h/1', sentrySampleRate: '7' }).errorTracking,
     ).toEqual({ dsn: 'https://k@h/1', sampleRate: 1 });
   });
+
+  it('reads the Web Vitals sample rate, anything but a number from 0 (excluded) to 1 meaning off', () => {
+    expect(parseRuntimeConfig({ webVitalsSampleRate: '1' }).webVitals).toEqual({ sampleRate: 1 });
+    expect(parseRuntimeConfig({ webVitalsSampleRate: '0.1' }).webVitals).toEqual({
+      sampleRate: 0.1,
+    });
+    for (const off of ['0', '', '1.5', '-1', 'all', undefined]) {
+      expect(parseRuntimeConfig({ webVitalsSampleRate: off }).webVitals).toBeUndefined();
+    }
+  });
+
+  it('is fetched once per page load: error tracking and Web Vitals share it', async () => {
+    vi.resetModules();
+    const fetchMock = vi.fn(() => Promise.resolve(json(200, { webVitalsSampleRate: '1' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const fresh = await import('./runtimeConfig');
+    const { startErrorTracking: start } = await import('./errorTracking');
+
+    // Error tracking reads it through its own chunk by default.
+    await expect(start()).resolves.toBe(false);
+    await expect(fresh.runtimeConfig()).resolves.toMatchObject({ webVitals: { sampleRate: 1 } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

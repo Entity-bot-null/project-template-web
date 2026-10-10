@@ -45,7 +45,7 @@ server {
         include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-store" always;
         default_type application/json;
-        return 200 '{"environment":"${APP_ENVIRONMENT}","release":"${APP_RELEASE}","sentryDsn":"${WEB_SENTRY_DSN}","sentrySampleRate":"${WEB_SENTRY_SAMPLE_RATE}"}';
+        return 200 '{"environment":"${APP_ENVIRONMENT}","release":"${APP_RELEASE}","sentryDsn":"${WEB_SENTRY_DSN}","sentrySampleRate":"${WEB_SENTRY_SAMPLE_RATE}","webVitalsSampleRate":"${WEB_VITALS_SAMPLE_RATE}"}';
     }
 
     # ^~: API paths that end like a file name (/api/files/report.pdf) are

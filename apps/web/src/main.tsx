@@ -15,3 +15,11 @@ createRoot(container).render(
     <App />
   </StrictMode>,
 );
+
+// After the first render, never in its way, from chunks of their own
+// (docs/observability.md#web-vitals).
+import('./monitoring/webVitals')
+  .then((webVitals) => webVitals.startWebVitals())
+  .catch((error: unknown) => {
+    console.error('Web Vitals could not start', error);
+  });

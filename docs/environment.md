@@ -79,6 +79,7 @@ variable). A malformed `API_UPSTREAM` fails nginx's own configuration test.
 | `APP_RELEASE`            | set by the image build    | The build on browser error reports.                                                                                                        |
 | `WEB_SENTRY_DSN`         | empty: error tracking off | OPTIONAL. Sentry DSN of the browser project (public by design); https only. Also widens the CSP's `connect-src` by Sentry's ingest origin. |
 | `WEB_SENTRY_SAMPLE_RATE` | `1`                       | Share of browser error events sent, 0 to 1.                                                                                                |
+| `WEB_VITALS_SAMPLE_RATE` | `1`                       | Share of page loads that report their Web Vitals to the API, 0 to 1; `0` is off and loads nothing (docs/observability.md#web-vitals).      |
 
 In development the Vite dev and preview servers serve `/app-config.json` from their own
 environment (same names). `API_PROXY_TARGET` (development only) moves the dev and preview proxy.

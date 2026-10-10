@@ -8,7 +8,10 @@ import { RouteErrorPage } from './pages/RouteErrorPage';
 import { SignInPage } from './pages/SignInPage';
 
 // Every route, guarded as a layout route. Add a screen by placing its route
-// under the guard it needs; the matching API routes need @Auth() as well.
+// under the guard it needs; the matching API routes need @Auth() as well, and
+// its pattern goes in the API's Web Vitals pages (WEB_VITALS_ROUTES, in
+// apps/api/src/telemetry/web-vitals.schemas.ts: webVitalsReporter.spec.ts
+// fails until it is there).
 export const routes = createRoutesFromElements(
   <Route errorElement={<RouteErrorPage />}>
     <Route element={<GuestOnly />}>

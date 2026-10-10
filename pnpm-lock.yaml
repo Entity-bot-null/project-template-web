@@ -384,6 +384,9 @@ importers:
       react-router:
         specifier: ^8.4.0
         version: 8.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      web-vitals:
+        specifier: ^6.2.2
+        version: 6.2.2
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^7.0.1
