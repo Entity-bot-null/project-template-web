@@ -789,13 +789,20 @@ Through the shared client, never a bare `fetch` (docs/observability.md#external-
      });
 
      async invoice(id: string): Promise<Invoice> {
-       const { body } = await this.http.request<Invoice>({
-         path: `invoices/${encodeURIComponent(id)}`,
-       });
+       // GET <BILLING_URL>/invoices/<id>: each segment is encoded, so an id holding
+       // "/", "?" or ".." stays one segment.
+       const { body } = await this.http.request<Invoice>({ path: ['invoices', id] });
        return body;
      }
    }
    ```
+
+   Paths are relative to `baseUrl`, whose own path is kept (`https://billing.example.com/v1`, with
+   or without a final `/`, gives `/v1/invoices/...`). Write a fixed path as a string (`'invoices'`)
+   and put values in as segments (`['invoices', id]`), never into a string. The client refuses,
+   before sending anything, a path that starts with `/` (it would drop the base path), one with a
+   `.` or `..` segment, a backslash, a tab or a newline, and one that would leave the base URL; a
+   `baseUrl` with a query string or a fragment fails at construction.
 
 3. Let `ExternalServiceError` reach the error filter (502, or 504 on a timeout, reported as a
    dependency failure), or catch it where the feature has a fallback (`error.status === 404`:

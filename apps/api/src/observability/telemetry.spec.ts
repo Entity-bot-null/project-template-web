@@ -1,4 +1,4 @@
-import { context, metrics, propagation, trace } from '@opentelemetry/api';
+import { context, metrics, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { AggregationTemporality, InMemoryMetricExporter } from '@opentelemetry/sdk-metrics';
 import { InMemorySpanExporter, type Span } from '@opentelemetry/sdk-trace-base';
 import { createServer } from 'node:http';
@@ -129,6 +129,47 @@ describe('startOpenTelemetry', () => {
   });
 });
 
+describe('exported spans of a failure', () => {
+  it('carry no credential in their events (exceptions included) or status message', async () => {
+    const spans = new InMemorySpanExporter();
+    const telemetry = startOpenTelemetry({
+      endpoint: 'http://127.0.0.1:4318',
+      serviceName: 'api',
+      environment: 'test',
+      release: 'r1',
+      metricExportIntervalMs: 60_000,
+      spanExporter: spans,
+      metricExporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE),
+    });
+    const failure = new Error(`connect failed: ${dbUrl('app', 'hunter2-secret')}`);
+    failure.stack = `Error: Authorization: Bearer abcdef0123456789
+    at connect (pool.js:1:1)`;
+    trace.getTracer('spec').startActiveSpan('GET /api/things', (span) => {
+      span.addEvent('retry', { 'url.full': 'https://billing.example.com/x?token=t0k3n-value' });
+      span.recordException(failure);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: failure.message });
+      span.end();
+    });
+    await telemetry.flush();
+
+    const [span] = spans.getFinishedSpans();
+    const exported = JSON.stringify({ events: span?.events, status: span?.status });
+    expect(exported).not.toContain('hunter2-secret');
+    expect(exported).not.toContain('abcdef0123456789');
+    expect(exported).not.toContain('t0k3n-value');
+    expect(span?.events[0]?.attributes).toEqual({ 'url.full': 'https://billing.example.com/x' });
+    expect(span?.events[1]?.attributes).toMatchObject({
+      'exception.message': `connect failed: ${dbUrl('app', '[REDACTED]')}`,
+      'exception.stacktrace': expect.stringContaining('Bearer [REDACTED]') as string,
+    });
+    expect(span?.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: `connect failed: ${dbUrl('app', '[REDACTED]')}`,
+    });
+    await telemetry.shutdown();
+  });
+});
+
 describe('signalUrl', () => {
   it('appends the signal path, keeping a base path', () => {
     expect(signalUrl('http://localhost:4318', 'traces')).toBe('http://localhost:4318/v1/traces');
@@ -149,6 +190,8 @@ describe('RedactingSpanProcessor', () => {
     };
     const span = {
       attributes,
+      events: [],
+      status: { code: SpanStatusCode.UNSET },
       setAttribute(key: string, value: unknown) {
         attributes[key] = value;
       },
@@ -161,5 +204,38 @@ describe('RedactingSpanProcessor', () => {
       'messaging.payload': 'Bearer [REDACTED]',
       'http.response.status_code': 200,
     });
+  });
+
+  it('redacts the attributes of every event and the status message, URL rules included', () => {
+    const exception = {
+      'exception.type': 'Error',
+      'exception.message': 'GET https://u:p@billing.example.com/x?api_key=k123 failed',
+      'exception.stacktrace': 'Error: Authorization: Bearer abc123def456\n    at x',
+      'http.url': 'https://billing.example.com/x?api_key=k123',
+    };
+    let status: { code: SpanStatusCode; message?: string } = {
+      code: SpanStatusCode.ERROR,
+      message: 'password=hunter2',
+    };
+    const span = {
+      attributes: {},
+      events: [
+        { name: 'exception', time: [0, 0], attributes: exception },
+        { name: 'retry', time: [0, 0] },
+      ],
+      get status() {
+        return status;
+      },
+      setAttribute: vi.fn(),
+      setStatus(next: typeof status) {
+        status = next;
+      },
+    } as unknown as Span;
+    new RedactingSpanProcessor().onEnding(span);
+    expect(exception['exception.type']).toBe('Error');
+    expect(exception['exception.message']).not.toMatch(/u:p@|k123/);
+    expect(exception['exception.stacktrace']).not.toContain('abc123def456');
+    expect(exception['http.url']).toBe('https://billing.example.com/x');
+    expect(status).toEqual({ code: SpanStatusCode.ERROR, message: 'password=[REDACTED]' });
   });
 });
