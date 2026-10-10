@@ -216,8 +216,10 @@ NestJS handler spans are not included: the official instrumentation does not sup
 with `import()`, so the SDK also registers an in-thread ESM loader hook (`import-in-the-middle`)
 limited to the instrumented modules (`http`, `https`, `express`, `pg`, `pg-pool`).
 
-Health probes are never traced. Every span is checked before export: query strings and URL
-credentials removed, string attributes redacted like log lines (`RedactingSpanProcessor`).
+Health probes are never traced. Every span is checked before export (`RedactingSpanProcessor`):
+query strings and URL credentials removed, and string attributes redacted like log lines, on the
+span and on its events (an exception event carries the error's message and stack trace), and so is
+its status message.
 
 **Where it goes:** OTLP over HTTP (JSON) to `<OTEL_EXPORTER_OTLP_ENDPOINT>/v1/traces` and
 `/v1/metrics`, metrics every `OTEL_METRIC_EXPORT_INTERVAL` ms (default 60 s). Provider credentials
