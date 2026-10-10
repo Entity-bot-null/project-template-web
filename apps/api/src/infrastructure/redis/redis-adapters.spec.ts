@@ -70,6 +70,18 @@ describe('RedisLeaseStore', () => {
     await expect(store.release('lock:k', 'stale-token')).resolves.toBe(false);
   });
 
+  it('reads with GET, and writes with a plain SET and a TTL in milliseconds, whoever held it', async () => {
+    const get = vi.fn<RedisCommands['get']>(() => Promise.resolve('done'));
+    const set = vi.fn<RedisCommands['set']>(() => Promise.resolve('OK'));
+    const store = new RedisLeaseStore(redisWith({ get, set }));
+    await expect(store.read('idempotency:k')).resolves.toBe('done');
+    expect(get).toHaveBeenCalledWith('idempotency:k');
+    await store.write('idempotency:k', 'done', 86_400_000);
+    expect(set).toHaveBeenCalledWith('idempotency:k', 'done', {
+      expiration: { type: 'PX', value: 86_400_000 },
+    });
+  });
+
   it('releases its own claim when Redis applied the SET but answered after the deadline', async () => {
     const keys = new Map<string, string>();
     const commands: Partial<RedisCommands> = {
@@ -97,10 +109,13 @@ describe('RedisLeaseStore', () => {
       },
     } as unknown as RedisService;
     const idempotency = new IdempotencyService(new RedisLeaseStore(redis), redis);
-    await expect(idempotency.claim('webhooks', 'evt-1', 24 * 3600)).rejects.toBeInstanceOf(
+    const ttls = { processingTtlSec: 300, doneTtlSec: 24 * 3600 };
+    await expect(idempotency.claim('webhooks', 'evt-1', ttls)).rejects.toBeInstanceOf(
       RedisUnavailableError,
     );
     // The sender retries: nothing processed the event, so it is claimable again.
-    await expect(idempotency.claim('webhooks', 'evt-1', 24 * 3600)).resolves.not.toBeNull();
+    await expect(idempotency.claim('webhooks', 'evt-1', ttls)).resolves.toMatchObject({
+      status: 'claimed',
+    });
   });
 });

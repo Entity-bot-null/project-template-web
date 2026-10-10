@@ -430,6 +430,50 @@ describe('signIn and signOut', () => {
     expect(calls.map(routeOf)).toEqual([LOGOUT, SIGN_IN]);
     expect(getState().status).toBe('authenticated');
   });
+
+  // "Retry sign-out" stays on the sign-in page while a sign-in is on its way.
+  // A logout sent then carries the old cookie and answers by clearing the
+  // cookies: landing after the sign-in, it would delete the new one.
+  async function afterAFailedSignOut() {
+    stubFetch({ [LOGOUT]: () => Promise.reject(new TypeError('Failed to fetch')) });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    await expect(signOut()).resolves.toBe(false);
+  }
+
+  it('lets a sign-in on its way end the old session instead of a retried sign-out', async () => {
+    await afterAFailedSignOut();
+    const gate = deferred<Response>();
+    const { calls } = stubFetch({ [SIGN_IN]: () => gate.promise, [LOGOUT]: signedOut });
+
+    const back = signIn(member.email, 'right');
+    const retried = retrySignOut();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.map(routeOf)).toEqual([SIGN_IN]);
+    gate.resolve(session('token-2'));
+    await back;
+    // The sign-in ended the old session on the server (it retires the family
+    // of the cookie it presents): no logout follows it.
+    await expect(retried).resolves.toBe(true);
+    expect(calls.map(routeOf)).toEqual([SIGN_IN]);
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
+    expect(getAccessToken()).toBe('token-2');
+  });
+
+  it('retries the sign-out once a sign-in on its way has failed', async () => {
+    await afterAFailedSignOut();
+    const gate = deferred<Response>();
+    const { calls } = stubFetch({ [SIGN_IN]: () => gate.promise, [LOGOUT]: signedOut });
+
+    const back = signIn(member.email, 'wrong');
+    const retried = retrySignOut();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.map(routeOf)).toEqual([SIGN_IN]);
+    gate.resolve(failure(401, 'Invalid email or password'));
+    await back;
+    await expect(retried).resolves.toBe(true);
+    expect(calls.map(routeOf)).toEqual([SIGN_IN, LOGOUT]);
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
 });
 
 describe('other tabs', () => {

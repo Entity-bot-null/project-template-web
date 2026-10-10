@@ -42,9 +42,14 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      # The day is the operating system upgrade's cache key (OS_UPGRADE_DATE in
+      # the Dockerfiles): a cached upgrade is at most a day old. Read once, so
+      # the push below reuses the scanned build's layers.
       - name: Commit being built
         id: commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "os-date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -54,7 +59,9 @@ jobs:
           target: ${{ matrix.target }}
           load: true
           # The release every log line, error and span of this image reports.
-          build-args: APP_RELEASE=${{ steps.commit.outputs.sha }}
+          build-args: |
+            APP_RELEASE=${{ steps.commit.outputs.sha }}
+            OS_UPGRADE_DATE=${{ steps.commit.outputs.os-date }}
           tags: scan/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
@@ -88,7 +95,9 @@ jobs:
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
           push: true
-          build-args: APP_RELEASE=${{ steps.commit.outputs.sha }}
+          build-args: |
+            APP_RELEASE=${{ steps.commit.outputs.sha }}
+            OS_UPGRADE_DATE=${{ steps.commit.outputs.os-date }}
           tags: ${{ vars.IMAGE_PREFIX || 'local' }}/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           provenance: mode=max

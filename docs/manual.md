@@ -650,10 +650,10 @@ protected environment, where the release job fails on purpose until it is writte
 platform. Implement it in this order (the comments in the file repeat it):
 
 1. Push the images once per commit (`docker-images.yml` with `push: true`, after the registry login
-   step marked in that file); reuse them when they already exist, so production runs what staging
-   verified.
-2. Resolve their digests (`docker buildx imagetools inspect <image>:<sha>`) and deploy
-   `<image>@<digest>` only.
+   step marked in that file), scan the digests the push reports and record them; reuse the digests
+   staging recorded, so production runs what staging verified.
+2. Deploy `<image>@<digest>` only, with the digests of the build or of that record: never looked up
+   from the tag `<image>:<sha>`, which any workflow with `packages: write` can push.
 3. Record the digests running before the change: the rollback target.
 4. Run the `api-migrate` image against the environment's database; stop on failure.
 5. Roll out `api`, then `web`, waiting for readiness.

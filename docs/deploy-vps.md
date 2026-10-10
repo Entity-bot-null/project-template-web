@@ -34,13 +34,17 @@ browser ──HTTPS──▶ Caddy (TLS, HSTS) ──▶ web (nginx: the app, /a
 The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
 
 1. re-runs every gate on the commit (as for any target);
-2. **publish**: builds `api`, `api-migrate` and `web` and pushes them to `ghcr.io` as
-   `<IMAGE_PREFIX>/<image>:<sha>`; when staging already published that commit, production reuses
-   the same images;
+2. **publish**: builds `api`, `api-migrate` and `web`, pushes them to `ghcr.io` as
+   `<IMAGE_PREFIX>/<image>:<sha>`, scans each digest it pushed with Trivy and records it in the run
+   (the artifacts `image-<image>-<sha>`, listed in the run's summary); when an earlier deployment
+   of that commit recorded its images (staging, before production), it reuses those digests
+   instead of building. Digests never come from the tag, which any workflow of the repository with
+   `packages: write` can push ([ci-cd.md](ci-cd.md#deployment)). A record lasts 90 days (or the
+   repository's shorter artifact retention); a commit deployed after that is built again;
 3. **release-vps**, in the protected environment: checks that the server's copy of the deploy
    files is this release's (it stops otherwise, before changing anything,
-   [Update the server files](#update-the-server-files)), resolves the three digests, connects to
-   the server over SSH and runs `deploy.sh`, which
+   [Update the server files](#update-the-server-files)), takes the three digests this run
+   recorded, connects to the server over SSH and runs `deploy.sh`, which
    - pulls the images by digest with the run's short-lived token (then logs out: the server keeps
      no registry credential),
    - runs the migration (`api-migrate` with the migrator role) and stops there if it fails, the

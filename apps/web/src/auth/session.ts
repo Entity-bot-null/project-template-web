@@ -21,6 +21,7 @@ let accessToken: string | null = null;
 let state: AuthState = LOADING;
 let refreshInFlight: Promise<boolean> | null = null;
 let logoutInFlight: Promise<boolean> | null = null;
+let signInInFlight: Promise<ApiResult<AuthSession>> | null = null;
 let booted = false;
 // Bumped by every sign-in and sign-out: a refresh already running when one
 // happens must not overwrite its outcome when it lands.
@@ -166,6 +167,16 @@ export function boot(): Promise<boolean> {
 }
 
 export async function signIn(email: string, password: string): Promise<ApiResult<AuthSession>> {
+  const attempt = sendSignIn(email, password);
+  signInInFlight = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (signInInFlight === attempt) signInInFlight = null;
+  }
+}
+
+async function sendSignIn(email: string, password: string): Promise<ApiResult<AuthSession>> {
   // A logout or a rotation still on its way would overwrite the cookie this
   // sign-in sets: the logout clears it, a late rotation replaces it.
   if (logoutInFlight) await logoutInFlight;
@@ -199,8 +210,19 @@ export function signOut(): Promise<boolean> {
   return endServerSession();
 }
 
-/** Asks the server again to end the session, after a failed sign-out. */
-export function retrySignOut(): Promise<boolean> {
+/**
+ * Asks the server again to end the session, after a failed sign-out. A
+ * sign-in on its way goes first: the logout would carry the old cookie and
+ * answer by clearing the cookies, the new one included if it landed after the
+ * sign-in. A sign-in that succeeds has ended the old session itself (the
+ * server retires the family of the cookie it presents); only a failed one
+ * leaves the logout to do.
+ */
+export async function retrySignOut(): Promise<boolean> {
+  if (signInInFlight) {
+    await signInInFlight;
+    if (state.status === 'authenticated') return true;
+  }
   return endServerSession();
 }
 
@@ -249,6 +271,7 @@ export function resetForTests(): void {
   state = LOADING;
   refreshInFlight = null;
   logoutInFlight = null;
+  signInInFlight = null;
   booted = false;
   listeners.clear();
 }

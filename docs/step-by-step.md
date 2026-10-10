@@ -629,18 +629,19 @@ valid certificate (the padlock).
 
 **If it fails:**
 
-| Failing step                                                | Cause and fix                                                                                                                                                |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Gates                                                       | the same as a red CI: open the failing job's log ([troubleshooting.md](troubleshooting.md))                                                                  |
-| Publish: "The registry is ghcr.io"                          | `IMAGE_PREFIX` must be `ghcr.io/<owner>/<repo>` in lowercase (7.7)                                                                                           |
-| Environment settings                                        | a variable or secret of the environment is missing (7.7)                                                                                                     |
-| Deploy on the server: `Permission denied (publickey)`       | the public key is not in `/home/deploy/.ssh/authorized_keys`, or the wrong private key in `DEPLOY_SSH_KEY` (7.4)                                             |
-| `Host key verification failed`                              | `DEPLOY_KNOWN_HOSTS` does not match the server (7.4)                                                                                                         |
-| Check the server's deploy files: "Server files out of date" | a release changed a file in `deploy/vps`: copy the files again ([deploy-vps.md](deploy-vps.md#update-the-server-files))                                      |
-| `server.env is missing`                                     | 7.6 not done on that server                                                                                                                                  |
-| The migration failed                                        | `migrate.env`: wrong password, host, or the database is not reachable from the server (7.5)                                                                  |
-| The rollout failed                                          | the step's log ends with the new containers' last log lines, then the previous release starts again; usually `api.env` (`DATABASE_URL`, `JWT_ACCESS_SECRET`) |
-| Smoke test, certificate errors                              | DNS does not point at the server yet, or ports 80/443 are closed (7.2, 7.3)                                                                                  |
+| Failing step                                                | Cause and fix                                                                                                                                                               |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gates                                                       | the same as a red CI: open the failing job's log ([troubleshooting.md](troubleshooting.md))                                                                                 |
+| Publish: "The registry is ghcr.io"                          | `IMAGE_PREFIX` must be `ghcr.io/<owner>/<repo>` in lowercase (7.7)                                                                                                          |
+| Publish: "Scan the pushed image"                            | a fixable HIGH or CRITICAL advisory in the pushed image, as in the gates' image scan: update the base image or the dependency ([security.md](security.md#container-images)) |
+| Environment settings                                        | a variable or secret of the environment is missing (7.7)                                                                                                                    |
+| Deploy on the server: `Permission denied (publickey)`       | the public key is not in `/home/deploy/.ssh/authorized_keys`, or the wrong private key in `DEPLOY_SSH_KEY` (7.4)                                                            |
+| `Host key verification failed`                              | `DEPLOY_KNOWN_HOSTS` does not match the server (7.4)                                                                                                                        |
+| Check the server's deploy files: "Server files out of date" | a release changed a file in `deploy/vps`: copy the files again ([deploy-vps.md](deploy-vps.md#update-the-server-files))                                                     |
+| `server.env is missing`                                     | 7.6 not done on that server                                                                                                                                                 |
+| The migration failed                                        | `migrate.env`: wrong password, host, or the database is not reachable from the server (7.5)                                                                                 |
+| The rollout failed                                          | the step's log ends with the new containers' last log lines, then the previous release starts again; usually `api.env` (`DATABASE_URL`, `JWT_ACCESS_SECRET`)                |
+| Smoke test, certificate errors                              | DNS does not point at the server yet, or ports 80/443 are closed (7.2, 7.3)                                                                                                 |
 
 ### 8.2 Look at it
 
@@ -662,8 +663,8 @@ have no accounts.
 3. The production run stops at **Release to production (server)** waiting for approval: a
    reviewer opens the run on GitHub → **Review deployments** → **Approve and deploy**.
 
-**Check:** both runs end green; production publishes nothing new (it reuses staging's images:
-"already published: reused"); https://app.acme.com opens the sign-in page.
+**Check:** both runs end green; production builds nothing (its summary lists the three digests of
+the staging run, "built and scanned by run <its id>"); https://app.acme.com opens the sign-in page.
 
 ### 8.4 Create the first administrator
 

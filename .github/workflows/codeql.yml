@@ -26,6 +26,7 @@ jobs:
     permissions:
       contents: read # the code to analyze
       security-events: write # upload the results to code scanning
+      actions: read # this run's details, which the upload reads in a private repository
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

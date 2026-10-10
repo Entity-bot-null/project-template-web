@@ -53,6 +53,11 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm rebuild @prisma/eng
 # yarn): only node is needed, and they are attack surface with advisories of
 # their own.
 FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS hardened
+# The day of those fixes (CI passes today's date). It is part of the cache key
+# of the RUN below: a build cache would otherwise replay the upgrade of the
+# first build until the base digest changes, and ship none of the fixes
+# published since. The default keeps local builds cached.
+ARG OS_UPGRADE_DATE=local
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
