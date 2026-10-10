@@ -178,8 +178,10 @@ Commits on `main` (the squashed pull request titles, docs/commits.md) by **relea
 | `!` or a `BREAKING CHANGE:` footer | major: **2**.0.0          | minor        |
 
 1. Every push to `main` updates one open **release pull request**: the version in the
-   `package.json` files and `.release-please-manifest.json`, and the new `CHANGELOG.md` entry
-   (features, fixes, performance, reverts; housekeeping types are left out).
+   `package.json` files, `openapi/openapi.json` (`info.version`, which the API takes from its
+   `package.json`, so the contract test keeps passing) and `.release-please-manifest.json`, and the
+   new `CHANGELOG.md` entry (features, fixes, performance, reverts; housekeeping types are left
+   out).
 2. Merging it (review and CI like any pull request) creates the tag `vX.Y.Z` (immutable) and the
    GitHub release with the same notes, then attaches the SBOM (`sbom.cdx.json`).
 3. Deploying is separate: run **Deploy** with the tag as the ref, staging first.
