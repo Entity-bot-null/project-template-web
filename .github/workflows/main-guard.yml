@@ -39,11 +39,19 @@ jobs:
             exit 0
           fi
 
+          # The pushed commits. A forced push can replace main with a history
+          # that shares no commit with the previous one: GitHub then cannot
+          # compare the two (HTTP 404), and the new head is the one checked.
+          if ! shas=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.commits[].sha'); then
+            echo "::warning::$BEFORE and $AFTER share no history: main was replaced, not extended."
+            shas=$AFTER
+          fi
+
           # A squash merge is one commit on main whose pull request records it
           # as its merge commit. GitHub links the two a few seconds after the
           # merge, hence the retries.
           direct=()
-          for sha in $(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.commits[].sha'); do
+          for sha in $shas; do
             found=no
             for _ in 1 2 3 4 5 6; do
               count=$(gh api "repos/$REPO/commits/$sha/pulls" |
