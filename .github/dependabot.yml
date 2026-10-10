@@ -1,0 +1,73 @@
+# Weekly update pull requests; each one runs the full CI like any other.
+# The seven-day cooldown matches the supply-chain delay in pnpm-workspace.yaml
+# (minimumReleaseAge): a younger version would not install. Security updates
+# (Dependabot alerts) are not delayed by the cooldown (docs/security.md#dependency-maintenance).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    groups:
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+      production:
+        dependency-type: production
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/api
+      - /apps/web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build
+
+  # The tool images CI runs (.github/tool-images/Dockerfile): tag and digest
+  # updated together.
+  - package-ecosystem: docker
+    directory: /.github/tool-images
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      tools:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  # docker-compose.yml, and the reference server deployment's Caddy image
+  # (deploy/vps/compose.yaml).
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /deploy/vps
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build

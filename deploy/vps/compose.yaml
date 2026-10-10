@@ -1,0 +1,89 @@
+# Reference deployment on one Linux server with Docker (docs/deploy-vps.md):
+# Caddy terminates TLS (automatic certificates) and forwards to the web image,
+# which serves the app and forwards /api to the API. The database is a managed
+# PostgreSQL outside this file (backups, point-in-time recovery).
+#
+# The images come from the registry by digest, written by deploy.sh into
+# release.env (never edited by hand). Configuration comes from server.env
+# (the domain) and api.env, migrate.env, web.env (the containers); none is
+# committed: copy the .example files on the server and fill them in.
+name: app
+
+# Container logs rotate (Docker keeps them forever otherwise and they fill the
+# disk): five files of 10 MB per container.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '5'
+
+services:
+  proxy:
+    logging: *logging
+    # Tag for readers, digest for the server (Dependabot updates both).
+    image: caddy:2.11.7-alpine@sha256:d76116d819d5162f464b0f2cd09bd28c568a86148c7bc539ce17c33eb22d8bbb
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in server.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    networks: [edge]
+
+  # Runs once per deployment (deploy.sh), before the rollout: prisma migrate
+  # deploy with the migrator role. A profile keeps `up` from starting it.
+  migrate:
+    logging: *logging
+    image: ${MIGRATE_IMAGE:?set by deploy.sh}
+    profiles: [migrate]
+    env_file: migrate.env
+    networks: [edge]
+
+  api:
+    logging: *logging
+    image: ${API_IMAGE:?set by deploy.sh}
+    restart: unless-stopped
+    env_file: api.env
+    environment:
+      NODE_ENV: production
+      # One hop: the web image, which forwards the client address it got
+      # from Caddy (realip.conf).
+      TRUST_PROXY: '1'
+    stop_grace_period: 30s
+    networks: [edge]
+
+  web:
+    logging: *logging
+    image: ${WEB_IMAGE:?set by deploy.sh}
+    restart: unless-stopped
+    env_file: web.env
+    environment:
+      API_UPSTREAM: http://api:3000
+    volumes:
+      # The client address comes from Caddy's X-Forwarded-For (the realip
+      # module), not from the connection: otherwise every user would look
+      # like the proxy to the API's rate limits and logs.
+      - ./realip.conf:/etc/nginx/conf.d/realip.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge]
+
+networks:
+  edge:
+    ipam:
+      config:
+        # Fixed, so realip.conf can trust exactly this network.
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:

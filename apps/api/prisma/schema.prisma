@@ -1,0 +1,67 @@
+// Database conventions (docs/database.md): snake_case tables and columns
+// through @@map/@map, UUIDv7 primary keys, timestamptz(3) in UTC,
+// created_at on every table and updated_at on every table edited in place.
+// Every change ships as a committed migration (pnpm db:migrate).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/prisma/generated"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Least to most privileged. Keep in sync with ROLES in
+// src/common/types/request-user.ts (a unit spec checks it).
+enum Role {
+  member
+  admin
+}
+
+model User {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  // Stored trimmed and lowercased (normalizeEmail) so the unique index is
+  // case-insensitive in practice.
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  role         Role     @default(member)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sessions Session[]
+
+  @@map("users")
+}
+
+// One row per refresh token, grouped in families: a sign-in starts a family and
+// every rotation adds the successor to it. Only the token's SHA-256 is stored,
+// so a leaked table cannot be replayed.
+model Session {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  // Every token descended from one sign-in. A replayed rotated token (theft)
+  // and a logout revoke the whole family.
+  familyId        String    @map("family_id") @db.Uuid
+  // Absolute end of the family: rotations slide expiresAt, never past this.
+  familyExpiresAt DateTime  @map("family_expires_at") @db.Timestamptz(3)
+  tokenHash       String    @unique @map("token_hash")
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(3)
+  // True when revokedAt came from a rotation (a successor exists): only those
+  // rows get the race leeway; logout and theft revocations do not.
+  rotated         Boolean   @default(false)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  // The sweep deletes rows past their own expiry. Revoked rows stay until
+  // then, so a token replayed at any point of its life still reads as reuse.
+  @@index([expiresAt])
+  @@map("sessions")
+}

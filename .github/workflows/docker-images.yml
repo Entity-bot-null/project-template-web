@@ -1,0 +1,105 @@
+name: Docker images
+
+# Reusable: builds the API, its migration job and the web image, and scans
+# each one for known vulnerabilities before anything can be pushed. CI builds
+# without pushing (the Dockerfiles must keep working); a deployment pushes once
+# a registry is configured (docs/ci-cd.md#images).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (default the triggering commit).
+        type: string
+        default: ''
+      push:
+        description: Push the images to the registry named by vars.IMAGE_PREFIX.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            dockerfile: apps/api/Dockerfile
+            target: runtime
+          - image: api-migrate
+            dockerfile: apps/api/Dockerfile
+            target: migrate
+          - image: web
+            dockerfile: apps/web/Dockerfile
+            target: runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Commit being built
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          load: true
+          # The release every log line, error and span of this image reports.
+          build-args: APP_RELEASE=${{ steps.commit.outputs.sha }}
+          tags: scan/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      # Operating system packages and every Node.js package in the image. Only
+      # advisories with a published fix fail: those are the ones a rebuild or
+      # an update can remove (docs/security.md#container-images).
+      - name: Scan for known vulnerabilities
+        env:
+          IMAGE: scan/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          "$(node scripts/tool-image.mjs trivy)"
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          "$IMAGE"
+      # Registry login goes here once pushing is enabled, for example:
+      # - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}   # needs permissions: packages: write
+      # Same context, target and cache as the scanned build: every layer is a
+      # cache hit, so the pushed image is the one scanned above. Published
+      # images always carry their SBOM and SLSA build provenance as registry
+      # attestations (docs/security.md#artifact-integrity).
+      - name: Push
+        id: push
+        if: ${{ inputs.push }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          push: true
+          build-args: APP_RELEASE=${{ steps.commit.outputs.sha }}
+          tags: ${{ vars.IMAGE_PREFIX || 'local' }}/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          provenance: mode=max
+          sbom: true
+      # OPCIONAL, signed GitHub attestation (Sigstore) that deployments verify
+      # with `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>`.
+      # Needs a public repository or GitHub Enterprise Cloud, and
+      # permissions id-token: write, attestations: write, packages: write.
+      # - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      #   if: ${{ inputs.push }}
+      #   with:
+      #     subject-name: ${{ vars.IMAGE_PREFIX }}/${{ matrix.image }}
+      #     subject-digest: ${{ steps.push.outputs.digest }}
+      #     push-to-registry: true

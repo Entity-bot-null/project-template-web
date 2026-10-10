@@ -1,0 +1,427 @@
+{
+  "$comment": "What doberman knows about this template: how to recognize it, its gates, its risk areas. scripts/doberman.mjs reads it; keep it in step with package.json, .github/workflows/quality-gates.yml and docs/testing.md.",
+  "template": "WEB",
+  "displayName": "Golden Template Web (NestJS API + React SPA)",
+  "detection": {
+    "required": [
+      {
+        "file": "package.json"
+      },
+      {
+        "file": "pnpm-workspace.yaml"
+      },
+      {
+        "dependency": "@nestjs/core",
+        "package": "apps/api/package.json"
+      },
+      {
+        "dependency": "react",
+        "package": "apps/web/package.json"
+      },
+      {
+        "file": "openapi/openapi.json"
+      }
+    ],
+    "supporting": [
+      {
+        "dependency": "vite",
+        "package": "apps/web/package.json"
+      },
+      {
+        "dependency": "openapi-fetch",
+        "package": "apps/web/package.json"
+      },
+      {
+        "dependency": "zod",
+        "package": "apps/api/package.json"
+      },
+      {
+        "dependency": "@playwright/test"
+      },
+      {
+        "file": "apps/api/prisma/schema.prisma"
+      },
+      {
+        "file": "apps/api/vitest.config.int.ts"
+      },
+      {
+        "file": "apps/api/src/auth/sessions.service.ts"
+      },
+      {
+        "file": "apps/api/src/env/env.ts"
+      },
+      {
+        "file": "apps/web/src/api/client.ts"
+      },
+      {
+        "file": "apps/web/src/auth/session.ts"
+      },
+      {
+        "file": "docker-compose.yml"
+      },
+      {
+        "file": "playwright.config.ts"
+      }
+    ],
+    "minSupporting": 0.6
+  },
+  "rules": [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "ENGINEERING_STANDARDS.md",
+    "DEFINITION_OF_DONE.md",
+    "CONTRIBUTING.md",
+    "docs/code-review.md"
+  ],
+  "prTemplate": ".github/pull_request_template.md",
+  "aggregateScript": "verify",
+  "gates": {
+    "format:check": {
+      "name": "Format",
+      "tags": ["static"]
+    },
+    "lint": {
+      "name": "Lint",
+      "tags": ["static"]
+    },
+    "typecheck": {
+      "name": "Typecheck (web contract types check included)",
+      "tags": ["static"]
+    },
+    "test:coverage": {
+      "name": "Unit + component tests + coverage thresholds (OpenAPI drift spec included)",
+      "tags": ["tests"]
+    },
+    "security": {
+      "name": "Security (audit, dependency policy, secrets in the tree)",
+      "tags": ["security"],
+      "requires": ["network"]
+    },
+    "build": {
+      "name": "Build (API + web)",
+      "tags": ["build"]
+    },
+    "perf:check": {
+      "name": "Performance budget",
+      "tags": ["build"]
+    }
+  },
+  "extraGates": [
+    {
+      "id": "sast",
+      "script": "sast",
+      "name": "Static analysis (Semgrep)",
+      "command": "pnpm sast",
+      "source": ".github/workflows/quality-gates.yml › Static analysis (Semgrep)",
+      "required": true,
+      "when": "always",
+      "requires": ["docker", "network"],
+      "tags": ["security"]
+    },
+    {
+      "id": "lint:workflows",
+      "script": "lint:workflows",
+      "name": "Workflow lint (actionlint + zizmor)",
+      "command": "pnpm lint:workflows",
+      "source": ".github/workflows/quality-gates.yml › Format, lint, types, workflows",
+      "required": true,
+      "when": "always",
+      "requires": ["docker"],
+      "tags": ["security", "static"]
+    },
+    {
+      "id": "test:scripts",
+      "script": "test:scripts",
+      "name": "Repository script tests (Doberman engine, Semgrep file selection)",
+      "command": "pnpm test:scripts",
+      "source": ".github/workflows/quality-gates.yml › Format, lint, types, workflows",
+      "required": true,
+      "when": "always",
+      "tags": ["tests"]
+    },
+    {
+      "id": "gitleaks",
+      "name": "Secrets in the git history (gitleaks)",
+      "command": "docker run --rm -v \"$PWD:/repo:ro\" \"$(node scripts/tool-image.mjs gitleaks)\" git /repo --redact --no-banner",
+      "commandWindows": "MSYS_NO_PATHCONV=1 docker run --rm -v \"$(cygpath -w \"$PWD\"):/repo:ro\" \"$(node scripts/tool-image.mjs gitleaks)\" git /repo --redact --no-banner",
+      "source": ".github/workflows/quality-gates.yml › Security",
+      "required": true,
+      "when": "always",
+      "requires": ["docker", "commits"],
+      "tags": ["security"]
+    },
+    {
+      "id": "test:integration",
+      "script": "test:integration",
+      "name": "Integration tests (API + PostgreSQL)",
+      "command": "pnpm test:integration",
+      "source": ".github/workflows/quality-gates.yml › Integration tests",
+      "required": true,
+      "when": "always",
+      "requires": ["database"],
+      "tags": ["tests"],
+      "note": "Runs on <db>_test, never the development database. The Redis adapter specs run only with REDIS_TEST_URL (required in CI, skipped locally without it: say so)."
+    },
+    {
+      "id": "test:e2e",
+      "script": "test:e2e",
+      "name": "End-to-end tests (Playwright, built stack)",
+      "command": "pnpm build && pnpm test:e2e",
+      "source": ".github/workflows/quality-gates.yml › End-to-end tests (browser)",
+      "required": true,
+      "when": "always",
+      "requires": ["database", "browser"],
+      "tags": ["tests"],
+      "note": "Playwright starts the API (e2e:server, on <db>_e2e) and the web preview itself. Installing the browser is the developer's decision: without it, SKIPPED — REQUIRES CONFIGURATION (`pnpm exec playwright install chromium`)."
+    },
+    {
+      "id": "images",
+      "name": "Container images (build + Trivy scan)",
+      "command": "per .github/workflows/docker-images.yml: docker build of apps/api/Dockerfile (targets runtime and migrate) and apps/web/Dockerfile (target runtime), tagged doberman-scan/<image>, then the Trivy scan of each with `node scripts/tool-image.mjs trivy` and the workflow's flags; remove the doberman-scan images afterwards",
+      "source": ".github/workflows/docker-images.yml (called by quality-gates.yml › Images)",
+      "required": true,
+      "when": "paths",
+      "paths": [
+        "apps/*/Dockerfile",
+        "apps/web/nginx/**",
+        ".dockerignore",
+        "package.json",
+        "apps/*/package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "apps/api/prisma/**",
+        "apps/api/prisma.config.ts",
+        "apps/*/tsconfig*.json",
+        "apps/web/vite.config.ts",
+        "apps/api/nest-cli.json",
+        "tsconfig.base.json",
+        ".github/tool-images/**"
+      ],
+      "requires": ["docker", "network"],
+      "tags": ["security", "build"]
+    }
+  ],
+  "services": {
+    "database": {
+      "start": "pnpm db:up",
+      "stop": "docker compose stop db",
+      "needs": ["docker"],
+      "note": "The template's PostgreSQL (docker-compose.yml, service db). The suites use <db>_test and <db>_e2e on it."
+    }
+  },
+  "environment": {
+    "databaseEnvFiles": ["apps/api/.env"]
+  },
+  "areas": [
+    {
+      "id": "api-auth",
+      "paths": ["apps/api/src/auth/**"],
+      "focus": "refresh rotation with family revocation and race leeway, user row lock, cookie attributes, sign-in timing, password hashing, token claims",
+      "docs": ["docs/security.md", "docs/architecture.md"]
+    },
+    {
+      "id": "authorization",
+      "paths": [
+        "apps/api/src/**/*.controller.ts",
+        "apps/api/src/common/decorators/**",
+        "apps/api/src/auth/*.guard.ts",
+        "apps/api/src/auth/auth.decorator.ts"
+      ],
+      "focus": "@Auth(...) on every non-public route, roles, ownership checks in the service (another user's id → 404), no IDOR",
+      "docs": ["docs/security.md", "docs/api-conventions.md"]
+    },
+    {
+      "id": "api-modules",
+      "paths": ["apps/api/src/**/*.service.ts", "apps/api/src/**/dto/**", "apps/api/src/common/**"],
+      "focus": "Zod DTOs with bounds, explicit select, pagination limits, error paths, transactions and locks, idempotency",
+      "docs": ["docs/api-conventions.md", "docs/error-handling.md", "docs/architecture.md"]
+    },
+    {
+      "id": "database",
+      "paths": ["apps/api/prisma/**", "apps/api/prisma.config.ts", "apps/api/src/prisma/**"],
+      "focus": "committed migration, never an edited one, expand/contract safety while the previous version runs, indexes for new queries, no unbounded queries, no $queryRawUnsafe",
+      "docs": ["docs/database.md"]
+    },
+    {
+      "id": "contract",
+      "paths": [
+        "openapi/**",
+        "apps/web/src/api/schema.d.ts",
+        "apps/api/src/openapi/**",
+        "apps/api/src/common/openapi/**"
+      ],
+      "focus": "regenerated by pnpm contract, backwards compatibility, status codes, envelope, pagination, auth requirements declared",
+      "docs": ["docs/api-conventions.md"]
+    },
+    {
+      "id": "web-session",
+      "paths": ["apps/web/src/auth/**"],
+      "focus": "access token in memory only, single-flight refresh + Web Lock across tabs, epoch guard, sign-in waits for logout/refresh in flight, other tabs told, guards",
+      "docs": ["docs/security.md", "docs/architecture.md"]
+    },
+    {
+      "id": "web-data",
+      "paths": ["apps/web/src/api/**", "apps/web/src/hooks/**"],
+      "focus": "only the api client and call(), useLoader's latest-request-wins, no fetch elsewhere, error folding",
+      "docs": ["docs/architecture.md", "docs/error-handling.md"]
+    },
+    {
+      "id": "web-ui",
+      "paths": [
+        "apps/web/src/pages/**",
+        "apps/web/src/components/**",
+        "apps/web/src/router.tsx",
+        "apps/web/src/App.tsx",
+        "apps/web/src/main.tsx"
+      ],
+      "focus": "loading/empty/error/retry states, double submit, navigation during requests, role guards in the router, accessible names, no XSS sinks",
+      "docs": ["docs/architecture.md", "docs/error-handling.md"]
+    },
+    {
+      "id": "config",
+      "paths": [
+        "apps/api/src/env/**",
+        ".env.example",
+        "apps/*/.env.example",
+        "docs/environment.md"
+      ],
+      "focus": "process.env read only in env.ts, schema + .env.example + docs together, optional integrations off by default and never stopping the boot",
+      "docs": ["docs/environment.md"]
+    },
+    {
+      "id": "infrastructure",
+      "paths": [
+        "apps/api/src/infrastructure/**",
+        "apps/api/src/health/**",
+        "apps/api/src/lifecycle/**",
+        "apps/api/src/common/http/**"
+      ],
+      "focus": "CacheService/LockService/IdempotencyService only, degradation when Redis is absent, readiness probe, external calls through createExternalHttpClient (timeouts, SSRF)",
+      "docs": ["docs/architecture.md", "docs/security.md"]
+    },
+    {
+      "id": "http-hardening",
+      "paths": [
+        "apps/api/src/common/guards/**",
+        "apps/api/src/common/http/json-only.middleware.ts",
+        "apps/api/src/app.module.ts",
+        "apps/api/src/main.ts",
+        "apps/api/src/server.ts",
+        "apps/api/src/app.setup.ts",
+        "apps/web/nginx/**",
+        "apps/web/index.html"
+      ],
+      "focus": "Fetch Metadata CSRF guard, CORS origins, rate limits (auth routes), security headers and CSP, cache headers",
+      "docs": ["docs/security.md"]
+    },
+    {
+      "id": "observability",
+      "paths": [
+        "apps/api/src/observability/**",
+        "apps/api/src/common/logging/**",
+        "apps/web/src/monitoring/**"
+      ],
+      "focus": "redaction, ids not personal data, errorTracker/reportError once, low-cardinality metric attributes",
+      "docs": ["docs/observability.md", "docs/security.md"]
+    },
+    {
+      "id": "deploy",
+      "paths": [
+        "deploy/**",
+        "apps/*/Dockerfile",
+        "docker-compose.yml",
+        ".dockerignore",
+        ".github/workflows/deploy.yml",
+        ".github/workflows/docker-images.yml"
+      ],
+      "focus": "non-root images, pinned digests, migrations before the new version, no secrets in images or compose files, docs/deploy-vps.md and both step-by-step guides updated",
+      "docs": ["docs/deploy-vps.md", "docs/ci-cd.md", "docs/security.md"]
+    },
+    {
+      "id": "dependencies",
+      "paths": [
+        "package.json",
+        "apps/*/package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "scripts/dependency-policy.json"
+      ],
+      "focus": "justified, added to the app that uses it, supply-chain settings never weakened, no new install scripts",
+      "docs": ["docs/security.md"]
+    },
+    {
+      "id": "gates-and-ci",
+      "paths": [
+        ".github/**",
+        ".husky/**",
+        "scripts/**",
+        "eslint.config.js",
+        "tsconfig*.json",
+        "apps/*/vitest.config*.ts",
+        "apps/web/vite.config.ts",
+        "apps/web/performance-budget.json",
+        "playwright.config.ts",
+        ".semgrepignore",
+        ".secretlintrc.json",
+        ".zap/**"
+      ],
+      "focus": "no gate, threshold, rule or permission weakened; workflows least privilege, pinned, no pull request path to deployments",
+      "docs": ["docs/ci-cd.md", "docs/security.md"]
+    },
+    {
+      "id": "tests",
+      "paths": [
+        "apps/**/*.spec.ts",
+        "apps/**/*.spec.tsx",
+        "apps/api/test/**",
+        "apps/web/src/test/**",
+        "e2e/**"
+      ],
+      "focus": "would the tests fail if the code were wrong: authorization matrix, failure paths, races, realistic stubs",
+      "docs": ["docs/testing.md"]
+    },
+    {
+      "id": "docs",
+      "paths": ["docs/**", "*.md"],
+      "focus": "manual and step-by-step guides changed in English and Spanish together; deployment changes reflected in docs/deploy-vps.md",
+      "docs": ["AGENTS.md"]
+    }
+  ],
+  "artifacts": [
+    "apps/api/coverage",
+    "apps/web/coverage",
+    "playwright-report",
+    "test-results",
+    "blob-report",
+    "apps/api/dist",
+    "apps/web/dist",
+    "dist"
+  ],
+  "coverage": {
+    "lcov": [
+      {
+        "file": "apps/api/coverage/lcov.info",
+        "base": "apps/api"
+      },
+      {
+        "file": "apps/web/coverage/lcov.info",
+        "base": "apps/web"
+      }
+    ],
+    "include": ["apps/api/src/**/*.ts", "apps/web/src/**/*.ts", "apps/web/src/**/*.tsx"],
+    "exclude": [
+      "apps/**/*.spec.ts",
+      "apps/**/*.spec.tsx",
+      "apps/api/src/prisma/generated/**",
+      "apps/web/src/api/schema.d.ts",
+      "apps/web/src/test/**",
+      "apps/**/*.d.ts"
+    ]
+  },
+  "reproduction": {
+    "fileSuffix": ".doberman.spec.ts(x) for unit and component tests, .doberman.int.spec.ts for API integration",
+    "location": "next to the code under test: apps/web/src/** or apps/api/src/** (each runner only collects its app's src/)",
+    "runOne": "web: pnpm --filter web exec vitest run --coverage=false <path from apps/web> · API unit: pnpm --filter api exec vitest run <path from apps/api> · API integration (database): pnpm --filter api exec vitest run --config vitest.config.int.ts <path from apps/api>",
+    "guide": "reference/reproduction.md"
+  }
+}

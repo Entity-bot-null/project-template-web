@@ -1,0 +1,99 @@
+name: Dependabot auto-merge
+
+# A Dependabot update merges itself once a maintainer has approved it and CI
+# has passed (docs/ci-cd.md#dependency-updates). It does not rely on branch
+# protection, which GitHub Free lacks on private repositories: this workflow
+# checks every condition itself, and never checks out or runs the pull
+# request's code.
+#
+#   - Dependabot opened the pull request, and every update in it is a patch,
+#     a minor version, or a new digest of the same image tag. Majors are read
+#     and merged by hand.
+#   - It changes no workflow or action: the default token may not merge those.
+#   - A user with write access approved it. Once someone else has pushed to
+#     it, the approval must be of its latest commit.
+#   - The "CI passed" check succeeded on its latest commit (the job waits
+#     for CI when the approval comes first).
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    name: Merge when approved and green
+    if: github.event.review.state == 'approved' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # merge
+      pull-requests: write # merge
+      checks: read # the CI result
+      actions: write # start CI on main: a merge made with this token triggers no workflow
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Check and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          REVIEWER: ${{ github.event.review.user.login }}
+          APPROVED_SHA: ${{ github.event.review.commit_id }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice title=Merge by hand::$1"; exit 0; }
+          fail() { echo "::error title=Not merged::$1"; exit 1; }
+
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch | version-update:semver-minor) ;;
+            # A new digest of the same image tag carries no version change.
+            '') [[ "$ECOSYSTEM" == docker || "$ECOSYSTEM" == docker_compose ]] ||
+              skip "Dependabot recorded no version change." ;;
+            *) skip "A $UPDATE_TYPE update: read its release notes first." ;;
+          esac
+          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' |
+            grep -Eq '^\.github/(workflows|actions)/'; then
+            skip "It changes a workflow or an action, which the workflow token may not merge."
+          fi
+
+          permission=$(gh api "repos/$REPO/collaborators/$REVIEWER/permission" --jq .permission)
+          case "$permission" in
+            admin | maintain | write) ;;
+            *) fail "$REVIEWER has $permission access; an approval needs write access." ;;
+          esac
+
+          deadline=$((SECONDS + 50 * 60))
+          while :; do
+            head=$(gh api "repos/$REPO/pulls/$PR" --jq 'if .state == "open" then .head.sha else "" end')
+            [ -n "$head" ] || skip "The pull request is no longer open."
+            result=$(gh api "repos/$REPO/commits/$head/check-runs?check_name=CI%20passed&filter=latest" \
+              --jq '[.check_runs[] | .conclusion // .status] | first // "pending"')
+            case "$result" in
+              success) break ;;
+              queued | in_progress | pending | waiting | requested) ;;
+              *) fail "CI passed is $result on $head." ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] || fail "CI has not finished on $head: re-run this job once it has."
+            sleep 30
+          done
+
+          # Dependabot's own commits (a rebase, a recreated update) keep the
+          # approval; a commit pushed by anyone else needs a new one.
+          others=$(gh api "repos/$REPO/pulls/$PR/commits" --paginate \
+            --jq '[.[] | select(.author.login != "dependabot[bot]" or .commit.verification.verified != true)] | length' |
+            awk '{ total += $1 } END { print total + 0 }')
+          if [ "$others" -gt 0 ] && [ "$APPROVED_SHA" != "$head" ]; then
+            fail "Someone other than Dependabot pushed to it after the approval: approve its latest commit."
+          fi
+
+          gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$head"
+          gh workflow run ci.yml -R "$REPO" --ref main

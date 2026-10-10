@@ -1,0 +1,37 @@
+{
+  "description": "Dependency policy enforced by scripts/check-dependencies.mjs (pnpm deps:check, part of pnpm security, pnpm verify and CI). See docs/security.md#dependency-policy. Changing this file is a reviewed decision (CODEOWNERS).",
+  "installSettings": {
+    "description": "What pnpm-workspace.yaml must keep, so weakening the supply-chain settings fails the gate instead of passing unnoticed: the release delay (minutes, at least), the trust policy and the refusal of transitive dependencies from outside the registry.",
+    "minimumReleaseAgeAtLeast": 10080,
+    "required": {
+      "trustPolicy": "no-downgrade",
+      "blockExoticSubdeps": "true"
+    }
+  },
+  "licenses": {
+    "allowed": [
+      "MIT",
+      "MIT-0",
+      "ISC",
+      "0BSD",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "Apache-2.0",
+      "BlueOak-1.0.0",
+      "CC0-1.0",
+      "Unlicense",
+      "Python-2.0"
+    ],
+    "allowedInDevelopment": ["MPL-2.0", "Artistic-2.0", "CC-BY-3.0", "CC-BY-4.0", "WTFPL"],
+    "exceptions": {
+      "elkjs": {
+        "license": "EPL-2.0",
+        "reason": "Graph layout used by Prisma Studio inside the prisma CLI (the migration image). Used unmodified; EPL-2.0 obligations apply only to modifications of elkjs itself."
+      }
+    }
+  },
+  "sources": {
+    "description": "Every package must come from the registry with a sha512 integrity hash. List here, with a reason, a package that must come from a git repository or a tarball URL.",
+    "exceptions": {}
+  }
+}

@@ -1,0 +1,11 @@
+# TLS at the edge (docs/deploy-vps.md): Caddy obtains and renews the
+# certificate for APP_DOMAIN by itself (ports 80 and 443 must reach the server
+# and the domain's DNS must point at it), redirects HTTP to HTTPS and adds
+# HSTS, the one security header the web image leaves to the TLS proxy.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	# Caddy ignores any X-Forwarded-For the client sends and sets it to the
+	# address that connected (no trusted_proxies configured).
+	reverse_proxy web:8080
+}

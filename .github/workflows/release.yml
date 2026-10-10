@@ -1,0 +1,89 @@
+name: Release
+
+# Release management (docs/ci-cd.md#releases). release-please reads the
+# Conventional Commits that reach main (the squashed pull request titles) and
+# keeps one release pull request open: the next semantic version and the
+# CHANGELOG.md entry. Merging it, after review and CI like any pull request,
+# tags vX.Y.Z (immutable, .github/rulesets/tags.json), publishes the GitHub
+# release with those notes and attaches the SBOM. Deploying a release is a
+# separate, manual step (deploy.yml with the tag).
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Release pull request and tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # the release branch, tags and releases
+      pull-requests: write # the release pull request
+      issues: write # its labels
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          # Pull requests opened with the default GITHUB_TOKEN start no
+          # workflows, so CI would never report on the release pull request.
+          # REQUIERE CONFIGURACIÓN: a GitHub App token or a fine-grained token
+          # (contents, pull requests and issues: write) in this secret. Without
+          # it, close and reopen the release pull request to start CI.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # The SBOM in two jobs: the one that installs the dependencies (their
+  # install scripts run) and runs the SBOM tool holds a read-only token; the
+  # one that holds the write token checks out and installs nothing, so no
+  # dependency code ever runs next to a token that can edit releases.
+  sbom:
+    name: Generate the SBOM
+    needs: release-please
+    if: ${{ needs.release-please.outputs.created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # CycloneDX, the production dependencies of every app (what the images
+      # ship), from the locked versions (docs/security.md#artifact-integrity).
+      - run: pnpm sbom:generate
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: dist/sbom/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 1
+
+  attach-sbom:
+    name: Attach the SBOM
+    needs: [release-please, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # upload the release asset
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sbom
+          path: sbom
+      - name: Upload it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: gh release upload "$TAG" sbom/sbom.cdx.json --clobber --repo "$GITHUB_REPOSITORY"

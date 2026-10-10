@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Generated at install/build time (prisma generate)
+apps/api/src/prisma/generated/
+
+# Test output and reports
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# Environment: only the examples are committed
+.env
+.env.*
+!.env.example
+*.env
+.envrc
+
+# Logs
+*.log
+logs/
+
+# Whole-repository dumps for AI tools (Repomix and the like): stale copies of
+# the code, local .env values included. Never committed.
+repomix-output.*
+
+# OS and editors (the shared VS Code settings are committed)
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

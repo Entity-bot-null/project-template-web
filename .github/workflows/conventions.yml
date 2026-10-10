@@ -1,0 +1,40 @@
+name: Conventions
+
+# The pull request's branch name and title (Conventional Commits). The title
+# becomes the squash commit on main, which release-please reads for the next
+# version and the changelog. A workflow of its own, so that editing the title
+# checks it again (`edited`) without re-running every gate of CI; its check,
+# "Conventions", is required next to "CI passed" (docs/ci-cd.md#required-check).
+# It runs on every event, never skipped by what changed: a skipped run would
+# count as a pass.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: conventions-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  conventions:
+    name: Conventions
+    # Dependency bots name their branches and titles their own way.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: node scripts/check-branch-name.mjs "$BRANCH"
+      - name: Pull request title follows Conventional Commits
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$TITLE" | pnpm exec commitlint --verbose
