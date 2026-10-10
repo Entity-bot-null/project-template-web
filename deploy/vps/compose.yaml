@@ -17,12 +17,28 @@ x-logging: &logging
     max-size: 10m
     max-file: '5'
 
+# Least privilege for every container (docs/security.md#container-images): no
+# Linux capability, no privilege gained through a setuid binary, a read-only
+# root filesystem (an intruder cannot change the code or plant a tool; only
+# the tmpfs listed per service is writable, and it is gone at restart), and a
+# bound on processes, so a runaway one cannot take the whole server down.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ['no-new-privileges:true']
+  pids_limit: 256
+
 services:
   proxy:
+    <<: *hardening
     logging: *logging
     # Tag for readers, digest for the server (Dependabot updates both).
     image: caddy:2.11.7-alpine@sha256:d76116d819d5162f464b0f2cd09bd28c568a86148c7bc539ce17c33eb22d8bbb
     restart: unless-stopped
+    # Ports 80 and 443 are privileged: the one capability Caddy keeps.
+    cap_add: [NET_BIND_SERVICE]
+    tmpfs: ['/tmp:size=16m']
+    mem_limit: 256m
     ports:
       - '80:80'
       - '443:443'
@@ -41,16 +57,23 @@ services:
   # Runs once per deployment (deploy.sh), before the rollout: prisma migrate
   # deploy with the migrator role. A profile keeps `up` from starting it.
   migrate:
+    <<: *hardening
     logging: *logging
     image: ${MIGRATE_IMAGE:?set by deploy.sh}
     profiles: [migrate]
+    tmpfs: ['/tmp:size=64m']
+    mem_limit: 512m
     env_file: migrate.env
     networks: [edge]
 
   api:
+    <<: *hardening
     logging: *logging
     image: ${API_IMAGE:?set by deploy.sh}
     restart: unless-stopped
+    tmpfs: ['/tmp:size=64m']
+    # Node.js sizes its heap from this limit.
+    mem_limit: 1g
     env_file: api.env
     environment:
       NODE_ENV: production
@@ -61,9 +84,16 @@ services:
     networks: [edge]
 
   web:
+    <<: *hardening
     logging: *logging
     image: ${WEB_IMAGE:?set by deploy.sh}
     restart: unless-stopped
+    # nginx writes its configuration from the templates at start
+    # (/etc/nginx/conf.d), and its pid and temporary files (/tmp), as user 101.
+    tmpfs:
+      - /tmp:size=32m,uid=101,gid=101
+      - /etc/nginx/conf.d:size=1m,uid=101,gid=101
+    mem_limit: 256m
     env_file: web.env
     environment:
       API_UPSTREAM: http://api:3000

@@ -83,7 +83,8 @@ COPY --from=prod-deps /repo/apps/api/node_modules ./apps/api/node_modules
 COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
 COPY --from=build /repo/apps/api/dist ./apps/api/dist
 WORKDIR /app/apps/api
-# Never root at runtime.
+# Never root at runtime. The files above stay root's (no --chown): the node
+# user can read and run the code, never change it.
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \

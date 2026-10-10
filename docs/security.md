@@ -414,6 +414,18 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   code and no development tools. Every image applies the operating system fixes published after
   its base was built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web
   image), so a fixed advisory in the base does not wait for the next base release.
+- The files of an image belong to root: the user it runs as can read and run them, never change
+  them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
+  - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`, and
+    nginx's generated configuration), emptied at every restart;
+  - no Linux capability (`cap_drop: [ALL]`), except Caddy's `NET_BIND_SERVICE` for ports 80
+    and 443;
+  - `no-new-privileges`, so a setuid binary grants nothing;
+  - limits on processes and memory, so one runaway container cannot take the server down.
+
+  An intruder in a container therefore cannot change the application, plant a persistent tool or
+  gain privileges inside it.
+
 - CI scans every image with Trivy (`docker-images.yml`): a HIGH or CRITICAL advisory **with a
   published fix** fails the build. Fix it by rebuilding (newer base patches), updating the base image
   (Dependabot proposes it weekly) or updating the dependency; unfixed advisories are reported by the
