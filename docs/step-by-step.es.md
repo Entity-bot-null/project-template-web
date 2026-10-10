@@ -647,6 +647,7 @@ de inicio de sesión con un certificado válido (el candado).
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gates                                                       | lo mismo que un CI en rojo: abre el log del job que falla ([troubleshooting.md](troubleshooting.md))                                                                                              |
 | Publish: "The registry is ghcr.io"                          | `IMAGE_PREFIX` tiene que ser `ghcr.io/<owner>/<repo>` en minúsculas (7.7)                                                                                                                         |
+| Publish: "Scan the pushed image"                            | un aviso HIGH o CRITICAL con arreglo en la imagen publicada, como en el escaneo de imágenes de los gates: actualiza la imagen base o la dependencia ([security.md](security.md#container-images)) |
 | Environment settings                                        | falta una variable o un secreto del entorno (7.7)                                                                                                                                                 |
 | Deploy on the server: `Permission denied (publickey)`       | la clave pública no está en `/home/deploy/.ssh/authorized_keys`, o `DEPLOY_SSH_KEY` tiene la clave privada equivocada (7.4)                                                                       |
 | `Host key verification failed`                              | `DEPLOY_KNOWN_HOSTS` no coincide con el servidor (7.4)                                                                                                                                            |
@@ -677,9 +678,9 @@ todavía: las bases de datos de producción no tienen cuentas.
    aprobación: un revisor abre la ejecución en GitHub → **Review deployments** → **Approve and
    deploy**.
 
-**Comprueba:** las dos ejecuciones terminan en verde; producción no publica nada nuevo (reutiliza las
-imágenes de staging: "already published: reused"); https://app.acme.com abre la página de inicio de
-sesión.
+**Comprueba:** las dos ejecuciones terminan en verde; producción no construye nada (su resumen lista
+los tres digests de la ejecución de staging, "built and scanned by run <su id>");
+https://app.acme.com abre la página de inicio de sesión.
 
 ### 8.4 Crea el primer administrador
 

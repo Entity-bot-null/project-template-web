@@ -35,8 +35,12 @@ jobs:
     name: Resolve the commit
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # the image records of earlier runs
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      records: ${{ steps.records.outputs.records }}
     steps:
       # The checks below live in this file: a copy edited on another branch
       # could drop them, which is why the environments must also allow main
@@ -71,6 +75,17 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "Deploying $REF = $sha" >> "$GITHUB_STEP_SUMMARY"
+      # Production runs the images staging ran, never a rebuild: the digests an
+      # earlier run of this workflow from main built, scanned and recorded for
+      # this commit. Never the tag <image>:<sha>, which any workflow with
+      # packages: write can push, from any branch (scripts/recorded-images.mjs).
+      - name: Earlier builds of this commit
+        if: vars.DEPLOY_TARGET == 'vps'
+        id: records
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/recorded-images.mjs "$SHA" api api-migrate web
 
   gates:
     name: Gates
@@ -81,9 +96,10 @@ jobs:
 
   # --- Reference target: one Linux server with Docker -------------------------
   # Opt in with the repository variable DEPLOY_TARGET=vps (docs/deploy-vps.md).
-  # The images go to ghcr.io (IMAGE_PREFIX) once per commit; the server pulls
-  # them by digest with this run's short-lived token, migrates, rolls out and
-  # rolls back on its own (deploy/vps/deploy.sh).
+  # The images go to ghcr.io (IMAGE_PREFIX) once per commit, are scanned there
+  # and recorded by digest (the artifacts image-<image>-<sha>); the server
+  # pulls those digests with this run's short-lived token, migrates, rolls out
+  # and rolls back on its own (deploy/vps/deploy.sh).
 
   publish:
     name: Publish ${{ matrix.image }}
@@ -94,6 +110,7 @@ jobs:
     permissions:
       contents: read
       packages: write # push to ghcr.io with this run's token
+      actions: read # download the record of an earlier run
     strategy:
       matrix:
         include:
@@ -107,7 +124,7 @@ jobs:
             dockerfile: apps/web/Dockerfile
             target: runtime
     env:
-      IMAGE: ${{ vars.IMAGE_PREFIX }}/${{ matrix.image }}:${{ needs.resolve.outputs.sha }}
+      IMAGE_NAME: ${{ matrix.image }}
       IMAGE_PREFIX: ${{ vars.IMAGE_PREFIX }}
     steps:
       - name: The registry is ghcr.io
@@ -116,42 +133,102 @@ jobs:
             echo "::error title=IMAGE_PREFIX::Set the repository variable IMAGE_PREFIX to ghcr.io/<owner>/<repository>, lowercase (docs/deploy-vps.md)."
             exit 1
           fi
+      # First: a checkout empties the directory it checks out into.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
+      - name: Earlier build of this commit
+        id: recorded
+        env:
+          RECORDS: ${{ needs.resolve.outputs.records }}
+        run: echo "run-id=$(jq -r --arg image "$IMAGE_NAME" '.[$image] // empty' <<< "$RECORDS")" >> "$GITHUB_OUTPUT"
+      # Staging recorded this commit's image already: production gets the very
+      # same digest, never a rebuild.
+      - name: Reuse it
+        if: steps.recorded.outputs.run-id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: image-${{ matrix.image }}-${{ needs.resolve.outputs.sha }}
+          path: recorded
+          run-id: ${{ steps.recorded.outputs.run-id }}
+          github-token: ${{ github.token }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.recorded.outputs.run-id == ''
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: steps.recorded.outputs.run-id == ''
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # Staging published this commit already: production gets the very same
-      # images (digests), never a rebuild.
-      - name: Already published?
-        id: existing
-        run: |
-          if docker buildx imagetools inspect "$IMAGE" > /dev/null 2>&1; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "$IMAGE already published: reused."
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
+      # The day is the cache key of the operating system upgrade in the
+      # Dockerfiles (OS_UPGRADE_DATE), as in the gates' build.
+      - name: Day of the operating system fixes
+        id: day
+        if: steps.recorded.outputs.run-id == ''
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # Same context, target and build cache as the scanned build of the
-      # gates: every layer is a cache hit.
+      # gates: the layers are cache hits.
       - name: Build and push
-        if: steps.existing.outputs.found != 'true'
+        id: build
+        if: steps.recorded.outputs.run-id == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
           push: true
-          build-args: APP_RELEASE=${{ needs.resolve.outputs.sha }}
-          tags: ${{ env.IMAGE }}
+          build-args: |
+            APP_RELEASE=${{ needs.resolve.outputs.sha }}
+            OS_UPGRADE_DATE=${{ steps.day.outputs.date }}
+          tags: ${{ vars.IMAGE_PREFIX }}/${{ matrix.image }}:${{ needs.resolve.outputs.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           provenance: mode=max
           sbom: true
+      # The digest this job pushed, as the build reports it, or the recorded
+      # one: never looked up from the tag.
+      - name: The image this run deploys
+        id: image
+        env:
+          RECORDED_RUN: ${{ steps.recorded.outputs.run-id }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [ -n "$RECORDED_RUN" ]; then
+            ref=$(cat "recorded/$IMAGE_NAME.ref")
+            origin="built and scanned by run $RECORDED_RUN"
+          else
+            ref="$IMAGE_PREFIX/$IMAGE_NAME@$BUILT_DIGEST"
+            origin="built here"
+          fi
+          if [[ ! "$ref" =~ ^"$IMAGE_PREFIX/$IMAGE_NAME"@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error title=Image::Not an image of $IMAGE_PREFIX pinned by digest: $ref ($origin). A record made under another IMAGE_PREFIX cannot be reused: deploy a newer commit."
+            exit 1
+          fi
+          mkdir -p image
+          printf '%s\n' "$ref" > "image/$IMAGE_NAME.ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE_NAME: $ref ($origin)" >> "$GITHUB_STEP_SUMMARY"
+      # The pushed digest itself, not the gates' local build: what ships is
+      # what was scanned (docs/security.md#container-images).
+      - name: Scan the pushed image
+        if: steps.recorded.outputs.run-id == ''
+        env:
+          REF: ${{ steps.image.outputs.ref }}
+        run: |
+          docker pull --quiet "$REF"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "$(node scripts/tool-image.mjs trivy)" \
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$REF"
+      # Read by this run's release job, and by later deployments of this
+      # commit (production after staging) through scripts/recorded-images.mjs.
+      - name: Record it
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-${{ matrix.image }}-${{ needs.resolve.outputs.sha }}
+          path: image/${{ matrix.image }}.ref
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true # a re-run of this job records again
 
   release-vps:
     name: Release to ${{ inputs.environment }} (server)
@@ -162,7 +239,7 @@ jobs:
     environment: ${{ inputs.environment }}
     permissions:
       contents: read
-      packages: read # read the digests; the server pulls with this token
+      packages: read # the server pulls the images with this run's token
     env:
       SHA: ${{ needs.resolve.outputs.sha }}
       TARGET_ENVIRONMENT: ${{ inputs.environment }}
@@ -213,22 +290,24 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      # The images publish recorded in this run, before the approval: what the
+      # reviewers saw in the run's summary is what ships. Never a lookup of
+      # the tag, which could have moved while the run waited.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-      - name: Resolve the digests
+          pattern: image-*-${{ needs.resolve.outputs.sha }}
+          path: images
+          merge-multiple: true
+      - name: The digests to deploy
         id: digests
         run: |
           for image in api api-migrate web; do
-            digest=$(docker buildx imagetools inspect "$IMAGE_PREFIX/$image:$SHA" --format '{{json .Manifest}}' | jq -r '.digest')
-            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error::No digest for $IMAGE_PREFIX/$image:$SHA"
+            ref=$(cat "images/$image.ref" 2> /dev/null || true)
+            if [[ ! "$ref" =~ ^"$IMAGE_PREFIX/$image"@sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::No recorded digest for $image in this run (got \"$ref\")."
               exit 1
             fi
-            echo "${image//-/_}=$IMAGE_PREFIX/$image@$digest" >> "$GITHUB_OUTPUT"
-            echo "$image: $IMAGE_PREFIX/$image@$digest" >> "$GITHUB_STEP_SUMMARY"
+            echo "${image//-/_}=$ref" >> "$GITHUB_OUTPUT"
           done
       # deploy.sh records the running release, migrates, rolls out and goes
       # back by itself when the rollout fails. The token travels on stdin,
@@ -266,11 +345,12 @@ jobs:
       # (never inputs.ref, which can move), in this order
       # (docs/ci-cd.md#deployment):
       #   1. images: push them once per commit (docker-images.yml with
-      #      push: true); when <IMAGE_PREFIX>/api:<sha> already exists (pushed
-      #      for staging), reuse it: production gets the digests staging
-      #      verified, never a rebuild. Resolve each digest
-      #      (docker buildx imagetools inspect <image>:<sha>) and deploy
-      #      <image>@<digest> from here on;
+      #      push: true), scan the pushed digests and record them; production
+      #      reuses the digests staging recorded, never a rebuild. Take each
+      #      digest from the build's output or that record, never from the
+      #      tag <image>:<sha>, which any workflow with packages: write can
+      #      push (the VPS jobs above do this, scripts/recorded-images.mjs);
+      #      deploy <image>@<digest> from here on;
       #   2. record the digests running before this deployment: they are the
       #      rollback target;
       #   3. run the api-migrate image against the environment's database; if

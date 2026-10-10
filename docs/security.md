@@ -454,9 +454,11 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
 - **CODEOWNERS** lists the security-sensitive paths, the gates included (`.github/`, hooks,
   scripts): owning the checks is what keeps them from being edited away in the same pull request.
 - **Deploy** (`deploy.yml`) resolves the requested ref to a commit, refuses one that is not on
-  `main`, re-runs every gate on that exact commit and releases that commit only. The workflow
-  file's own checks can be edited on a branch, so the environments must also allow deployments
-  from `main` only (docs/ci-cd.md#repository-settings-requiere-configuración).
+  `main`, re-runs every gate on that exact commit and releases that commit only, with the image
+  digests its own build reported or an earlier run of it from `main` recorded: never the registry
+  tag `<image>:<sha>`, which any workflow with `packages: write` can push from any branch. The
+  workflow file's own checks can be edited on a branch, so the environments must also allow
+  deployments from `main` only (docs/ci-cd.md#repository-settings-requiere-configuración).
 
 ## Static analysis
 
@@ -503,14 +505,14 @@ reaches; authenticated scanning is per project (OPCIONAL: a ZAP context with a t
 
 ## Artifact integrity
 
-| What                                    | Status                              | How                                                                                                                       |
-| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                      |
-| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)  |
-| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image |
-| Scanned image = shipped image           | Obligatorio                         | The push reuses the scanned build's cache (same layers); deployments reference the digest, never a mutable tag            |
-| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud |
-| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                   |
+| What                                    | Status                              | How                                                                                                                                                    |
+| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                                                   |
+| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)                               |
+| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image                              |
+| Scanned image = shipped image           | Obligatorio                         | The VPS deployment scans the digest it pushed and deploys that digest from the run's record; production reuses staging's record, never the mutable tag |
+| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud                              |
+| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                                                |
 
 Signing with a separate tool (cosign with keys) is not included: GitHub attestations are already
 Sigstore signatures, verifiable without managing keys. To see what a pushed image carries:

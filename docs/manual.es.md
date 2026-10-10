@@ -670,10 +670,11 @@ entorno protegido, donde el job de release falla a propósito hasta que se escri
 plataforma. Impleméntalo en este orden (los comentarios del fichero lo repiten):
 
 1. Publica las imágenes una vez por commit (`docker-images.yml` con `push: true`, después del paso de
-   login al registro marcado en ese fichero); reutilízalas si ya existen, para que producción
-   ejecute lo que staging verificó.
-2. Resuelve sus digests (`docker buildx imagetools inspect <imagen>:<sha>`) y despliega solo
-   `<imagen>@<digest>`.
+   login al registro marcado en ese fichero), escanea los digests que informa la publicación y
+   guárdalos; reutiliza los digests que guardó staging, para que producción ejecute lo que staging
+   verificó.
+2. Despliega solo `<imagen>@<digest>`, con los digests del build o de ese registro: nunca los
+   busques por el tag `<imagen>:<sha>`, que cualquier workflow con `packages: write` puede publicar.
 3. Guarda los digests que estaban corriendo antes del cambio: son el destino del rollback.
 4. Ejecuta la imagen `api-migrate` contra la base de datos del entorno; para si falla.
 5. Despliega `api` y después `web`, esperando a que estén ready.

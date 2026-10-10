@@ -229,7 +229,9 @@ pull request; exceptions are listed with their reason in `.github/zizmor.yml`:
 - **No privileged triggers.** No `pull_request_target` and no `workflow_run` consuming artifacts of
   pull request runs: code from a fork never runs with secrets or a write token. Artifacts
   (coverage, reports) are uploaded for people, never downloaded by another workflow; the SBOM
-  passes only between two jobs of the same release run.
+  passes only between two jobs of the same release run. The one artifact read across runs is the
+  Deploy workflow's record of the images it published, and only from a run of that workflow from a
+  commit on `main` (`scripts/recorded-images.mjs`).
 - **Secrets only where used.** Pull request jobs use none. Deployment secrets live in the GitHub
   environments, which only `main` can deploy to.
 - **Everything pinned** (below), and caches are keyed by the lockfile; caches written by pull
@@ -274,37 +276,41 @@ Two release paths follow the gates:
 
 - **The reference target, one Linux server with Docker** (repository variable
   `DEPLOY_TARGET=vps`, [deploy-vps.md](deploy-vps.md)), implemented: `publish` pushes the three
-  images to ghcr.io once per commit (production reuses the ones staging ran), and `release-vps`,
-  in the GitHub environment, checks that the server's copy of `deploy/vps` matches the release,
-  runs `deploy.sh` on the server over SSH (pull by digest, migrate, roll out, back to the running
+  images to ghcr.io once per commit, scans the digests it pushed and records them in the run
+  (production reuses the digests staging recorded), and `release-vps`, in the GitHub environment,
+  checks that the server's copy of `deploy/vps` matches the release, runs `deploy.sh` on the
+  server over SSH with the recorded digests (pull by digest, migrate, roll out, back to the running
   release when the rollout fails), runs the smoke test and calls `rollback.sh` when it fails.
 - **Any other platform:** the `release` job fails on purpose until it is implemented for it
   (REQUIERE CONFIGURACIÓN), in the order below.
 
 The pipeline from a merged commit to production, and who does each step:
 
-| Step                          | VPS target (`DEPLOY_TARGET=vps`)                                 | Any other platform (REQUIERE CONFIGURACIÓN)         |
-| ----------------------------- | ---------------------------------------------------------------- | --------------------------------------------------- |
-| 1. Build                      | Gates (`pnpm build`, the three images)                           | the same                                            |
-| 2. Test                       | Gates (unit, component, integration, E2E, coverage)              | the same                                            |
-| 3. Security gates             | Gates (audit, dependency policy, secrets, SAST, Trivy)           | the same                                            |
-| 4. Publish the images         | `publish`: ghcr.io, once per commit                              | `docker-images.yml` with `push: true`               |
-| 5. Deploy by immutable digest | `release-vps` hands `<image>@<digest>` to `deploy.sh`            | the release job                                     |
-| 6. Migrate (expand/contract)  | `deploy.sh` runs the `api-migrate` image                         | the release job runs the `api-migrate` image        |
-| 7. Deploy the API             | `deploy.sh`, waiting for readiness                               | the release job                                     |
-| 8. Deploy the web image       | `deploy.sh`                                                      | the release job                                     |
-| 9. Smoke test                 | `scripts/smoke-test.mjs` in `release-vps`                        | `scripts/smoke-test.mjs` in the release job         |
-| 10. Rollback on failure       | `deploy.sh` on a failed rollout, `rollback.sh` on a failed smoke | the release job, or by hand ([Rollback](#rollback)) |
+| Step                          | VPS target (`DEPLOY_TARGET=vps`)                                   | Any other platform (REQUIERE CONFIGURACIÓN)         |
+| ----------------------------- | ------------------------------------------------------------------ | --------------------------------------------------- |
+| 1. Build                      | Gates (`pnpm build`, the three images)                             | the same                                            |
+| 2. Test                       | Gates (unit, component, integration, E2E, coverage)                | the same                                            |
+| 3. Security gates             | Gates (audit, dependency policy, secrets, SAST, Trivy)             | the same                                            |
+| 4. Publish the images         | `publish`: ghcr.io, once per commit, scanned and recorded          | `docker-images.yml` with `push: true`               |
+| 5. Deploy by immutable digest | `release-vps` hands the recorded `<image>@<digest>` to `deploy.sh` | the release job                                     |
+| 6. Migrate (expand/contract)  | `deploy.sh` runs the `api-migrate` image                           | the release job runs the `api-migrate` image        |
+| 7. Deploy the API             | `deploy.sh`, waiting for readiness                                 | the release job                                     |
+| 8. Deploy the web image       | `deploy.sh`                                                        | the release job                                     |
+| 9. Smoke test                 | `scripts/smoke-test.mjs` in `release-vps`                          | `scripts/smoke-test.mjs` in the release job         |
+| 10. Rollback on failure       | `deploy.sh` on a failed rollout, `rollback.sh` on a failed smoke   | the release job, or by hand ([Rollback](#rollback)) |
 
 Steps 1 to 3 run on the exact commit being deployed (the `gates` job of `deploy.yml`). For any
 other platform, implement the release job in this order (the VPS target follows it too):
 
 1. **Images, once per commit.** Push them (`docker-images.yml` with `push: true`, tags
-   `<IMAGE_PREFIX>/<image>:<sha>`). When the images of that SHA already exist (pushed for staging),
-   reuse them: production must run the digests staging verified, not a rebuild (a rebuild picks up
-   newer base image patches and is a different artifact). Resolve each digest
-   (`docker buildx imagetools inspect <image>:<sha>`) and deploy `<image>@<digest>` from here on;
-   verify its attestation first where signed attestations are enabled
+   `<IMAGE_PREFIX>/<image>:<sha>`), take each digest from the build's output, scan that digest and
+   record it. Production must run the digests staging verified, not a rebuild (a rebuild picks up
+   newer base image patches and is a different artifact): reuse the digests staging recorded. Never
+   look a digest up from the tag: any workflow of the repository with `packages: write`, on any
+   branch, can push `<image>:<sha>`, and a lookup after the approval wait would ship whatever it
+   points to then. The VPS jobs do this with an artifact per image, trusted only from a run of
+   `deploy.yml` from a commit on `main` (`scripts/recorded-images.mjs`). Deploy `<image>@<digest>`
+   from here on; verify its attestation first where signed attestations are enabled
    (docs/security.md#artifact-integrity).
 2. **Record the digests running now**, before changing anything: they are the rollback target.
 3. **Migrate:** run the `api-migrate` image against the environment's database
