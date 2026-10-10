@@ -16,6 +16,14 @@
       "labels": ["dependency_name", "http_response_status_code", "outcome"]
     },
     "app_server_errors_total": { "type": "counter", "labels": ["error_origin", "http_route"] },
+    "app_web_vitals_cls": {
+      "type": "histogram",
+      "labels": ["page_route", "web_vital_navigation_type", "web_vital_rating"]
+    },
+    "app_web_vitals_duration_seconds": {
+      "type": "histogram",
+      "labels": ["page_route", "web_vital_name", "web_vital_navigation_type", "web_vital_rating"]
+    },
     "db_client_connection_count": {
       "type": "gauge",
       "labels": [

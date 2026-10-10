@@ -245,7 +245,9 @@ export class NotesController {
 ```
 
 Admin-only routes: `@Auth('admin')` on the handler or the controller. Public routes (rare):
-leave `@Auth()` out and say why in a comment.
+leave `@Auth()` out, say why in a comment, and add the route to the public ones of
+`apps/api/src/openapi/openapi.spec.ts`, which fails on any other route without the bearer
+requirement.
 
 **4. Module** (`notes.module.ts`), then add `NotesModule` to the `imports` of
 `apps/api/src/app.module.ts`:

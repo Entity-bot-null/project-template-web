@@ -16,6 +16,7 @@ import {
 import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { GracefulShutdown, ShutdownStateModule } from './lifecycle/shutdown.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { TelemetryModule } from './telemetry/telemetry.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Module({
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module.js';
     AuthModule,
     UsersModule,
     HealthModule,
+    TelemetryModule,
   ],
   providers: [
     // In the root module so its destroy hook runs first: requests in flight
