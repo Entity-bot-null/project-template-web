@@ -1,7 +1,9 @@
 import { context, metrics, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
+import { suppressTracing } from '@opentelemetry/core';
 import { AggregationTemporality, InMemoryMetricExporter } from '@opentelemetry/sdk-metrics';
 import { InMemorySpanExporter, type Span } from '@opentelemetry/sdk-trace-base';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { recordCacheRead, recordServerError } from './metrics.js';
@@ -129,6 +131,95 @@ describe('startOpenTelemetry', () => {
   });
 });
 
+describe('the resource every span and metric carries', () => {
+  async function resourceAttributes() {
+    const spans = new InMemorySpanExporter();
+    const telemetry = startOpenTelemetry({
+      endpoint: 'http://127.0.0.1:4318',
+      serviceName: 'api',
+      environment: 'production',
+      release: 'abc1234',
+      metricExportIntervalMs: 60_000,
+      spanExporter: spans,
+      metricExporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE),
+    });
+    trace.getTracer('spec').startSpan('work').end();
+    await telemetry.flush();
+    const [span] = spans.getFinishedSpans();
+    await span?.resource.waitForAsyncAttributes?.();
+    await telemetry.shutdown();
+    return span?.resource.attributes ?? {};
+  }
+
+  it("names the process, never the machine it runs on (a developer's computer name, its id)", async () => {
+    const attributes = await resourceAttributes();
+    expect(attributes['service.instance.id']).toEqual(expect.any(String));
+    expect(Object.keys(attributes).filter((key) => key.startsWith('host.'))).toEqual([]);
+  });
+
+  it('takes a host name the operator sets on purpose (OTEL_RESOURCE_ATTRIBUTES)', async () => {
+    vi.stubEnv('OTEL_RESOURCE_ATTRIBUTES', 'host.name=vps-1');
+    try {
+      expect(await resourceAttributes()).toMatchObject({ 'host.name': 'vps-1' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("the telemetry's own requests", () => {
+  it('stay out of the outgoing request metrics, which keep counting the application', async () => {
+    // The exporters (OTLP over node:http) and the error tracker (fetch) send
+    // with tracing suppressed, as the SDK's export path does. Counted, every
+    // export would show the collector as an external service on the dashboards.
+    const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+    const telemetry = startOpenTelemetry({
+      endpoint: 'http://127.0.0.1:4318',
+      serviceName: 'api',
+      environment: 'test',
+      release: 'r1',
+      metricExportIntervalMs: 60_000,
+      spanExporter: new InMemorySpanExporter(),
+      metricExporter,
+    });
+    const server = createServer((_req, res) => res.end('ok'));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    // Loaded after the SDK started, as the application and the exporters load it.
+    const http = createRequire(import.meta.url)('http') as typeof import('node:http');
+    const get = () =>
+      new Promise<void>((resolve, reject) => {
+        http
+          .get(`http://127.0.0.1:${port}/`, (res) => {
+            res.resume();
+            res.on('end', resolve);
+          })
+          .on('error', reject);
+      });
+    const own = <T>(send: () => Promise<T>) =>
+      context.with(suppressTracing(context.active()), send);
+    try {
+      await get();
+      await (await fetch(`http://127.0.0.1:${port}/`)).text();
+      await own(get);
+      await own(async () => (await fetch(`http://127.0.0.1:${port}/`)).text());
+      await telemetry.flush();
+
+      const points = metricExporter
+        .getMetrics()
+        .flatMap((resource) => resource.scopeMetrics)
+        .flatMap((scope) => scope.metrics)
+        .filter((metric) => metric.descriptor.name === 'http.client.request.duration')
+        .flatMap((metric) => metric.dataPoints as { value: { count: number } }[]);
+      const requests = points.reduce((total, point) => total + point.value.count, 0);
+      expect(requests).toBe(2);
+    } finally {
+      server.close();
+      await telemetry.shutdown();
+    }
+  });
+});
+
 describe('exported spans of a failure', () => {
   it('carry no credential in their events (exceptions included) or status message', async () => {
     const spans = new InMemorySpanExporter();
@@ -203,6 +294,50 @@ describe('RedactingSpanProcessor', () => {
       'http.url': 'http://host/x',
       'messaging.payload': 'Bearer [REDACTED]',
       'http.response.status_code': 200,
+    });
+  });
+
+  it('redacts every string of an array, and masks values under a sensitive name whole', () => {
+    // Header capture records string arrays (http.request.header.<name>), and
+    // a value set under a sensitive name has no "key=value" shape to find.
+    const attributes: Record<string, unknown> = {
+      'http.request.header.authorization': ['Bearer abcdef123456'],
+      'http.response.header.set-cookie': ['refresh_token=abc; Path=/; HttpOnly'],
+      'messaging.batch.payloads': ['Bearer abcdef123456', 'plain'],
+      'app.user.password': 'hunter2',
+      'app.api_key': 'k-123',
+      'http.request.header.accept': ['application/json'],
+      'gen_ai.usage.input_tokens': 42,
+      'app.retry.attempts': [1, 2],
+    };
+    const event = {
+      name: 'retry',
+      time: [0, 0],
+      attributes: { 'app.session_id': 'abc123', 'app.notes': ['token=t0k3n', 'fine'] },
+    };
+    const span = {
+      attributes,
+      events: [event],
+      status: { code: SpanStatusCode.UNSET },
+      setAttribute(key: string, value: unknown) {
+        attributes[key] = value;
+      },
+    } as unknown as Span;
+    new RedactingSpanProcessor().onEnding(span);
+    expect(attributes).toEqual({
+      'http.request.header.authorization': '[REDACTED]',
+      'http.response.header.set-cookie': '[REDACTED]',
+      'messaging.batch.payloads': ['Bearer [REDACTED]', 'plain'],
+      'app.user.password': '[REDACTED]',
+      'app.api_key': '[REDACTED]',
+      'http.request.header.accept': ['application/json'],
+      // Counts are not credentials: numbers keep their value under any name.
+      'gen_ai.usage.input_tokens': 42,
+      'app.retry.attempts': [1, 2],
+    });
+    expect(event.attributes).toEqual({
+      'app.session_id': '[REDACTED]',
+      'app.notes': ['token=[REDACTED]', 'fine'],
     });
   });
 

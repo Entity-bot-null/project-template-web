@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
-import { type AttributeValue, metrics, type ObservableResult } from '@opentelemetry/api';
+import { type AttributeValue, context, metrics, type ObservableResult } from '@opentelemetry/api';
+import { isTracingSuppressed } from '@opentelemetry/core';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
@@ -12,7 +13,6 @@ import {
   defaultResource,
   detectResources,
   envDetector,
-  hostDetector,
   resourceFromAttributes,
   serviceInstanceIdDetector,
 } from '@opentelemetry/resources';
@@ -31,7 +31,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { OpenTelemetry as RedisTelemetry } from '@redis/client';
 import { register as registerEsmHooks } from 'import-in-the-middle/register-hooks.mjs';
-import { REDACTED, redactText, redactUrl } from './redact.js';
+import { isSensitiveKey, REDACTED, redactText, redactUrl } from './redact.js';
 import type { Telemetry } from './telemetry.js';
 
 // The OpenTelemetry SDK, imported only when telemetry is on (telemetry.ts).
@@ -65,14 +65,32 @@ export function signalUrl(endpoint: string, signal: 'traces' | 'metrics'): strin
   return new URL(`v1/${signal}`, endpoint.endsWith('/') ? endpoint : `${endpoint}/`).toString();
 }
 
+/**
+ * A request the telemetry sends about itself: the SDK exports with tracing
+ * suppressed (OTLP over node:http), and so does the error tracker (fetch).
+ * The HTTP and fetch instrumentations would still count them in
+ * http.client.request.duration, and the collector would show up as an
+ * external service on the dashboards.
+ */
+export function isTelemetryRequest(): boolean {
+  return isTracingSuppressed(context.active());
+}
+
 /** Health probes run every few seconds: never traced, never in the request metrics. */
 export function isHealthProbe(request: IncomingMessage): boolean {
   return request.url?.toLowerCase().startsWith('/api/health/') ?? false;
 }
 
 export function startOpenTelemetry(options: OpenTelemetryOptions): Telemetry {
+  // The process is identified by a random service.instance.id (the `instance`
+  // label the dashboards and alerts group by). No host detector: in a
+  // container the host name is the container's id, and on a developer's
+  // computer it is often the person's name, sent with a stable machine id to
+  // whatever backend the endpoint points at. An operator who wants the
+  // server's name sets OTEL_RESOURCE_ATTRIBUTES=host.name=<name>, which wins
+  // over the detected values.
   const resource = defaultResource()
-    .merge(detectResources({ detectors: [envDetector, hostDetector, serviceInstanceIdDetector] }))
+    .merge(detectResources({ detectors: [serviceInstanceIdDetector, envDetector] }))
     .merge(
       resourceFromAttributes({
         [ATTR_SERVICE_NAME]: options.serviceName,
@@ -109,13 +127,16 @@ export function startOpenTelemetry(options: OpenTelemetryOptions): Telemetry {
   metrics.setGlobalMeterProvider(meterProvider);
 
   const instrumentations = [
-    new HttpInstrumentation({ ignoreIncomingRequestHook: isHealthProbe }),
+    new HttpInstrumentation({
+      ignoreIncomingRequestHook: isHealthProbe,
+      ignoreOutgoingRequestHook: isTelemetryRequest,
+    }),
     // Routers and handlers; the dozen middleware layers of every request
     // (helmet, cookies, body parsing) would only add noise.
     new ExpressInstrumentation({ ignoreLayersType: [ExpressLayerType.MIDDLEWARE] }),
     // Statements are recorded with their placeholders ($1), never values.
     new PgInstrumentation({ requireParentSpan: true, enhancedDatabaseReporting: false }),
-    new UndiciInstrumentation(),
+    new UndiciInstrumentation({ ignoreRequestHook: isTelemetryRequest }),
     new RuntimeNodeInstrumentation(),
   ];
   interceptEsmImports(
@@ -193,11 +214,12 @@ const URL_ATTRIBUTES = new Set(['url.full', 'http.url', 'http.target', 'url.quer
 
 /**
  * The last word on what a span may carry: query strings and URL credentials
- * are removed (tokens and personal data travel there), and every string
- * attribute is redacted like a log line: the span's own, those of its events
- * (an exception event carries the error's message and stack trace, written by
- * whatever threw it) and its status message. Runs in onEnding, the last moment
- * a span can still be changed, so it covers every instrumentation.
+ * are removed (tokens and personal data travel there), values under a
+ * sensitive name are masked whole, and every other string (in string arrays
+ * too) is redacted like a log line: the span's attributes, those of its
+ * events (an exception event carries the error's message and stack trace,
+ * written by whatever threw it) and its status message. Runs in onEnding, the
+ * last moment a span can still be changed, so it covers every instrumentation.
  */
 export class RedactingSpanProcessor implements SpanProcessor {
   onStart(): void {
@@ -240,13 +262,31 @@ export class RedactingSpanProcessor implements SpanProcessor {
   }
 }
 
-/** An attribute value safe to export: URLs without credentials or query, any other text redacted. */
+/**
+ * An attribute value safe to export. Text only: a string, or each string of
+ * an array (header capture records string arrays). A value under a sensitive
+ * name (authorization, cookie, password, token, api key...: the log
+ * redaction's list) is masked whole, since a bare secret has no "key=value"
+ * shape to find; URLs lose their credentials and query; any other text is
+ * redacted like a log line. Numbers and booleans carry no credential and keep
+ * their value, so counts named "...tokens" stay usable.
+ */
 function redactAttribute(
   key: string,
   value: AttributeValue | undefined,
 ): AttributeValue | undefined {
-  if (typeof value !== 'string') return value;
-  if (key === 'url.query') return REDACTED;
+  const isText =
+    typeof value === 'string' ||
+    (Array.isArray(value) && value.some((item) => typeof item === 'string'));
+  if (!isText) return value;
+  if (key === 'url.query' || isSensitiveKey(key)) return REDACTED;
+  if (typeof value === 'string') return redactAttributeText(key, value);
+  return (value as (string | null | undefined)[]).map((item) =>
+    typeof item === 'string' ? redactAttributeText(key, item) : item,
+  );
+}
+
+function redactAttributeText(key: string, value: string): string {
   if (URL_ATTRIBUTES.has(key)) {
     return key === 'http.target' ? (value.split('?', 1)[0] ?? '') : redactUrl(value);
   }
