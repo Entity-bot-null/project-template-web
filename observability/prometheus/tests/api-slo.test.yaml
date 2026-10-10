@@ -1,0 +1,281 @@
+# Unit tests of api-slo.yaml with synthetic series: `pnpm observability:check`
+# runs them with promtool (docs/observability.md#dashboards-and-alerts-as-code).
+# Series are cumulative counters, as Prometheus stores the API's OTLP metrics;
+# "0+600x120" is 0, 600, 1200... one value per interval.
+rule_files:
+  - ../rules/api-slo.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # 10 % of the responses are 5xx (60 of 600 a minute): a burn rate of 100.
+  - name: availability, fast burn pages
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+540x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+60x120'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{slo="api-availability"}
+        eval_time: 70m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate5m{slo="api-availability", job="api", deployment_environment_name="production"}'
+            value: 0.1
+      - expr: slo:sli_requests:rate1h{slo="api-availability"}
+        eval_time: 70m
+        exp_samples:
+          - labels: 'slo:sli_requests:rate1h{slo="api-availability", job="api", deployment_environment_name="production"}'
+            value: 10
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: api-availability
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'API errors are burning the availability budget fast (api, production)'
+              description: '10% of the responses in the last hour were 5xx: at this rate the 30-day error budget of the 99.9 % availability SLO runs out in two days or less.'
+              runbook_url: docs/incident-response.md#5-high-5xx-rate
+              dashboard_uid: app-slo
+
+  # The same errors, stopped 10 minutes ago: the hour still looks bad, the
+  # last 5 minutes do not, so nobody is paged for a burn that is over.
+  - name: availability, a burn that stopped does not page
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+540x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+60x60 3600x60'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts: []
+
+  # Half the responses fail, but one request a minute is 60 an hour, below
+  # the 100 an SLO alert needs: the uptime checks cover such low traffic.
+  - name: availability, low traffic does not page
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+0.5x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+0.5x120'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: ApiAvailabilityBudgetSlowBurn
+        exp_alerts: []
+
+  # Without any 5xx the error ratio is 0, not missing; each environment
+  # keeps its own series.
+  - name: availability, no errors is a ratio of 0, per environment
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+600x30'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="staging", instance="i-2", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+300x30'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="staging", instance="i-2", http_route="/api/users", http_response_status_code="503"}'
+        values: '0+100x30'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{slo="api-availability"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate5m{slo="api-availability", job="api", deployment_environment_name="production"}'
+            value: 0
+          - labels: 'slo:sli_error:ratio_rate5m{slo="api-availability", job="api", deployment_environment_name="staging"}'
+            value: 0.25
+      - expr: slo:objective:ratio
+        eval_time: 20m
+        exp_samples:
+          - labels: 'slo:objective:ratio{slo="api-availability"}'
+            value: 0.999
+          - labels: 'slo:objective:ratio{slo="api-latency"}'
+            value: 0.95
+
+  # 1 % errors: a burn rate of 10, under the 14.4 that pages and over the 6
+  # of the 6-hour window: a ticket, not a page. A window reads as much of its
+  # span as there is data, and the ratio is the same: 50 minutes of series
+  # stand for 6 hours (or 3 days) of steady errors and keep the test fast.
+  - name: availability, a steady burn opens a ticket
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+594x60'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="502"}'
+        values: '0+6x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: ApiAvailabilityBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: api-availability
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'API errors are steadily spending the availability budget (api, production)'
+              description: '1% of the responses were 5xx over the alert window (6 hours, or 3 days): the 99.9 % availability SLO runs out of budget before the 30 days end if this continues.'
+              runbook_url: docs/incident-response.md#5-high-5xx-rate
+              dashboard_uid: app-slo
+
+  # 0.2 % errors: a burn rate of 2, under the 6 of the 6-hour branch, over
+  # the 1 of the 3-day branch.
+  - name: availability, a slow burn opens a ticket through the 3-day window
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+499x60'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: ApiAvailabilityBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: api-availability
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'API errors are steadily spending the availability budget (api, production)'
+              description: '0.2% of the responses were 5xx over the alert window (6 hours, or 3 days): the 99.9 % availability SLO runs out of budget before the 30 days end if this continues.'
+              runbook_url: docs/incident-response.md#5-high-5xx-rate
+              dashboard_uid: app-slo
+
+  # 0.05 % errors: half the budget, a burn rate of 0.5: sustainable, no alert.
+  - name: availability, a burn rate under 1 is sustainable
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+999x60'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+0.5x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ApiAvailabilityBudgetSlowBurn
+        exp_alerts: []
+
+  # 80 % of the responses take longer than 500 ms. Sign-in is slower still
+  # (password hashing) but excluded: with it the ratio would read 90 %.
+  - name: latency, fast burn pages, authentication excluded
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+600x120'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.5"}'
+        values: '0+120x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/auth/sign-in", http_response_status_code="200"}'
+        values: '0+600x120'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/auth/sign-in", http_response_status_code="200", le="0.5"}'
+        values: '0+0x120'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ApiLatencyBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: api-latency
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'Slow API responses are burning the latency budget fast (api, production)'
+              description: '80% of the responses in the last hour took longer than 500 ms: at this rate the 30-day budget of the latency SLO (95 % within 500 ms) runs out in two days or less.'
+              runbook_url: docs/incident-response.md#6-high-latency
+              dashboard_uid: app-slo
+      # 5xx are an availability matter: none here.
+      - eval_time: 70m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts: []
+
+  # 40 % slow: a burn rate of 8, a ticket.
+  - name: latency, a steady burn opens a ticket
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+600x60'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.5"}'
+        values: '0+360x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ApiLatencyBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: ApiLatencyBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: api-latency
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'Slow API responses are steadily spending the latency budget (api, production)'
+              description: '40% of the responses took longer than 500 ms over the alert window (6 hours, or 3 days): the latency SLO runs out of budget before the 30 days end if this continues.'
+              runbook_url: docs/incident-response.md#6-high-latency
+              dashboard_uid: app-slo
+
+  # 10 % slow: a burn rate of 2 against the 5 % latency budget, caught by
+  # the 3-day branch only.
+  - name: latency, a slow burn opens a ticket through the 3-day window
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+600x60'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.5"}'
+        values: '0+540x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: ApiLatencyBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: ApiLatencyBudgetSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              slo: api-latency
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'Slow API responses are steadily spending the latency budget (api, production)'
+              description: '10% of the responses took longer than 500 ms over the alert window (6 hours, or 3 days): the latency SLO runs out of budget before the 30 days end if this continues.'
+              runbook_url: docs/incident-response.md#6-high-latency
+              dashboard_uid: app-slo
+
+  # The 30-day SLI the dashboard reads, recorded every 5 minutes: 1 response
+  # in 1000 fails, 9 in 1000 are slow. "1 - ratio" is not exact in floating
+  # point, so the latency value is compared within a tolerance.
+  - name: compliance window ratios
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+999x60'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+1x60'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.5"}'
+        values: '0+990x60'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500", le="0.5"}'
+        values: '0+1x60'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate30d{slo="api-availability"}
+        eval_time: 60m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate30d{slo="api-availability", job="api", deployment_environment_name="production"}'
+            value: 0.001
+      - expr: abs(slo:sli_error:ratio_rate30d{slo="api-latency"} - 0.009) < bool 1e-12
+        eval_time: 60m
+        exp_samples:
+          - labels: '{slo="api-latency", job="api", deployment_environment_name="production"}'
+            value: 1

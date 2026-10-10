@@ -1,0 +1,162 @@
+# Symptom alerts of the API (docs/alerting.md#alert-catalog): what the SLO
+# burn rates (api-slo.yaml) cannot tell, or tell too late. Every alert has a
+# severity (critical pages the on-call person, warning goes to the team's
+# channel), a runbook section of docs/incident-response.md and the dashboard
+# to open first. Thresholds are starting points: tune them with real traffic
+# and write down why each one changed.
+#
+# Counters only exist from their first increment, and a new series' first
+# value is not counted by increase(): the alerts below look for failures that
+# repeat, which is what an incident looks like, not for a single event.
+groups:
+  - name: api-symptoms
+    rules:
+      # Readiness answers 503 (database unreachable, required Redis down,
+      # shutting down) and the error filter counts each answer with origin
+      # "unavailable". The probe runs every few seconds, so failures in every
+      # 2-minute window for 2 minutes mean it keeps failing; the single 503 of
+      # an instance draining for a deployment does not fire.
+      - alert: ApiReadinessFailing
+        expr: |
+          sum by (job, deployment_environment_name, instance) (
+            increase(app_server_errors_total{error_origin="unavailable", http_route="/api/health/ready"}[2m])
+          ) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'API instance {{ $labels.instance }} fails its readiness probe ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'GET /api/health/ready answered 503 {{ $value | humanize }} times in the last 2 minutes: the orchestrator takes the instance out of rotation. The reason is in the "Readiness:" warning of its log.'
+          runbook_url: docs/incident-response.md#2-readiness-failing
+          dashboard_uid: app-api
+
+      # The dead man's switch: no API metrics at all means the API is down or
+      # its telemetry stopped arriving, and every alert above is blind. The
+      # job is OTEL_SERVICE_NAME (default "api"): change it here if yours
+      # differs.
+      - alert: ApiMetricsAbsent
+        expr: absent_over_time(process_cpu_time_seconds_total{job="api"}[10m])
+        labels:
+          severity: warning
+        annotations:
+          summary: 'No metrics from the API for 10 minutes ({{ $labels.job }})'
+          description: 'Either no API instance is running (the uptime checks page for that) or its OTLP export stopped reaching this backend; the SLO alerts cannot fire meanwhile. Check the instances, then OTEL_EXPORTER_OTLP_ENDPOINT and the collector.'
+          runbook_url: docs/incident-response.md#1-api-down
+          dashboard_uid: app-api
+
+      # 5xx with origin "database": the database failed, not our code.
+      - alert: ApiDatabaseErrors
+        expr: |
+          sum by (job, deployment_environment_name) (
+            increase(app_server_errors_total{error_origin="database"}[2m])
+          ) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'API requests fail on the database ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanize }} responses in the last 2 minutes were 5xx caused by the database, for more than 2 minutes.'
+          runbook_url: docs/incident-response.md#3-database-unavailable
+          dashboard_uid: app-api
+
+      # One route failing while the service as a whole stays within its
+      # budget (a broken endpoint with little traffic).
+      - alert: ApiRouteErrorRatioHigh
+        expr: |
+          (
+            sum by (job, deployment_environment_name, http_route) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[10m]))
+            /
+            sum by (job, deployment_environment_name, http_route) (rate(http_server_request_duration_seconds_count[10m]))
+          ) > 0.05
+          and on (job, deployment_environment_name, http_route)
+          sum by (job, deployment_environment_name, http_route) (increase(http_server_request_duration_seconds_count[10m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.http_route }} answers too many 5xx ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanizePercentage }} of its responses over the last 10 minutes were 5xx (threshold 5 %).'
+          runbook_url: docs/incident-response.md#5-high-5xx-rate
+          dashboard_uid: app-api
+
+      # p95 per route above the latency SLO threshold (500 ms), authentication
+      # routes excluded like in the SLO.
+      - alert: ApiRouteLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, job, deployment_environment_name, http_route) (rate(http_server_request_duration_seconds_bucket{http_route!~"/api/auth/.*"}[10m]))
+          ) > 0.5
+          and on (job, deployment_environment_name, http_route)
+          sum by (job, deployment_environment_name, http_route) (increase(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[10m])) >= 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.http_route }} is slow: p95 above 500 ms ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'p95 over the last 10 minutes: {{ $value | humanizeDuration }}, for more than 15 minutes.'
+          runbook_url: docs/incident-response.md#6-high-latency
+          dashboard_uid: app-api
+
+      # Features served by their fallback because Redis (or the cache store)
+      # is unavailable: rate limits per instance, cache misses, locks and
+      # idempotency claims refused (docs/architecture.md#degradation).
+      - alert: ApiDegradedMode
+        expr: |
+          sum by (job, deployment_environment_name, feature, dependency_name) (
+            increase(app_degraded_operations_total[5m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.feature }} runs degraded: {{ $labels.dependency_name }} unavailable ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanize }} operations in the last 5 minutes were served by the fallback, for more than 5 minutes.'
+          runbook_url: docs/incident-response.md#4-redis-unavailable
+          dashboard_uid: app-api
+
+      # Calls through the shared external HTTP client that failed (HTTP error
+      # after retries, timeout, network error), per dependency.
+      - alert: ApiDependencyFailing
+        expr: |
+          (
+            sum by (job, deployment_environment_name, dependency_name) (rate(app_dependency_duration_seconds_count{outcome!="success"}[10m]))
+            /
+            sum by (job, deployment_environment_name, dependency_name) (rate(app_dependency_duration_seconds_count[10m]))
+          ) > 0.05
+          and on (job, deployment_environment_name, dependency_name)
+          sum by (job, deployment_environment_name, dependency_name) (increase(app_dependency_duration_seconds_count[10m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Calls to {{ $labels.dependency_name }} fail ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanizePercentage }} of the calls over the last 10 minutes failed (threshold 5 %).'
+          runbook_url: docs/incident-response.md#12-external-dependency-outage
+          dashboard_uid: app-api
+
+      # Requests waiting for a database connection: the pool (DB_POOL_MAX) is
+      # exhausted, and each waits up to 5 seconds before failing.
+      - alert: ApiDatabasePoolSaturated
+        expr: |
+          max by (job, deployment_environment_name, instance) (db_client_connection_pending_requests) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Requests wait for a database connection on {{ $labels.instance }} ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanize }} requests are waiting for a connection of the pool, for more than 5 minutes.'
+          runbook_url: docs/incident-response.md#6-high-latency
+          dashboard_uid: app-api
+
+      # A blocked event loop delays every request of the instance.
+      - alert: ApiEventLoopDelayHigh
+        expr: |
+          max by (job, deployment_environment_name, instance) (nodejs_eventloop_delay_p99_seconds) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Event loop delay above 200 ms on {{ $labels.instance }} ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'p99 event loop delay: {{ $value | humanizeDuration }}, for more than 15 minutes (CPU starvation or blocking work).'
+          runbook_url: docs/incident-response.md#7-memory-or-cpu-pressure
+          dashboard_uid: app-api

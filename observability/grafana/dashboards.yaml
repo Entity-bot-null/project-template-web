@@ -1,0 +1,16 @@
+# Grafana dashboard provider of the local backend (docker-compose.yml, service
+# otel-lgtm): loads every dashboard of observability/grafana/dashboards into the
+# "Application" folder, read-only (the files are the source; change them, not
+# the copy in Grafana). Other Grafana instances import the same JSON files
+# (docs/observability.md#dashboards-and-alerts-as-code).
+apiVersion: 1
+providers:
+  - name: application
+    folder: Application
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /otel-lgtm/application-dashboards
+      foldersFromFilesStructure: false

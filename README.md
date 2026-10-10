@@ -22,7 +22,7 @@ and lists every command (en español: [docs/manual.es.md](docs/manual.es.md)).
 | Tests                    | Vitest (unit, component, integration), Testing Library, supertest, Playwright (E2E)                                                                                                                                                                                                         |
 | Security                 | helmet/CSP, CSRF guard, httpOnly refresh cookies with rotation and theft detection, RBAC + ownership checks, rate limits; SAST (Semgrep, CodeQL opt-in), workflow audit (zizmor), DAST (OWASP ZAP), pnpm audit, dependency and license policy, secretlint, gitleaks, image scanning (Trivy) |
 | Delivery                 | GitHub Actions (reusable gates, least privilege, pinned), Dependabot, release-please (SemVer, changelog, SBOM), Docker images (API, migrations, nginx web) with provenance                                                                                                                  |
-| Observability            | JSON logs with automatic redaction and request/trace correlation, health probes, graceful shutdown, error classification; optional: Sentry (API + web), OpenTelemetry traces and metrics (OTLP), local Grafana backend                                                                      |
+| Observability            | JSON logs with automatic redaction and request/trace correlation, health probes, graceful shutdown, error classification; optional: Sentry (API + web), OpenTelemetry traces and metrics (OTLP), local Grafana backend; dashboards, SLOs and alert rules as tested code                     |
 | Optional infrastructure  | Redis (shared rate limits, cache, locks, idempotency) behind adapters with in-process fallbacks; none required to run, test or deploy                                                                                                                                                       |
 
 ## Requirements
@@ -44,28 +44,29 @@ Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `m
 
 ## Commands
 
-| Command                                             | What it does                                                                                       |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                          | Database up, then API and web dev servers                                                          |
-| `pnpm build`                                        | Build every app                                                                                    |
-| `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                     |
-| `pnpm format` / `pnpm format:check`                 | Prettier                                                                                           |
-| `pnpm typecheck`                                    | TypeScript in every app, plus the contract types check                                             |
-| `pnpm test`                                         | Unit and component tests                                                                           |
-| `pnpm test:coverage`                                | The same, with coverage thresholds                                                                 |
-| `pnpm test:integration`                             | API against PostgreSQL (`pnpm db:up` first)                                                        |
-| `pnpm test:e2e`                                     | Browser tests on the built stack (`pnpm build` first)                                              |
-| `pnpm security`                                     | Dependency audit (high and critical fail), dependency policy and secret scan                       |
-| `pnpm deps:check`                                   | Dependency policy: registry sources, licenses, install settings, release-delay exemptions          |
-| `pnpm sast` / `pnpm lint:workflows`                 | Semgrep / actionlint + zizmor, the pinned images CI runs (need Docker)                             |
-| `pnpm sbom:generate`                                | CycloneDX SBOM of the production dependencies in `dist/sbom/`                                      |
-| `pnpm perf:check`                                   | Web bundle size against its budget (after `pnpm build`)                                            |
-| `pnpm smoke --url <public URL> --api <API URL>`     | Read-only smoke test of a running deployment (after a rollout, a restore, an incident)             |
-| `pnpm verify`                                       | **All fast gates:** format check → lint → typecheck → tests + coverage → security → build → budget |
-| `pnpm contract`                                     | Regenerate `openapi/openapi.json` and the web client types                                         |
-| `pnpm db:up` / `db:down` / `db:migrate` / `db:seed` | Local database                                                                                     |
-| `docker compose --profile redis up -d`              | Optional local Redis (`REDIS_PASSWORD` in the root `.env`)                                         |
-| `docker compose --profile observability up -d`      | Optional local OpenTelemetry backend, Grafana at http://localhost:3001                             |
+| Command                                             | What it does                                                                                          |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                          | Database up, then API and web dev servers                                                             |
+| `pnpm build`                                        | Build every app                                                                                       |
+| `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                        |
+| `pnpm format` / `pnpm format:check`                 | Prettier                                                                                              |
+| `pnpm typecheck`                                    | TypeScript in every app, plus the contract types check                                                |
+| `pnpm test`                                         | Unit and component tests                                                                              |
+| `pnpm test:coverage`                                | The same, with coverage thresholds                                                                    |
+| `pnpm test:integration`                             | API against PostgreSQL (`pnpm db:up` first)                                                           |
+| `pnpm test:e2e`                                     | Browser tests on the built stack (`pnpm build` first)                                                 |
+| `pnpm security`                                     | Dependency audit (high and critical fail), dependency policy and secret scan                          |
+| `pnpm deps:check`                                   | Dependency policy: registry sources, licenses, install settings, release-delay exemptions             |
+| `pnpm sast` / `pnpm lint:workflows`                 | Semgrep / actionlint + zizmor, the pinned images CI runs (need Docker)                                |
+| `pnpm observability:check`                          | Dashboards and alert rules of `observability/`: metric names, runbooks, promtool tests (Docker)       |
+| `pnpm sbom:generate`                                | CycloneDX SBOM of the production dependencies in `dist/sbom/`                                         |
+| `pnpm perf:check`                                   | Web bundle size against its budget (after `pnpm build`)                                               |
+| `pnpm smoke --url <public URL> --api <API URL>`     | Read-only smoke test of a running deployment (after a rollout, a restore, an incident)                |
+| `pnpm verify`                                       | **All fast gates:** format check → lint → typecheck → tests + coverage → security → build → budget    |
+| `pnpm contract`                                     | Regenerate `openapi/openapi.json` and the web client types                                            |
+| `pnpm db:up` / `db:down` / `db:migrate` / `db:seed` | Local database                                                                                        |
+| `docker compose --profile redis up -d`              | Optional local Redis (`REDIS_PASSWORD` in the root `.env`)                                            |
+| `docker compose --profile observability up -d`      | Optional local OpenTelemetry backend with the dashboards and alerts, Grafana at http://localhost:3001 |
 
 ## Layout
 

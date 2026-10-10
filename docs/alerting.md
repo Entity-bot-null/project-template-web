@@ -1,9 +1,12 @@
 # Alerting and SLOs
 
 What to measure, what to promise, and when to wake someone up. The template emits the signals
-(docs/observability.md); the alert rules live in the monitoring backend each project picks
-(Prometheus and Alertmanager, Grafana, a managed provider, Sentry's alert rules, the uptime
-service): **REQUIERE CONFIGURACIÓN**. Nothing here depends on one provider.
+(docs/observability.md), and the metric-based part of this page ships as code: the SLOs and
+alerts as Prometheus rule files with unit tests, and the dashboards to read them
+(`observability/`, [observability.md](observability.md#dashboards-and-alerts-as-code)). Loading
+them into the backend each project picks, routing their notifications, and the alerts that live
+elsewhere (the uptime service, Sentry's alert rules, the backup job, log patterns):
+**REQUIERE CONFIGURACIÓN**. Nothing here depends on one provider.
 
 Thresholds marked "starting point" are where to begin, not universal values: the right numbers
 depend on traffic, infrastructure and what the product promises. Tune them with real data and keep
@@ -17,7 +20,7 @@ the **error budget** is what the SLO allows to fail.
 | SLI          | Good events / all events                                                            | Fed by                                                       | Example SLO (adjust per product) |
 | ------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------- |
 | Availability | API responses other than 5xx / all API responses (health probes are never measured) | `http.server.request.duration` (count, by status)            | 99.9 % over 30 days              |
-| Latency      | API responses faster than the threshold / all API responses, per route class        | `http.server.request.duration` (histogram buckets)           | 95 % under 250 ms over 30 days   |
+| Latency      | API responses faster than the threshold / all API responses, per route class        | `http.server.request.duration` (histogram buckets)           | 95 % within 500 ms over 30 days  |
 | Uptime       | successful external checks / all external checks                                    | the uptime service (docs/observability.md#uptime-monitoring) | 99.9 % over 30 days              |
 
 How to compute them (PromQL on the OTLP metrics converted by Prometheus; any backend has the same
@@ -29,10 +32,15 @@ arithmetic):
 1 - (sum(increase(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30d])) or vector(0))
   / sum(increase(http_server_request_duration_seconds_count[30d]))
 
-# Latency: share of requests under 250 ms over 30 days (authentication routes excluded, below)
-sum(increase(http_server_request_duration_seconds_bucket{le="0.25", http_route!~"/api/auth/.*"}[30d]))
+# Latency: share of requests within 500 ms over 30 days (authentication routes excluded, below)
+sum(increase(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[30d]))
   / sum(increase(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[30d]))
 ```
+
+Both SLOs are implemented in `observability/prometheus/rules/api-slo.yaml`: recording rules for
+the error ratio of each window (`slo:sli_error:ratio_rate5m` to `ratio_rate30d`, label `slo`), the
+targets (`slo:objective:ratio`), and the burn-rate alerts below. Changing a target or the latency
+threshold means changing that file and its unit tests together.
 
 - **The latency threshold must be a bucket boundary.** The HTTP histogram's buckets are 5, 10, 25,
   50, 75, 100, 250, 500, 750 ms, 1, 2.5, 5, 7.5 and 10 s; a threshold between two of them (300 ms)
@@ -44,8 +52,10 @@ sum(increase(http_server_request_duration_seconds_bucket{le="0.25", http_route!~
   uptime SLI covers that blind spot; count both.
 - **Low traffic:** with a few hundred requests a day one failure moves the ratio by whole percents.
   Require a minimum number of requests before an SLO alert fires, or rely on the uptime checks.
-- **Without OpenTelemetry** (CORE setup), the same SLIs come from the access log lines (`status`,
-  `durationMs`) in the log platform, or from the load balancer's metrics.
+- **Without OpenTelemetry** (CORE setup), the same SLIs come from the access log lines
+  (`statusCode`, `durationMs`) in the log platform, or from the load balancer's metrics. A
+  `request aborted` line (`aborted: true`) is a client that gave up: its `statusCode` is `null` when
+  no response had started; count it apart, not as a success or a 5xx.
 
 ### Error budget
 
@@ -64,13 +74,14 @@ outage. The **burn rate** is how fast it is spent: the error ratio over a window
 Alert on burn rate over two windows, a long one that proves it is sustained and a short one that
 proves it is still happening (the multiwindow method of Google's SRE workbook):
 
-| Burn rate | Long window | Short window | Budget spent        | Severity |
-| --------- | ----------- | ------------ | ------------------- | -------- |
-| 14.4      | 1 hour      | 5 minutes    | 2 % in one hour     | CRITICAL |
-| 6         | 6 hours     | 30 minutes   | 5 % in six hours    | WARNING  |
-| 1         | 3 days      | 6 hours      | on track to run out | WARNING  |
+| Burn rate | Long window | Short window | Budget spent        | Severity | Alert (availability, latency)                               |
+| --------- | ----------- | ------------ | ------------------- | -------- | ----------------------------------------------------------- |
+| 14.4      | 1 hour      | 5 minutes    | 2 % in one hour     | CRITICAL | `ApiAvailabilityBudgetFastBurn`, `ApiLatencyBudgetFastBurn` |
+| 6         | 6 hours     | 30 minutes   | 5 % in six hours    | WARNING  | `ApiAvailabilityBudgetSlowBurn`, `ApiLatencyBudgetSlowBurn` |
+| 1         | 3 days      | 6 hours      | on track to run out | WARNING  | `ApiAvailabilityBudgetSlowBurn`, `ApiLatencyBudgetSlowBurn` |
 
-The same table applies to the latency SLO, with "slower than the threshold" as the bad event.
+The same table applies to the latency SLO, with "slower than the threshold" as the bad event. Each
+alert also needs 100 requests in its long window (low traffic, above).
 
 ### When the budget runs out (REQUIERE CONFIGURACIÓN: agree on it before the first incident)
 
@@ -90,7 +101,9 @@ Who decides is the product owner with the engineering lead. A policy to start fr
 
 Every alert links to its runbook (docs/incident-response.md) and to a dashboard, and has an owner.
 Each condition has a log-based equivalent, so alerting works without OpenTelemetry (patterns in the
-last column of [Log patterns](#log-patterns)).
+last column of [Log patterns](#log-patterns)). The metric-based conditions ship as rules, named in
+[observability.md](observability.md#alerts); the others belong to the service that sees them (the
+uptime service, Sentry, the orchestrator, the backup job, the log platform).
 
 ### CRITICAL: page the on-call person
 

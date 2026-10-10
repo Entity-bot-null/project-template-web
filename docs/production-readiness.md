@@ -65,17 +65,17 @@ must have it green.
 
 ## Observability
 
-| Done | Item            | Class                                       | Verified by                                                                                       |
-| ---- | --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| [ ]  | Structured logs | CORE / REQUIRES CONFIGURATION (collection)  | JSON lines on stdout; the platform collects them, with retention and access set                   |
-| [ ]  | Request ID      | CORE                                        | `X-Request-Id` on every response, on every log line and error report                              |
-| [ ]  | Trace ID        | OPTIONAL                                    | `traceId`/`spanId` on log lines once OpenTelemetry is on                                          |
-| [ ]  | Metrics         | OPTIONAL / REQUIRES CONFIGURATION (backend) | `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector or provider; metrics visible (docs/observability.md) |
-| [ ]  | Sentry          | OPTIONAL / REQUIRES CONFIGURATION           | `SENTRY_DSN`, `WEB_SENTRY_DSN`; a test event per environment                                      |
-| [ ]  | Dashboards      | REQUIRES CONFIGURATION                      | request rate, errors by origin, latency per route, pool, process (docs/observability.md#metrics)  |
-| [ ]  | Uptime          | REQUIRES CONFIGURATION                      | external checks from several locations (docs/observability.md#uptime-monitoring)                  |
-| [ ]  | Alerts          | REQUIRES CONFIGURATION                      | the catalog of [alerting.md](alerting.md), routed and tested                                      |
-| [ ]  | SLOs            | REQUIRES CONFIGURATION                      | targets agreed, error budget policy agreed ([alerting.md](alerting.md#slis-and-slos))             |
+| Done | Item            | Class                                       | Verified by                                                                                                                                                               |
+| ---- | --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [ ]  | Structured logs | CORE / REQUIRES CONFIGURATION (collection)  | JSON lines on stdout; the platform collects them, with retention and access set                                                                                           |
+| [ ]  | Request ID      | CORE                                        | `X-Request-Id` on every response, on every log line and error report                                                                                                      |
+| [ ]  | Trace ID        | OPTIONAL                                    | `traceId`/`spanId` on log lines once OpenTelemetry is on                                                                                                                  |
+| [ ]  | Metrics         | OPTIONAL / REQUIRES CONFIGURATION (backend) | `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector or provider; metrics visible (docs/observability.md)                                                                         |
+| [ ]  | Sentry          | OPTIONAL / REQUIRES CONFIGURATION           | `SENTRY_DSN`, `WEB_SENTRY_DSN`; a test event per environment                                                                                                              |
+| [ ]  | Dashboards      | REQUIRES CONFIGURATION (import)             | the dashboards of `observability/grafana` imported into the production Grafana (docs/observability.md#use-them-with-your-backend)                                         |
+| [ ]  | Uptime          | REQUIRES CONFIGURATION                      | external checks from several locations (docs/observability.md#uptime-monitoring)                                                                                          |
+| [ ]  | Alerts          | REQUIRES CONFIGURATION (load, route)        | the rules of `observability/prometheus/rules` loaded in the backend, routed by severity and tested; the rest of the catalog of [alerting.md](alerting.md) in its services |
+| [ ]  | SLOs            | REQUIRES CONFIGURATION                      | targets agreed, error budget policy agreed ([alerting.md](alerting.md#slis-and-slos))                                                                                     |
 
 ## Deployment
 
