@@ -421,6 +421,10 @@ same seven days as pnpm; **security updates** (Dependabot alerts) are not delaye
 Majors arrive one per pull request, with their release notes to read. A person still approves every
 update: once approved and green, a patch or minor update merges itself
 ([ci-cd.md](ci-cd.md#dependency-updates)); majors and workflow updates are merged by hand.
+Two majors are never proposed, because they follow the Node.js version of `.nvmrc` and `engines`,
+changed by hand with the build: `@types/node` and the Node.js base image of the Dockerfiles (a
+Node.js major can drop what the images rely on: Node.js 25 no longer bundles corepack, which
+installs pnpm in them).
 
 Chosen over Renovate: it is built into GitHub (no third-party app with write access to the
 repository, no token to host), it already understands every ecosystem here, and its alerts and
