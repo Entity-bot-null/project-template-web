@@ -470,8 +470,9 @@ en el servidor.
 
 ### 7.2 Apunta el dominio al servidor
 
-En tu proveedor de DNS: un registro **A** `app.acme.com` → la IPv4 del servidor (y un registro
-**AAAA** para su IPv6, si tiene).
+En tu proveedor de DNS: un registro **A** `app.acme.com` → la IPv4 del servidor. Ningún registro
+**AAAA**: el despliegue sirve solo IPv4 ([deploy-vps.md](deploy-vps.md#2-create-the-server) explica
+por qué).
 
 **Comprueba**, después de unos minutos: `nslookup app.acme.com` responde con la dirección del
 servidor.

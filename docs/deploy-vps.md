@@ -100,8 +100,11 @@ the address from Caddy, and only from Caddy's network.
 ## 2. Create the server
 
 In the provider's console: Ubuntu 24.04 LTS, your SSH public key for the first login, a firewall
-(if the provider has one) allowing TCP 22, 80, 443 and UDP 443. Then the DNS: an `A` record
-(and `AAAA` for IPv6) from the domain to the server's address. Check from your machine:
+(if the provider has one) allowing TCP 22, 80, 443 and UDP 443. Then the DNS: an `A` record from
+the domain to the server's IPv4 address, and no `AAAA` record. The deployment serves IPv4 only:
+its Docker network (`compose.yaml`) has no IPv6, so Docker would hand every IPv6 visitor to Caddy
+from one internal address, and the API's per-IP rate limits would count them all as one client.
+Check from your machine:
 
 ```
 nslookup app.example.com          # the server's address

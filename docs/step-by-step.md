@@ -458,8 +458,8 @@ allow TCP 22, 80 and 443, and UDP 443.
 
 ### 7.2 Point the domain at it
 
-At your DNS provider: an **A** record `app.acme.com` → the server's IPv4 (and an **AAAA** record for
-its IPv6, if it has one).
+At your DNS provider: an **A** record `app.acme.com` → the server's IPv4. No **AAAA** record: the
+deployment serves IPv4 only ([deploy-vps.md](deploy-vps.md#2-create-the-server) says why).
 
 **Check**, after a few minutes: `nslookup app.acme.com` answers the server's address.
 
