@@ -133,6 +133,99 @@ describe('createExternalHttpClient', () => {
   });
 });
 
+describe('paths', () => {
+  const BACKSLASH = String.fromCharCode(92);
+  /** The URL the client sent the request to. */
+  const urlOf = async (
+    baseUrl: string,
+    path: string | string[],
+    query?: Record<string, string>,
+  ) => {
+    const { client, fetchStub } = clientWith([() => Promise.resolve(json({}))], { baseUrl });
+    await client.request({ path, query });
+    const sent = fetchStub.mock.calls[0]?.[0];
+    if (!(sent instanceof URL)) throw new Error('the client sends a URL object');
+    return sent.href;
+  };
+
+  it("keeps the base URL's path, with or without its trailing slash", async () => {
+    await expect(urlOf('https://billing.example.com/v1', 'invoices')).resolves.toBe(
+      'https://billing.example.com/v1/invoices',
+    );
+    await expect(urlOf('https://billing.example.com/v1/', 'invoices')).resolves.toBe(
+      'https://billing.example.com/v1/invoices',
+    );
+    await expect(urlOf('https://billing.example.com/api/v2', ['invoices', 'inv_1'])).resolves.toBe(
+      'https://billing.example.com/api/v2/invoices/inv_1',
+    );
+    await expect(urlOf('https://billing.example.com', 'invoices')).resolves.toBe(
+      'https://billing.example.com/invoices',
+    );
+  });
+
+  it('refuses a path that starts with "/": it would drop the base path', async () => {
+    const { client, fetchStub } = clientWith([]);
+    await expect(client.request({ path: '/invoices/1' })).rejects.toThrow('relative');
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it('encodes each segment, so a value stays one segment of the path', async () => {
+    await expect(
+      urlOf('https://billing.example.com/v1/', ['invoices', '../admin?x=1#y', 'a b']),
+    ).resolves.toBe('https://billing.example.com/v1/invoices/..%2Fadmin%3Fx%3D1%23y/a%20b');
+    await expect(
+      urlOf('https://billing.example.com/v1/', ['invoices', '%2e%2e', `..${BACKSLASH}x`, '.\t.']),
+    ).resolves.toBe('https://billing.example.com/v1/invoices/%252e%252e/..%5Cx/.%09.');
+  });
+
+  it('adds the query to a path given as segments, like to any other', async () => {
+    await expect(
+      urlOf('https://billing.example.com/v1/', ['customers', 'c 1', 'invoices'], {
+        status: 'open',
+      }),
+    ).resolves.toBe('https://billing.example.com/v1/customers/c%201/invoices?status=open');
+  });
+
+  it('refuses dot and empty segments, which would reach another resource', async () => {
+    const { client, fetchStub } = clientWith([]);
+    for (const path of [
+      ['invoices', '..'],
+      ['invoices', '.'],
+      ['invoices', ''],
+      'invoices/../admin',
+      'invoices/%2e%2E/admin',
+      'https://billing.example.com/v1/invoices/../../admin',
+    ]) {
+      await expect(client.request({ path })).rejects.toThrow(/segment|leaves/);
+    }
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it('refuses a path the URL parser would read differently from the code', async () => {
+    // In an http(s) URL "\" is "/", and tabs and newlines are dropped: each of
+    // these would reach https://billing.example.com/v1/admin.
+    const { client, fetchStub } = clientWith([]);
+    for (const path of [
+      ['invoices', '..', 'admin'].join(BACKSLASH),
+      'invoices/.\t./admin',
+      'invoices/.\n./admin',
+      'invoices/.\r./admin',
+    ]) {
+      await expect(client.request({ path })).rejects.toThrow('backslash, a tab or a newline');
+    }
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it('refuses a base URL with a query string or a fragment, which every path would drop', () => {
+    expect(() =>
+      createExternalHttpClient({ name: 'billing', baseUrl: 'https://billing.example.com/v1?k=1' }),
+    ).toThrow('query');
+    expect(() =>
+      createExternalHttpClient({ name: 'billing', baseUrl: 'https://billing.example.com/v1#top' }),
+    ).toThrow('fragment');
+  });
+});
+
 describe('backoff', () => {
   it('doubles from 200 ms, capped at 5 s, plus jitter', () => {
     expect([1, 2, 3].map((attempt) => backoff(attempt, () => 0))).toEqual([200, 400, 800]);
