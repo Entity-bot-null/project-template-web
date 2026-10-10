@@ -47,6 +47,12 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # The Node.js major follows .nvmrc and engines, by hand, together with
+      # the build: a major can drop what the images rely on (Node.js 25 no
+      # longer bundles corepack, which installs pnpm here).
+      - dependency-name: docker/library/node
+        update-types: [version-update:semver-major]
     commit-message:
       prefix: build
 
