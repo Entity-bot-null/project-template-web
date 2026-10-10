@@ -9,7 +9,7 @@
 # reproducible and a moved tag changes nothing; Dependabot proposes tag and
 # digest together. From ECR Public's mirror of Docker's official images: the
 # same image as Docker Hub, without its anonymous pull limit.
-FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS base
+FROM public.ecr.aws/docker/library/node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS base
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     CI=true \
@@ -52,7 +52,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm rebuild @prisma/eng
 # and without the Node.js package managers bundled in it (npm, corepack,
 # yarn): only node is needed, and they are attack surface with advisories of
 # their own.
-FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS hardened
+FROM public.ecr.aws/docker/library/node:26-bookworm-slim@sha256:86f07bc9c5dce4578cf37e5a418b7bfc7f817cda25cde66e2b66e95ed86c4567 AS hardened
 # The day of those fixes (CI passes today's date). It is part of the cache key
 # of the RUN below: a build cache would otherwise replay the upgrade of the
 # first build until the base digest changes, and ship none of the fixes
