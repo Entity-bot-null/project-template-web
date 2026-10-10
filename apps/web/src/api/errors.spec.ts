@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { failure, json, ok } from '../test/http';
+import { describe, expect, it, vi } from 'vitest';
+import { failure, json, ok, stubFetch } from '../test/http';
+import { api } from './client';
 import {
   call,
   describeFailure,
@@ -74,6 +75,26 @@ describe('call', () => {
       ok: false,
       failure: { status: 0, message: NETWORK_ERROR_MESSAGE },
     });
+  });
+
+  it('fails a success answer that is not JSON as not the API answering, not as offline', async () => {
+    // A captive portal or a proxy answering 200 with a page: the client's
+    // own JSON parsing rejects, before any envelope can be checked.
+    stubFetch({
+      'GET /api/users/me': () =>
+        new Response('<html><body>Sign in to the Wi-Fi</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+    });
+    try {
+      await expect(call(api.GET('/api/users/me'))).resolves.toEqual({
+        ok: false,
+        failure: { status: 502, message: NOT_AN_ENVELOPE_MESSAGE },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
