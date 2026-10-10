@@ -414,7 +414,9 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   dependencies (the Prisma CLI is one), the CLI's schema engine and the migrations, with no source
   code and no development tools. Every image applies the operating system fixes published after
   its base was built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web
-  image), so a fixed advisory in the base does not wait for the next base release.
+  image), so a fixed advisory in the base does not wait for the next base release. CI passes the
+  day as `OS_UPGRADE_DATE`, part of that step's cache key: the build cache replays an upgrade for
+  one day at most, never until the base digest changes.
 - The files of an image belong to root: the user it runs as can read and run them, never change
   them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
   - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`, and
@@ -452,9 +454,11 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
 - **CODEOWNERS** lists the security-sensitive paths, the gates included (`.github/`, hooks,
   scripts): owning the checks is what keeps them from being edited away in the same pull request.
 - **Deploy** (`deploy.yml`) resolves the requested ref to a commit, refuses one that is not on
-  `main`, re-runs every gate on that exact commit and releases that commit only. The workflow
-  file's own checks can be edited on a branch, so the environments must also allow deployments
-  from `main` only (docs/ci-cd.md#repository-settings-requiere-configuración).
+  `main`, re-runs every gate on that exact commit and releases that commit only, with the image
+  digests its own build reported or an earlier run of it from `main` recorded: never the registry
+  tag `<image>:<sha>`, which any workflow with `packages: write` can push from any branch. The
+  workflow file's own checks can be edited on a branch, so the environments must also allow
+  deployments from `main` only (docs/ci-cd.md#repository-settings-requiere-configuración).
 
 ## Static analysis
 
@@ -468,11 +472,13 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
 **Semgrep** runs Semgrep's curated rulesets (`scripts/sast.mjs`) on everything `.semgrepignore`
 does not exclude, tests included: the files git tracks plus the new ones it does not ignore, copied
 to a temporary directory first, so a local run never walks `node_modules` or build output through
-Docker's file sharing. Symbolic links are not followed. Any finding fails: on this code base the rulesets report nothing,
-so a finding is worth a look. A false positive is suppressed on its line with the reason, which
-review sees: `// nosemgrep: <rule-id> -- why it is safe`. The rulesets are fetched from the
-Semgrep registry at each run, so a new rule can flag existing code; fix or suppress it in its own
-pull request.
+Docker's file sharing. Symbolic links are not followed. An nginx template (`*.conf.template`) is
+copied under the name nginx renders it to (`default.conf.template` as `default.conf`): the nginx
+rules only read `*.conf` files, and would otherwise skip the configuration the web image runs.
+Any finding fails: on this code base the rulesets report nothing, so a finding is worth a look. A
+false positive is suppressed on its line with the reason, which review sees:
+`// nosemgrep: <rule-id> -- why it is safe`. The rulesets are fetched from the Semgrep registry at
+each run, so a new rule can flag existing code; fix or suppress it in its own pull request.
 
 **CodeQL** (OPCIONAL) adds the cross-file analysis Semgrep's open-source engine does not do. It
 needs a public repository or GitHub Advanced Security: enable it with the repository variable
@@ -499,14 +505,14 @@ reaches; authenticated scanning is per project (OPCIONAL: a ZAP context with a t
 
 ## Artifact integrity
 
-| What                                    | Status                              | How                                                                                                                       |
-| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                      |
-| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)  |
-| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image |
-| Scanned image = shipped image           | Obligatorio                         | The push reuses the scanned build's cache (same layers); deployments reference the digest, never a mutable tag            |
-| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud |
-| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                   |
+| What                                    | Status                              | How                                                                                                                                                    |
+| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                                                   |
+| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)                               |
+| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image                              |
+| Scanned image = shipped image           | Obligatorio                         | The VPS deployment scans the digest it pushed and deploys that digest from the run's record; production reuses staging's record, never the mutable tag |
+| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud                              |
+| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                                                |
 
 Signing with a separate tool (cosign with keys) is not included: GitHub attestations are already
 Sigstore signatures, verifiable without managing keys. To see what a pushed image carries:

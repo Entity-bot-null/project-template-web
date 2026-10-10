@@ -107,6 +107,32 @@ describe('file selection', () => {
     }
   });
 
+  test('an nginx template is copied under the name nginx renders it to, so the nginx rules see it', () => {
+    // Semgrep's nginx rules only select *.conf files: under its own name, the
+    // configuration the web image actually runs would never be checked.
+    const dir = makeRepo();
+    writeFileSync(join(dir, 'apps/web/nginx/site.conf.template'), 'server { listen 8080; }\n');
+    // A template next to a file of the name it renders to keeps its own name.
+    writeFileSync(join(dir, 'apps/web/nginx/default.conf.template'), 'server {}\n');
+    git(dir, ['add', 'apps/web/nginx']);
+    const { files } = selectFiles(dir);
+    const copy = copyToTemp(files, dir);
+    try {
+      const tree = listTree(copy);
+      assert.equal(tree.includes('apps/web/nginx/site.conf'), true);
+      assert.equal(tree.includes('apps/web/nginx/site.conf.template'), false);
+      assert.equal(
+        readFileSync(join(copy, 'apps/web/nginx/site.conf'), 'utf8'),
+        'server { listen 8080; }\n',
+      );
+      assert.equal(tree.includes('apps/web/nginx/default.conf'), true);
+      assert.equal(tree.includes('apps/web/nginx/default.conf.template'), true);
+      assert.equal(tree.length, files.length);
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  });
+
   test('a deleted tracked file is left out', () => {
     const dir = makeRepo();
     rmSync(join(dir, 'apps/api/Dockerfile'));

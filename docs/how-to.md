@@ -817,16 +817,28 @@ Through the shared client, never a bare `fetch` (docs/observability.md#external-
 const run = await this.locks.withLock('jobs:nightly-report', 15 * 60_000, () => this.buildReport());
 if (!run.acquired) return; // another instance has it
 
-// A webhook the provider may deliver twice:
-const claim = await this.idempotency.claim('webhooks:billing', event.id, 24 * 60 * 60);
-if (claim === null) return; // already processed (or in progress)
+// A webhook the provider may deliver twice, or again while the first delivery is processed:
+const outcome = await this.idempotency.claim('webhooks:billing', event.id, {
+  processingTtlSec: 5 * 60, // longer than apply() can take
+  doneTtlSec: 24 * 60 * 60, // the provider's redelivery window
+});
+if (outcome.status === 'done') return; // processed already: acknowledge it
+if (outcome.status === 'in-progress') {
+  // Never a 2xx: the provider would stop retrying, and the event would be lost
+  // if the attempt in progress fails.
+  throw new ConflictException('This event is being processed: retry later');
+}
 try {
   await this.apply(event);
 } catch (error) {
-  await claim.release(); // let the provider's retry through
+  await outcome.claim.release(); // let the provider's retry through
   throw error;
 }
+await outcome.claim.complete();
 ```
+
+A delivery whose attempt crashed (the process died mid-`apply`) is processed again by the
+provider's first retry after `processingTtlSec`.
 
 `LockService` and `IdempotencyService` are global. They hold across instances with `REDIS_URL`,
 within the process without it, and fail closed (503) while Redis is down. For money or anything that

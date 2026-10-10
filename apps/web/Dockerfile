@@ -30,8 +30,12 @@ RUN pnpm --filter web build
 # Runs as an unprivileged user on port 8080.
 FROM ghcr.io/nginx/nginx-unprivileged:1.31-alpine@sha256:b9241c6e7b8e9a862f129d8d4199ab64b10390949a78bdd5603379b32c844083 AS runtime
 # Operating system fixes published after the base image was built (the image
-# scan in CI fails on a fixable HIGH or CRITICAL advisory).
+# scan in CI fails on a fixable HIGH or CRITICAL advisory). The day of those
+# fixes (CI passes today's date) is part of the cache key of the upgrade: a
+# build cache would otherwise replay the first build's upgrade until the base
+# digest changes. The default keeps local builds cached.
 USER root
+ARG OS_UPGRADE_DATE=local
 RUN apk upgrade --no-cache
 USER 101
 # The build this image holds (CI passes the commit SHA): reported with every

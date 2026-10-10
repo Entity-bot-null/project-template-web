@@ -201,9 +201,13 @@ instances run it).
 
 - **`withLock(name, ttlMs, work)`:** one instance at a time runs `work` (a scheduled report, a
   migration-like job); the others get `{ acquired: false }` at once. The TTL must exceed the work.
-- **`claim(scope, key, ttlSec)`:** the first delivery of a message id (a webhook event, a job id)
-  gets the claim, duplicates get `null`; release the claim when processing fails so the sender's
-  retry goes through.
+- **`claim(scope, key, { processingTtlSec, doneTtlSec })`:** the first delivery of a message id (a
+  webhook event, a job id) gets the claim for `processingTtlSec`. `complete()` it once processed:
+  later deliveries are `done` (acknowledge them) for `doneTtlSec`. `release()` it when processing
+  fails, so the sender's retry goes through. A delivery that arrives while another one is being
+  processed is `in-progress`: answer it with an error status so the sender retries, never with a
+  2xx, which would lose the message if the first attempt then fails or crashes. An attempt that
+  crashes holds the message until `processingTtlSec` runs out, then a retry processes it.
 - Both are leases with a TTL: an efficiency and deduplication tool, not a correctness guarantee (a
   paused owner can lose its lease). **Payments and anything that must happen exactly once** use the
   database: an idempotency key with a unique constraint, written in the same transaction as the

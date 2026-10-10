@@ -10,13 +10,17 @@ export interface LeaseStore {
   acquire(key: string, ttlMs: number): Promise<string | null>;
   /** True when the token still owned the key (and now released it). */
   release(key: string, token: string): Promise<boolean>;
+  /** What the key holds now (an owner token, or a value written), or null. */
+  read(key: string): Promise<string | null>;
+  /** Makes the key hold `value` for `ttlMs`, whoever owned it: no token releases it then. */
+  write(key: string, value: string, ttlMs: number): Promise<void>;
 }
 
 export const LEASE_STORE = Symbol('LEASE_STORE');
 
 /** One instance: correct in a single process only (documented: docs/architecture.md#locks-and-idempotency). */
 export class MemoryLeaseStore implements LeaseStore {
-  private readonly leases = new Map<string, { token: string; expiresAt: number }>();
+  private readonly leases = new Map<string, { value: string; expiresAt: number }>();
   private acquiresSinceSweep = 0;
   private lastSweep = Number.NEGATIVE_INFINITY;
 
@@ -24,10 +28,9 @@ export class MemoryLeaseStore implements LeaseStore {
 
   acquire(key: string, ttlMs: number): Promise<string | null> {
     this.sweepNowAndThen();
-    const current = this.leases.get(key);
-    if (current !== undefined && current.expiresAt > this.now()) return Promise.resolve(null);
+    if (this.live(key) !== undefined) return Promise.resolve(null);
     const token = randomUUID();
-    this.leases.set(key, { token, expiresAt: this.now() + ttlMs });
+    this.leases.set(key, { value: token, expiresAt: this.now() + ttlMs });
     return Promise.resolve(token);
   }
 
@@ -47,10 +50,23 @@ export class MemoryLeaseStore implements LeaseStore {
   }
 
   release(key: string, token: string): Promise<boolean> {
-    const current = this.leases.get(key);
-    if (current?.token !== token || current.expiresAt <= this.now()) return Promise.resolve(false);
+    if (this.live(key) !== token) return Promise.resolve(false);
     this.leases.delete(key);
     return Promise.resolve(true);
+  }
+
+  read(key: string): Promise<string | null> {
+    return Promise.resolve(this.live(key) ?? null);
+  }
+
+  write(key: string, value: string, ttlMs: number): Promise<void> {
+    this.leases.set(key, { value, expiresAt: this.now() + ttlMs });
+    return Promise.resolve();
+  }
+
+  private live(key: string): string | undefined {
+    const current = this.leases.get(key);
+    return current !== undefined && current.expiresAt > this.now() ? current.value : undefined;
   }
 }
 
@@ -92,5 +108,15 @@ export class RedisLeaseStore implements LeaseStore {
       redis.eval(RELEASE_SCRIPT, { keys: [key], arguments: [token] }),
     );
     return reply === 1;
+  }
+
+  async read(key: string): Promise<string | null> {
+    return this.redis.run((redis) => redis.get(key));
+  }
+
+  async write(key: string, value: string, ttlMs: number): Promise<void> {
+    await this.redis.run((redis) =>
+      redis.set(key, value, { expiration: { type: 'PX', value: ttlMs } }),
+    );
   }
 }

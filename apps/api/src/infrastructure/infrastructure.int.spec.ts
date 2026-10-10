@@ -224,8 +224,25 @@ describe.skipIf(skipWithoutRedis)('Redis-backed adapters (integration)', () => {
 
     const claimsA = new IdempotencyService(new RedisLeaseStore(redis), redis);
     const claimsB = new IdempotencyService(new RedisLeaseStore(redis), redis);
-    await expect(claimsA.claim('webhooks:billing', 'evt_1', 60)).resolves.not.toBeNull();
-    await expect(claimsB.claim('webhooks:billing', 'evt_1', 60)).resolves.toBeNull();
+    const ttls = { processingTtlSec: 60, doneTtlSec: 120 };
+    const first = await claimsA.claim('webhooks:billing', 'evt_1', ttls);
+    if (first.status !== 'claimed') throw new Error(`expected a claim, got ${first.status}`);
+    // While A processes it, B's delivery must be retried later, not acknowledged.
+    await expect(claimsB.claim('webhooks:billing', 'evt_1', ttls)).resolves.toEqual({
+      status: 'in-progress',
+    });
+    await first.claim.complete();
+    await expect(claimsB.claim('webhooks:billing', 'evt_1', ttls)).resolves.toEqual({
+      status: 'done',
+    });
+    // Done for doneTtlSec, past the processing lease.
+    const ttl = await redis.run((client) =>
+      client.eval("return redis.call('PTTL', KEYS[1])", {
+        keys: [redis.key('idempotency', 'webhooks:billing', 'evt_1')],
+        arguments: [],
+      }),
+    );
+    expect(ttl).toBeGreaterThan(60_000);
   });
 
   it('never lets a stale owner release a lease taken over by someone else', async () => {
