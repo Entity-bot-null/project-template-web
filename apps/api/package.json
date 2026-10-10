@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "postinstall": "prisma generate",
-    "dev": "prisma generate && nest start --watch",
+    "dev": "prisma generate && nest start --watch --path tsconfig.dev.json",
     "build": "prisma generate && nest build",
     "start": "node dist/main.js",
     "typecheck": "prisma generate && tsc --noEmit -p tsconfig.json",

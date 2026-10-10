@@ -27,6 +27,7 @@ const RAW_SQL_BAN = [
 export default defineConfig(
   globalIgnores([
     '**/dist/',
+    '**/dist-dev/',
     '**/coverage/',
     'playwright-report/',
     'test-results/',
