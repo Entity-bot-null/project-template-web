@@ -51,9 +51,38 @@ export class LockService {
 }
 
 export interface Claim {
+  /**
+   * Records the message as processed: later deliveries are 'done' for
+   * `doneTtlSec`. Call it once the effect succeeded. It never rejects: the
+   * effect happened and the sender must get its 2xx. When the store cannot
+   * record it (Redis went away), the processing lease runs out and a
+   * redelivery after that is processed again.
+   */
+  complete(): Promise<void>;
   /** Gives the key back, so a retry of the same message is processed. Call it when processing failed. */
   release(): Promise<void>;
 }
+
+export type ClaimOutcome =
+  /** This caller processes the message. */
+  | { status: 'claimed'; claim: Claim }
+  /** Another delivery of it is being processed now: answer non-2xx, so the sender retries later. */
+  | { status: 'in-progress' }
+  /** Processed already: acknowledge it (2xx) and do nothing. */
+  | { status: 'done' };
+
+export interface ClaimOptions {
+  /**
+   * Longer than processing can take. Past it, an attempt that crashed or hangs
+   * no longer holds the message, and the sender's next retry processes it.
+   */
+  processingTtlSec: number;
+  /** How long a processed message is remembered: the sender's redelivery window. */
+  doneTtlSec: number;
+}
+
+// What a processed message's key holds; owner tokens are random UUIDs.
+const DONE = 'done';
 
 @Injectable()
 export class IdempotencyService {
@@ -63,25 +92,54 @@ export class IdempotencyService {
   ) {}
 
   /**
-   * Claims a message id (a webhook delivery id, a job id) for `ttlSec`: the
-   * first caller gets a Claim, every later one null (a duplicate to skip).
-   * Keep the claim on success, so duplicates within the TTL are dropped;
-   * release it on failure, so the sender's retry is processed.
+   * Claims a message id (a webhook delivery id, a job id). "In progress" and
+   * "done" are told apart: a delivery that arrives while the first one is
+   * still being processed must not be acknowledged, or the message is lost
+   * when that first attempt fails or crashes (the sender stops retrying
+   * after a 2xx).
    *
-   *   const claim = await idempotency.claim('webhooks:billing', event.id, 24 * 3600);
-   *   if (claim === null) return; // already processed or in progress
-   *   try { await this.apply(event); } catch (error) { await claim.release(); throw error; }
+   *   const outcome = await idempotency.claim('webhooks:billing', event.id, {
+   *     processingTtlSec: 5 * 60,
+   *     doneTtlSec: 24 * 3600,
+   *   });
+   *   if (outcome.status === 'done') return; // a duplicate: acknowledge it
+   *   if (outcome.status === 'in-progress') throw new ConflictException('Being processed, retry later');
+   *   try { await this.apply(event); } catch (error) { await outcome.claim.release(); throw error; }
+   *   await outcome.claim.complete();
    */
-  async claim(scope: string, key: string, ttlSec: number): Promise<Claim | null> {
+  async claim(scope: string, key: string, options: ClaimOptions): Promise<ClaimOutcome> {
+    const processingMs = wholeSeconds(options.processingTtlSec) * 1000;
+    const doneMs = wholeSeconds(options.doneTtlSec) * 1000;
     const leaseKey = this.redis.key('idempotency', checkedName(scope), key);
-    const token = await this.store.acquire(leaseKey, ttlSec * 1000);
-    if (token === null) return null;
+    const token = await this.store.acquire(leaseKey, processingMs);
+    if (token === null) {
+      // Gone between the two calls (released, expired) reads as in progress:
+      // the sender retries, and the retry gets the claim.
+      return (await this.store.read(leaseKey)) === DONE
+        ? { status: 'done' }
+        : { status: 'in-progress' };
+    }
     return {
-      release: async () => {
-        await this.store.release(leaseKey, token);
+      status: 'claimed',
+      claim: {
+        complete: async () => {
+          await this.store.write(leaseKey, DONE, doneMs).catch(() => undefined);
+        },
+        release: async () => {
+          // Only this attempt's own lease: never a completed key, nor one a
+          // retry took over after the processing TTL.
+          await this.store.release(leaseKey, token);
+        },
       },
     };
   }
+}
+
+function wholeSeconds(seconds: number): number {
+  if (!Number.isInteger(seconds) || seconds <= 0) {
+    throw new Error(`Idempotency TTLs are whole seconds above 0, not ${String(seconds)}`);
+  }
+  return seconds;
 }
 
 function checkedName(name: string): string {
