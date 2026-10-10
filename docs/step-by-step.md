@@ -527,6 +527,7 @@ connected as the provider's administrator (`psql "<admin connection string>"`):
 
 ```sql
 CREATE ROLE app_migrator LOGIN PASSWORD '<migrator password>';
+GRANT app_migrator TO CURRENT_USER;
 CREATE DATABASE app OWNER app_migrator;
 CREATE ROLE app_runtime LOGIN PASSWORD '<runtime password>' CONNECTION LIMIT 50;
 ```
@@ -541,9 +542,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runti
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
 ```
 
-**Check:** each statement answers `CREATE ROLE`, `CREATE DATABASE`, `GRANT` or
-`ALTER DEFAULT PRIVILEGES`, without errors. The migrator will own and change the schema; the API
-connects as `app_runtime`, which reads and writes data only.
+**Check:** each statement answers `CREATE ROLE`, `GRANT ROLE`, `CREATE DATABASE`, `GRANT` or
+`ALTER DEFAULT PRIVILEGES`, without errors. Without `GRANT app_migrator TO CURRENT_USER`,
+PostgreSQL 16 and later refuse `CREATE DATABASE` (`must be able to SET ROLE "app_migrator"`): the
+providers' administrators are not superusers. The migrator will own and change the schema; the
+API connects as `app_runtime`, which reads and writes data only.
 
 ### 7.6 Put the deployment files on the server
 

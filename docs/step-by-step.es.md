@@ -542,6 +542,7 @@ Después, conectado como el administrador del proveedor
 
 ```sql
 CREATE ROLE app_migrator LOGIN PASSWORD '<contraseña de app_migrator>';
+GRANT app_migrator TO CURRENT_USER;
 CREATE DATABASE app OWNER app_migrator;
 CREATE ROLE app_runtime LOGIN PASSWORD '<contraseña de app_runtime>' CONNECTION LIMIT 50;
 ```
@@ -556,9 +557,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runti
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
 ```
 
-**Comprueba:** cada sentencia responde `CREATE ROLE`, `CREATE DATABASE`, `GRANT` o
-`ALTER DEFAULT PRIVILEGES`, sin errores. El migrador será el propietario del esquema y quien lo
-cambie; la API se conecta como `app_runtime`, que solo lee y escribe datos.
+**Comprueba:** cada sentencia responde `CREATE ROLE`, `GRANT ROLE`, `CREATE DATABASE`, `GRANT` o
+`ALTER DEFAULT PRIVILEGES`, sin errores. Sin `GRANT app_migrator TO CURRENT_USER`, PostgreSQL 16 y
+posteriores rechazan `CREATE DATABASE` (`must be able to SET ROLE "app_migrator"`): los
+administradores de los proveedores no son superusuarios. El migrador será el propietario del
+esquema y quien lo cambie; la API se conecta como `app_runtime`, que solo lee y escribe datos.
 
 ### 7.6 Copia los ficheros de despliegue al servidor
 

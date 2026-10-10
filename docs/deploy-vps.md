@@ -182,9 +182,14 @@ connection string the console gives):
 
 ```sql
 CREATE ROLE app_migrator LOGIN PASSWORD '<password 1>';
+GRANT app_migrator TO CURRENT_USER;
 CREATE DATABASE app OWNER app_migrator;
 CREATE ROLE app_runtime LOGIN PASSWORD '<password 2>' CONNECTION LIMIT 50;
 ```
+
+The `GRANT` is needed from PostgreSQL 16: an administrator that is not a superuser (a managed
+service's never is) may give a database only to a role it is a member of. Without it,
+`CREATE DATABASE` fails with `must be able to SET ROLE "app_migrator"`.
 
 Then connected **as `app_migrator`** to the database `app`, the runtime role's rights
 ([disaster-recovery.md](disaster-recovery.md#backup-strategy)):
