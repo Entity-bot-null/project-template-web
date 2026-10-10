@@ -169,6 +169,59 @@ tests:
         alertname: ApiAvailabilityBudgetSlowBurn
         exp_alerts: []
 
+  # 2 % of the API's responses are 5xx (a burn rate of 20), while the pages
+  # report Web Vitals four times as often, always 204 and fast. Counted, the
+  # beacons would dilute the ratio to 0.4 % and nobody would be paged.
+  - name: availability, Web Vitals beacons do not dilute the error ratio
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+98x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="500"}'
+        values: '0+2x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/telemetry/web-vitals", http_response_status_code="204"}'
+        values: '0+400x120'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{slo="api-availability"}
+        eval_time: 70m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate5m{slo="api-availability", job="api", deployment_environment_name="production"}'
+            value: 0.02
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ApiAvailabilityBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              slo: api-availability
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'API errors are burning the availability budget fast (api, production)'
+              description: '2% of the responses in the last hour were 5xx: at this rate the 30-day error budget of the 99.9 % availability SLO runs out in two days or less.'
+              runbook_url: docs/incident-response.md#5-high-5xx-rate
+              dashboard_uid: app-slo
+
+  # The same for latency: 80 % of the API's responses are slow, the beacons
+  # are all fast.
+  - name: latency, Web Vitals beacons do not dilute the slow ratio
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200"}'
+        values: '0+100x120'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/users", http_response_status_code="200", le="0.5"}'
+        values: '0+20x120'
+      - series: 'http_server_request_duration_seconds_count{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/telemetry/web-vitals", http_response_status_code="204"}'
+        values: '0+400x120'
+      - series: 'http_server_request_duration_seconds_bucket{job="api", deployment_environment_name="production", instance="i-1", http_route="/api/telemetry/web-vitals", http_response_status_code="204", le="0.5"}'
+        values: '0+400x120'
+    promql_expr_test:
+      - expr: slo:sli_error:ratio_rate5m{slo="api-latency"}
+        eval_time: 70m
+        exp_samples:
+          - labels: 'slo:sli_error:ratio_rate5m{slo="api-latency", job="api", deployment_environment_name="production"}'
+            value: 0.8
+
   # 80 % of the responses take longer than 500 ms. Sign-in is slower still
   # (password hashing) but excluded: with it the ratio would read 90 %.
   - name: latency, fast burn pages, authentication excluded
