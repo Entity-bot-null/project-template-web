@@ -15,6 +15,7 @@
 # file forms stay out.
 **/node_modules
 **/dist
+**/dist-dev
 **/coverage
 **/*.tsbuildinfo
 **/*.log

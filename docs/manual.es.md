@@ -97,7 +97,7 @@ renombrarlos.
 ### 2.3 Instala
 
 ```
-corepack enable        # una vez por máquina
+corepack enable        # una vez por máquina (Node.js 25+: antes npm install -g corepack)
 pnpm install
 ```
 
@@ -469,7 +469,7 @@ Todo lo que se llame `VITE_*` se compila en el bundle público: nunca un secreto
 
 `DB_PORT` (5432), `JWT_ACCESS_SECRET` (la API del stack), `WEB_PORT` (8080), `REDIS_PASSWORD`
 (solo la exige el perfil `redis`), `REDIS_PORT` (6379), `OTLP_HTTP_PORT` (4318), `GRAFANA_PORT`
-(3001), `APP_RELEASE` (la release de las imágenes del stack, por defecto `local`) y las
+(3001), `PROMETHEUS_PORT` (9090), `APP_RELEASE` (la release de las imágenes del stack, por defecto `local`) y las
 integraciones opcionales del stack: `STACK_REDIS_URL`, `STACK_RATE_LIMIT_STORE`,
 `STACK_CACHE_STORE`, `STACK_OTEL_EXPORTER_OTLP_ENDPOINT`, `STACK_SENTRY_DSN`,
 `STACK_WEB_SENTRY_DSN`.
@@ -525,22 +525,22 @@ Todos los comandos que trae la plantilla.
 
 ### 7.2 Scripts de la API (`pnpm --filter api <script>`)
 
-| Script             | Qué hace                                                                                                                                                                          |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dev`              | `prisma generate`, después `nest start --watch`                                                                                                                                   |
-| `build`            | `prisma generate`, después `nest build` en `apps/api/dist`                                                                                                                        |
-| `start`            | `node dist/main.js` (después de `build`)                                                                                                                                          |
-| `typecheck`        | `prisma generate`, después `tsc --noEmit`                                                                                                                                         |
-| `test`             | tests unitarios con Vitest                                                                                                                                                        |
-| `test:watch`       | Vitest en modo watch                                                                                                                                                              |
-| `test:coverage`    | tests unitarios con los umbrales de cobertura de `vitest.config.ts`                                                                                                               |
-| `test:integration` | la suite de integración (`vitest.config.int.ts`)                                                                                                                                  |
-| `openapi:export`   | compila y escribe `openapi/openapi.json` (la mitad de `pnpm contract`)                                                                                                            |
-| `db:migrate`       | `prisma migrate dev` + `prisma generate` (`scripts/migrate.mjs`)                                                                                                                  |
-| `db:deploy`        | `prisma migrate deploy`                                                                                                                                                           |
-| `db:seed`          | compila y ejecuta el seed                                                                                                                                                         |
-| `user:create`      | crea una cuenta en la base de datos de `DATABASE_URL`, en cualquier entorno (contraseña por la entrada estándar; [deploy-vps.md](deploy-vps.md#9-create-the-first-administrator)) |
-| `e2e:server`       | prepara `<db>_e2e` y arranca la API compilada para Playwright (lo lanza `pnpm test:e2e`)                                                                                          |
+| Script             | Qué hace                                                                                                                                                                                                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`              | `prisma generate`, después `nest start --watch`                                                                                                                                                                                                                                                                  |
+| `build`            | `prisma generate`, después `nest build` en `apps/api/dist`                                                                                                                                                                                                                                                       |
+| `start`            | `node dist/main.js` (después de `build`)                                                                                                                                                                                                                                                                         |
+| `typecheck`        | `prisma generate`, después `tsc --noEmit`                                                                                                                                                                                                                                                                        |
+| `test`             | tests unitarios con Vitest                                                                                                                                                                                                                                                                                       |
+| `test:watch`       | Vitest en modo watch                                                                                                                                                                                                                                                                                             |
+| `test:coverage`    | tests unitarios con los umbrales de cobertura de `vitest.config.ts`                                                                                                                                                                                                                                              |
+| `test:integration` | la suite de integración (`vitest.config.int.ts`)                                                                                                                                                                                                                                                                 |
+| `openapi:export`   | compila y escribe `openapi/openapi.json` (la mitad de `pnpm contract`)                                                                                                                                                                                                                                           |
+| `db:migrate`       | `prisma migrate dev` + `prisma generate` (`scripts/migrate.mjs`)                                                                                                                                                                                                                                                 |
+| `db:deploy`        | `prisma migrate deploy`                                                                                                                                                                                                                                                                                          |
+| `db:seed`          | compila y ejecuta el seed                                                                                                                                                                                                                                                                                        |
+| `user:create`      | crea una cuenta en la base de datos de `DATABASE_URL`, en cualquier entorno, con la contraseña por la entrada estándar: `printf '%s' "$PASSWORD" \| pnpm --filter api user:create --email <email> --name <nombre> --role admin` ([deploy-vps.md](deploy-vps.md#9-create-the-first-administrator) en un servidor) |
+| `e2e:server`       | prepara `<db>_e2e` y arranca la API compilada para Playwright (lo lanza `pnpm test:e2e`)                                                                                                                                                                                                                         |
 
 ### 7.3 Scripts de la web (`pnpm --filter web <script>`)
 
@@ -686,7 +686,7 @@ plataforma. Impleméntalo en este orden (los comentarios del fichero lo repiten)
 1. Publica las imágenes una vez por commit (`docker-images.yml` con `push: true`, después del paso de
    login al registro marcado en ese fichero), escanea los digests que informa la publicación y
    guárdalos; reutiliza los digests que guardó staging, para que producción ejecute lo que staging
-   verificó.
+   verificó, y vuelve a escanearlos antes de producción.
 2. Despliega solo `<imagen>@<digest>`, con los digests del build o de ese registro: nunca los
    busques por el tag `<imagen>:<sha>`, que cualquier workflow con `packages: write` puede publicar.
 3. Guarda los digests que estaban corriendo antes del cambio: son el destino del rollback.

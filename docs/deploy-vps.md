@@ -43,7 +43,8 @@ The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
    `<IMAGE_PREFIX>/<image>:<sha>`, scans each digest it pushed with Trivy and records it in the run
    (the artifacts `image-<image>-<sha>`, listed in the run's summary); when an earlier deployment
    of that commit recorded its images (staging, before production), it reuses those digests
-   instead of building. Digests never come from the tag, which any workflow of the repository with
+   instead of building, and scans them again: an advisory published since staging stops production
+   too. Digests never come from the tag, which any workflow of the repository with
    `packages: write` can push ([ci-cd.md](ci-cd.md#deployment)). A record lasts 90 days (or the
    repository's shorter artifact retention); a commit deployed after that is built again;
 3. **release-vps**, in the protected environment: checks that the server's copy of the deploy

@@ -106,8 +106,8 @@ decisiones de 0.1 tienen respuesta.
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------- |
 | Git                | Windows: [Git for Windows](https://git-scm.com/download/win) (incluye Git Bash y `openssl`); macOS: `xcode-select --install`; Linux: tu gestor de paquetes                 | `git --version`          | cualquier versión actual                                                  |
 | Node.js 24         | [nvm](https://github.com/nvm-sh/nvm) (macOS/Linux): `nvm install 24`; Windows: [fnm](https://github.com/Schniz/fnm) o el [instalador oficial](https://nodejs.org) (24 LTS) | `node --version`         | `v24.15.0` o posterior                                                    |
-| pnpm               | `corepack enable` (una vez; viene con Node.js)                                                                                                                             | `pnpm --version`         | `12.5.1` (dentro del proyecto)                                            |
-| Docker             | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows, macOS) o Docker Engine (Linux)                                                                 | `docker compose version` | `Docker Compose version v2…`                                              |
+| pnpm               | `corepack enable` (una vez; Node.js 24 incluye Corepack, desde Node.js 25 instálalo antes: `npm install -g corepack`)                                                      | `pnpm --version`         | `12.5.1` (dentro del proyecto)                                            |
+| Docker             | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows, macOS) o Docker Engine (Linux)                                                                 | `docker compose version` | `Docker Compose version v2` o posterior                                   |
 | GitHub CLI         | [cli.github.com](https://cli.github.com)                                                                                                                                   | `gh --version`           | cualquier versión actual                                                  |
 | VS Code (sugerido) | [code.visualstudio.com](https://code.visualstudio.com)                                                                                                                     |                          | la primera vez que abres el proyecto, ofrece sus extensiones recomendadas |
 
@@ -119,7 +119,8 @@ decisiones de 0.1 tienen respuesta.
 - `node` imprime una versión anterior: `nvm use 24` / `fnm use 24`, y después abre una terminal
   nueva.
 - `pnpm` no se encuentra: ejecuta otra vez `corepack enable` en una terminal abierta como
-  administrador (Windows) o con `sudo` (macOS/Linux).
+  administrador (Windows) o con `sudo` (macOS/Linux). `corepack` no se encuentra (Node.js 25 o
+  posterior): `npm install -g corepack`, o `npm install -g pnpm@12.5.1`.
 - `docker compose version` falla: arranca Docker Desktop y espera hasta que diga que está en marcha.
 
 ### 1.2 Inicia sesión en GitHub desde la terminal
@@ -183,9 +184,11 @@ Abre el proyecto en tu editor (`code .`) y cambia:
 
 Los paquetes `apps/api` y `apps/web` conservan sus nombres (`api`, `web`): son privados.
 
-**Comprueba:** al buscar `example.com` en el proyecto solo aparecen ficheros `.env.example`, tests y
-ejemplos de la documentación; al buscar `REQUIERE CONFIGURACIÓN` aparecen los puntos que siguen
-pendientes (la mayoría están en fases posteriores).
+**Comprueba:** al buscar `example.com` en el proyecto solo aparecen ejemplos y marcadores para más
+adelante: los ficheros `.env.example` (también los de `deploy/vps`), tests, las cuentas del seed de
+desarrollo, comentarios y documentación, y los valores por defecto de `infra/`, `dast.yml` y el smoke
+test (fases 7 a 9); al buscar `REQUIERE CONFIGURACIÓN` aparecen los puntos que siguen pendientes (la
+mayoría están en fases posteriores).
 
 ---
 
@@ -196,10 +199,15 @@ pendientes (la mayoría están en fases posteriores).
 ```
 corepack enable
 pnpm install
+pnpm contract
 ```
 
-**Comprueba:** termina con `Done in …`, y `git config core.hooksPath` imprime `.husky/_` (los hooks
-de Git están instalados).
+`pnpm contract` escribe el nuevo título de la API (2.2) en el contrato versionado,
+`openapi/openapi.json`, y en los tipos del cliente web: hasta entonces el test de deriva del contrato
+de 4.1 falla.
+
+**Comprueba:** `pnpm install` termina con `Done in …`, y `git config core.hooksPath` imprime
+`.husky/_` (los hooks de Git están instalados); `pnpm contract` termina sin errores.
 
 **Si falla:** `ERR_PNPM_UNSUPPORTED_ENGINE` → Node.js es anterior a 24.15 (fase 1).
 `ERR_PNPM_NO_MATURE_MATCHING_VERSION` → una dependencia se publicó hace menos de siete días (la
@@ -215,8 +223,9 @@ openssl rand -hex 32
 Abre `apps/api/.env` y pega el valor impreso después de `JWT_ACCESS_SECRET=`. En local no hace
 falta nada más.
 
-**Comprueba:** `grep JWT_ACCESS_SECRET apps/api/.env` muestra un valor de 64 caracteres.
-`git status` **no** lista `apps/api/.env` (está ignorado: nunca hagas commit de él).
+**Comprueba:** `grep -cE '^JWT_ACCESS_SECRET=[0-9a-f]{64}$' apps/api/.env` imprime `1` (el secreto
+está puesto, sin imprimirlo). `git status` **no** lista `apps/api/.env` (está ignorado: nunca hagas
+commit de él).
 
 ### 3.3 Arranca la base de datos
 
@@ -287,8 +296,10 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-**Comprueba:** los dos informan de que pasaron todos los tests (`passed`, ningún `failed`). Los
-tests end-to-end usan los puertos 3100 y 4173: para `pnpm dev` antes.
+**Comprueba:** los dos informan de que pasaron sus tests (`passed`, ningún `failed`); la ejecución
+de integración además lista como saltada la suite de los adaptadores de Redis, que se ejecuta donde
+`REDIS_TEST_URL` está definida (CI). Los tests end-to-end usan los puertos 3100 y 4173: para
+`pnpm dev` antes.
 
 ### 4.3 Las comprobaciones con Docker
 
@@ -306,11 +317,12 @@ primera vez también descarga la imagen de Semgrep.
 
 ### 4.4 Las imágenes de producción en tu máquina
 
-Añade un secreto para el stack de producción local al `.env` de la raíz (créalo con
-`cp .env.example .env` si no lo has hecho):
+Pon un secreto para el stack de producción local en el `.env` de la raíz (créalo con
+`cp .env.example .env` si no lo has hecho): ábrelo y pega el valor que imprime el primer comando
+después de `JWT_ACCESS_SECRET=`, y después arranca el stack:
 
 ```
-echo "JWT_ACCESS_SECRET=$(openssl rand -hex 32)" >> .env
+openssl rand -hex 32
 docker compose --profile stack up --build
 ```
 
@@ -321,8 +333,8 @@ pnpm smoke --url http://localhost:8080
 ```
 
 **Comprueba:** el smoke test termina con `Smoke test passed (public URL only).` y
-http://localhost:8080 muestra la app (con una base de datos vacía: sin cuentas, que es lo
-esperado).
+http://localhost:8080 muestra la app. El stack usa la base de datos de desarrollo (el mismo servicio
+`db` y su volumen), así que las cuentas de 3.3 también inician sesión ahí.
 
 Páralo: `Ctrl+C`, y después `docker compose --profile stack down`.
 
@@ -474,9 +486,9 @@ el 7.6.
 ### 7.0 En DigitalOcean, del 7.1 al 7.5 con Terraform (opcional)
 
 Qué crea Terraform, cuánto cuesta y por qué:
-[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). Necesitas Terraform 1.16
-([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
-`terraform version` imprime `Terraform v1.16.` y el número de parche) y un token de la API de
+[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). Necesitas Terraform 1.16.5 o un
+1.16 posterior ([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
+`terraform version` imprime `Terraform v1.16.` y un número de parche de 5 o más) y un token de la API de
 DigitalOcean con permiso de escritura (**API → Tokens**).
 
 En tu equipo, la clave de despliegue de este entorno (como en el 7.4) y después el fichero de
@@ -576,7 +588,7 @@ sudo apt-get install -y unattended-upgrades
 sudo dpkg-reconfigure --priority=low unattended-upgrades
 ```
 
-**Comprueba:** `docker compose version` imprime `Docker Compose version v2…`; `sudo ufw status`
+**Comprueba:** `docker compose version` imprime `Docker Compose version v2` o posterior; `sudo ufw status`
 lista OpenSSH, 80 y 443 como `ALLOW`.
 
 ### 7.4 Crea el usuario de despliegue

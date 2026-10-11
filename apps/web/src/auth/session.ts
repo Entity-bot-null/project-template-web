@@ -8,7 +8,8 @@ import type { AuthSession, AuthState } from './types';
 // where any injected script could read it. The refresh token is an httpOnly
 // cookie the browser sends by itself (in production `__Host-refresh_token` on
 // Path=/, in development `refresh_token` scoped to /api/auth; only the
-// refresh and logout routes read it). A page load therefore
+// sign-in, refresh and logout routes read it, sign-in to end the session it
+// replaces). A page load therefore
 // starts with one refresh (`boot`), and every caller (boot, the 401
 // middleware, racing tabs) shares the same in-flight refresh: the server
 // rotates refresh tokens, so two parallel refreshes would race.

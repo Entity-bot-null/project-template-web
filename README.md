@@ -27,7 +27,8 @@ and lists every command (en español: [docs/manual.es.md](docs/manual.es.md)).
 
 ## Requirements
 
-Node.js 24 (`.nvmrc`), pnpm (`corepack enable`), Docker. No external account: Sentry, an
+Node.js 24 (`.nvmrc`), pnpm (`corepack enable`; from Node.js 25, which ships no Corepack,
+`npm install -g corepack` first), Docker. No external account: Sentry, an
 OpenTelemetry backend and Redis are optional and off by default.
 
 ## Quick start

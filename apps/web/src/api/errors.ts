@@ -31,7 +31,13 @@ export async function call<T>(request: Promise<FetchOutcome<T>>): Promise<ApiRes
   let outcome: FetchOutcome<T>;
   try {
     outcome = await request;
-  } catch {
+  } catch (error) {
+    // A success body that is not JSON (a captive portal's page, a proxy's
+    // HTML) makes the client's own parsing reject: an answer came, just not
+    // the API's, as below. Anything else is the network (status 0).
+    if (error instanceof SyntaxError) {
+      return { ok: false, failure: { status: 502, message: NOT_AN_ENVELOPE_MESSAGE } };
+    }
     return { ok: false, failure: { status: 0, message: NETWORK_ERROR_MESSAGE } };
   }
   if (outcome.response.ok) {

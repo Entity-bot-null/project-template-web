@@ -85,16 +85,16 @@ Details: [docs/security.md#dependency-policy](docs/security.md#dependency-policy
 
 ## Observability and infrastructure
 
-| Rule                                                                                                           | Enforced by                                      |
-| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Everything printed by the logger is redacted (credentials in keys and in text)                                 | `AppLogger`, `redact.spec.ts`, `logger.spec.ts`  |
-| Unexpected errors reach the error tracker through `errorTracker()` / `reportError()`, never an SDK directly    | ESLint `no-restricted-imports`                   |
-| Application code uses `@opentelemetry/api` or `observability/metrics.ts`; the SDK loads only when configured   | ESLint `no-restricted-imports`                   |
-| Metric attributes are low-cardinality: never user ids, emails or raw paths                                     | review                                           |
-| Feature code uses the infrastructure adapters (cache, locks, idempotency), never Redis directly                | ESLint `no-restricted-imports`                   |
-| External services are called through `createExternalHttpClient` (timeouts, retries, correlation)               | review                                           |
-| Every optional dependency degrades instead of failing the boot; its degraded behavior is documented and tested | integration specs (`infrastructure.int.spec.ts`) |
-| Every cache entry has a TTL; sensitive data and authorization decisions are never cached                       | `CacheService` (TTL), review                     |
+| Rule                                                                                                                      | Enforced by                                      |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Everything printed by the logger is redacted (credentials in keys and in text)                                            | `AppLogger`, `redact.spec.ts`, `logger.spec.ts`  |
+| Unexpected errors reach the error tracker through `errorTracker()` / `reportError()`, never an SDK directly               | ESLint `no-restricted-imports`                   |
+| Application code uses `@opentelemetry/api` or `apps/api/src/observability/metrics.ts`; the SDK loads only when configured | ESLint `no-restricted-imports`                   |
+| Metric attributes are low-cardinality: never user ids, emails or raw paths                                                | review                                           |
+| Feature code uses the infrastructure adapters (cache, locks, idempotency), never Redis directly                           | ESLint `no-restricted-imports`                   |
+| External services are called through `createExternalHttpClient` (timeouts, retries, correlation)                          | review                                           |
+| Every optional dependency degrades instead of failing the boot; its degraded behavior is documented and tested            | integration specs (`infrastructure.int.spec.ts`) |
+| Every cache entry has a TTL; sensitive data and authorization decisions are never cached                                  | `CacheService` (TTL), review                     |
 
 ## Workflow
 

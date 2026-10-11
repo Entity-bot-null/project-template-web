@@ -2,8 +2,9 @@
 node_modules/
 .pnpm-store/
 
-# Build output
+# Build output (dist-dev: what `pnpm dev` runs, apart from the builds)
 dist/
+dist-dev/
 *.tsbuildinfo
 
 # Generated at install/build time (prisma generate)

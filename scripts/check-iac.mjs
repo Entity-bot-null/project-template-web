@@ -146,9 +146,11 @@ apt-get install -y -qq --no-install-recommends cloud-init gnupg > /dev/null
 echo "--- cloud-init schema ($(cloud-init --version 2>&1))"
 cloud-init schema --config-file /out/user-data.yaml --annotate
 echo '--- files/docker.asc'
-fingerprint=$(GNUPGHOME=$(mktemp -d) gpg --batch --show-keys --with-colons /src/digitalocean/files/docker.asc | awk -F: '$1 == "fpr" { print $10; exit }')
+# Every primary key in the file, not just the first: apt trusts them all
+# for Docker's repository, so the file must hold Docker's key and no other.
+fingerprint=$(GNUPGHOME=$(mktemp -d) gpg --batch --show-keys --with-colons /src/digitalocean/files/docker.asc | awk -F: '$1 == "pub" { primary = 1; next } $1 == "fpr" && primary { print $10; primary = 0 } $1 == "sub" { primary = 0 }')
 if [ "$fingerprint" != "$EXPECTED_FINGERPRINT" ]; then
-  echo "files/docker.asc has the key $fingerprint, not Docker's ($EXPECTED_FINGERPRINT)" >&2
+  echo "files/docker.asc must hold Docker's key ($EXPECTED_FINGERPRINT) and nothing else; it holds:" $fingerprint >&2
   exit 1
 fi
 echo "Docker's release key, $fingerprint"

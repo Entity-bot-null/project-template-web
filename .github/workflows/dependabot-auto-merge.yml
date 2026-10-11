@@ -20,14 +20,16 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   merge:
     name: Merge when approved and green
     if: github.event.review.state == 'approved' && github.event.pull_request.user.login == 'dependabot[bot]'
+    # On the job, not the workflow: every review starts a run, and a run whose
+    # job is skipped (a comment, a request for changes) must not cancel an
+    # approval's run still waiting for CI.
+    concurrency:
+      group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -36,10 +38,29 @@ jobs:
       checks: read # the CI result
       actions: write # start CI on main: a merge made with this token triggers no workflow
     steps:
+      # Before any action runs: a review runs the pull request's version of
+      # this workflow, so an update of an action (fetch-metadata included)
+      # would otherwise run its new code with this job's write token.
+      # Dependabot rewrites `uses:` lines, never a `run:` script.
+      - name: Workflows and actions untouched
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' |
+            grep -Eq '^\.github/(workflows|actions)/'; then
+            echo "::notice title=Merge by hand::It changes a workflow or an action, which the workflow token may not merge."
+            echo "workflows=changed" >> "$GITHUB_OUTPUT"
+          fi
       - name: Dependabot metadata
         id: metadata
+        if: steps.files.outputs.workflows != 'changed'
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
       - name: Check and merge
+        if: steps.files.outputs.workflows != 'changed'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -60,10 +81,6 @@ jobs:
               skip "Dependabot recorded no version change." ;;
             *) skip "A $UPDATE_TYPE update: read its release notes first." ;;
           esac
-          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' |
-            grep -Eq '^\.github/(workflows|actions)/'; then
-            skip "It changes a workflow or an action, which the workflow token may not merge."
-          fi
 
           permission=$(gh api "repos/$REPO/collaborators/$REVIEWER/permission" --jq .permission)
           case "$permission" in

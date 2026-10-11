@@ -155,8 +155,9 @@ jobs:
           github-token: ${{ github.token }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.recorded.outputs.run-id == ''
+      # Both paths pull from the registry: the scan below reads the image it
+      # deploys, built here or reused.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        if: steps.recorded.outputs.run-id == ''
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -209,9 +210,11 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "$IMAGE_NAME: $ref ($origin)" >> "$GITHUB_STEP_SUMMARY"
       # The pushed digest itself, not the gates' local build: what ships is
-      # what was scanned (docs/security.md#container-images).
+      # what was scanned (docs/security.md#container-images). A reused image
+      # is scanned again: it was scanned when staging built it, up to 90 days
+      # ago, and an advisory published since then must stop production too
+      # (deploy a newer commit, whose build takes the fix).
       - name: Scan the pushed image
-        if: steps.recorded.outputs.run-id == ''
         env:
           REF: ${{ steps.image.outputs.ref }}
         run: |

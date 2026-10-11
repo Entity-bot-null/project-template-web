@@ -666,12 +666,14 @@ tests may create data freely; keep them independent of each other.
 
    ```ts
    // Notes one user may keep (protects the database from a single account).
-   NOTES_MAX_PER_USER: z.coerce.number().int().positive().default(1000),
+   NOTES_MAX_PER_USER: emptyAsUnset(z.coerce.number().int().positive().default(1000)),
    ```
 
    Numbers and booleans arrive as strings: use `z.coerce.number()` or
-   `z.enum(['true', 'false']).transform((v) => v === 'true')`. A value required only in
-   production: make it optional and add the check in `superRefine` (see `AUTH_COOKIE_SAMESITE`).
+   `z.enum(['true', 'false']).transform((v) => v === 'true')`, and wrap a value with a default in
+   `emptyAsUnset(...)` (the schema's own helpers, next to `flag` and `optional`): an empty
+   `NOTES_MAX_PER_USER=` then means the default, not the 0 `z.coerce.number()` makes of it. A value required only in
+   production: make it optional and add the check in `superRefine` (see `TRUST_PROXY`).
 
 2. Use it through the validated module: `import { env } from '../env/env.js'` then
    `env.NOTES_MAX_PER_USER`. Reading `process.env` is a lint error.
