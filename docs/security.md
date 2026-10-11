@@ -329,10 +329,13 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
   error tracking off silently. Use separate Sentry projects for API and web, restrict who can read
   them, and set the data retention the project's policy allows.
 - Telemetry follows the same rules: spans carry statements with placeholders, never values; URL
-  attributes lose their query string and credentials; string attributes are redacted, on the span,
-  on its events (exception messages and stack traces) and in its status message
-  (`RedactingSpanProcessor`). Provider credentials (`OTEL_EXPORTER_OTLP_HEADERS`) are read by the
-  exporters from the environment, never by application code.
+  attributes lose their query string and credentials; values under a sensitive name are masked
+  whole and every other string attribute (string arrays included) is redacted, on the span, on its
+  events (exception messages and stack traces) and in its status message
+  (`RedactingSpanProcessor`). The resource names the process (`service.instance.id`), not the
+  machine: no host name or machine id unless the operator sets one. Provider credentials
+  (`OTEL_EXPORTER_OTLP_HEADERS`) are read by the exporters from the environment, never by
+  application code.
 
 ## Redis
 
