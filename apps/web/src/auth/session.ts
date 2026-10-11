@@ -134,7 +134,18 @@ const BOOT_RETRY_MAX_WAIT_SEC = 5;
 
 function refreshOnce(): Promise<ApiResult<AuthSession>> {
   return withAuthLock(() =>
-    call(api.POST('/api/auth/refresh', { signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) })),
+    call(
+      api.POST('/api/auth/refresh', {
+        // The server rotates the token before it answers. A refresh the
+        // browser abandoned (a reload, a navigation, a closed tab) would
+        // leave the jar the old cookie: the next page load would present it
+        // as a lost race and sign out, and 30 seconds later as theft, ending
+        // the session family. keepalive lets the answer, and its new cookie,
+        // land after the page is gone; the next page's one retry picks it up.
+        keepalive: true,
+        signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      }),
+    ),
   );
 }
 
