@@ -93,8 +93,11 @@ jobs:
           ref: ${{ needs.release-please.outputs.tag }}
           persist-credentials: false
       - uses: ./.github/actions/setup
-      # CycloneDX, the production dependencies of every app (what the images
-      # ship), from the locked versions (docs/security.md#artifact-integrity).
+      # CycloneDX, the npm packages the apps' production dependencies resolve
+      # to in the lockfile, peer dependencies included. Not what an image adds
+      # (operating system packages, Node.js, nginx), and bound to the tag, not
+      # to an image: each pushed image carries its own SBOM and provenance
+      # (docs/security.md#artifact-integrity).
       - run: pnpm sbom:generate
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
