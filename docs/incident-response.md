@@ -321,8 +321,18 @@ per-instance counters`; `Cache unavailable, serving from the source`;
   together); which secret could be exposed and since when.
 - **Immediate actions:**
   - stolen session: the family is revoked automatically; to end every session of a user, revoke
-    their rows: `UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL;`
-    (their access tokens expire within 15 minutes);
+    their rows under the user's row lock, the way the API changes sessions (a refresh in flight
+    would otherwise commit a new token after a plain `UPDATE`, and that token keeps working):
+
+    ```sql
+    BEGIN;
+    SELECT id FROM users WHERE id = '<id>' FOR UPDATE;
+    UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL;
+    COMMIT;
+    ```
+
+    Their access tokens still work until they expire, within 15 minutes;
+
   - credential stuffing: block at the edge (WAF, IP reputation); with several API instances, the
     shared rate limit store (`RATE_LIMIT_STORE=redis`) makes the per-IP limit hold across them;
   - leaked `JWT_ACCESS_SECRET`: rotate it without a previous value (docs/security.md#secret-rotation):

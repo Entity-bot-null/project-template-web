@@ -134,9 +134,12 @@ Run it from the incident record (docs/incident-response.md), writing down the ti
      cannot list keys. In-process caches empty themselves when the instances restart.
    - **End every session when the recovery point is in the past:** logouts, password changes and
      theft revocations made after it are undone by the restore, so old refresh tokens would work
-     again. `UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL;` signs everyone out
-     (their next refresh answers 401, without false theft alerts); access tokens expire within 15
-     minutes, or at once if `JWT_ACCESS_SECRET` is rotated too.
+     again.
+     `BEGIN; LOCK TABLE users IN EXCLUSIVE MODE; UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL; COMMIT;`
+     signs everyone out (their next refresh answers 401, without false theft alerts). The lock
+     waits for the sign-ins and refreshes in flight and holds new ones until the commit, so none
+     mints a token the update misses. Access tokens expire within 15 minutes, or at once if
+     `JWT_ACCESS_SECRET` is rotated too.
 6. **Health and readiness:** `GET /api/health/ready` on every instance answers 200 with
    `database: "ok"`.
 7. **Smoke test:** `pnpm smoke --url <public URL> --api <API URL> --release <sha>`.
