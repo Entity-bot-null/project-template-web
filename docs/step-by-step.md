@@ -896,14 +896,14 @@ new pull request ([deploy-vps.md](deploy-vps.md#roll-back)).
 
 ## Phase 12. The maintenance calendar
 
-| When                          | Do                                                                                                                                                                                                                             |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Every week                    | Approve Dependabot's update pull requests: patch and minor ones merge themselves once CI is green; majors and workflow updates you merge by hand.                                                                              |
-| Every week                    | Read the DAST results (the **DAST** workflow runs on Mondays).                                                                                                                                                                 |
-| Every month                   | On each server: `docker image prune`, and `docker image rm` the release images not named in `release.env` or `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reboot if `/var/run/reboot-required` exists. |
-| Every quarter                 | A database restore drill; review the alerts; check `RELEASE_PLEASE_TOKEN`'s expiration, if you set it.                                                                                                                         |
-| When a secret may have leaked | Rotate it at once ([security.md](security.md#secret-rotation)).                                                                                                                                                                |
-| After every incident          | A short postmortem; update the runbook and the alerts.                                                                                                                                                                         |
+| When                          | Do                                                                                                                                                                                                                                                             |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every week                    | Approve Dependabot's update pull requests: patch and minor ones merge themselves once CI is green; majors and workflow updates you merge by hand.                                                                                                              |
+| Every week                    | Read the DAST results (the **DAST** workflow runs on Mondays).                                                                                                                                                                                                 |
+| Every month                   | On each server: `docker image prune`, and `docker image rm` the release images not named in `release.env` or `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reboot if `/var/run/reboot-required` exists.                                 |
+| Every quarter                 | A database restore drill; review the alerts; check `RELEASE_PLEASE_TOKEN`'s expiration, if you set it; what Dependabot never proposes: a Node.js LTS major (each October), pnpm, PostgreSQL and Redis majors ([ci-cd.md](ci-cd.md#keeping-the-stack-current)). |
+| When a secret may have leaked | Rotate it at once ([security.md](security.md#secret-rotation)).                                                                                                                                                                                                |
+| After every incident          | A short postmortem; update the runbook and the alerts.                                                                                                                                                                                                         |
 
 ---
 
