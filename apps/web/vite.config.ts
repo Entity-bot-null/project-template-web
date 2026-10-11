@@ -45,7 +45,12 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { '/api': apiTarget },
+    // The Host the browser sent goes through unchanged (the shorthand
+    // `'/api': apiTarget` would replace it with the API's address): the API's
+    // CSRF guard reads it as this page's origin for browsers that send no
+    // Fetch Metadata, such as a phone on the LAN testing the dev server
+    // (scripts/dev-proxy.test.mjs, docs/security.md#csrf-cors-xss).
+    proxy: { '/api': { target: apiTarget, changeOrigin: false } },
   },
   // `vite preview` reuses server.proxy.
   preview: {
