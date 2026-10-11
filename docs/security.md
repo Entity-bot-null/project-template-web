@@ -91,6 +91,10 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 - **A rate-limited boot** (`429` on the first refresh of a page) waits out a `Retry-After` of up to
   5 seconds once, then settles as usual: people behind one address share the per-address limit, and
   a `429` says nothing about the session.
+- **A refresh survives the page** (`keepalive`): the server rotates the token before it answers,
+  so a refresh abandoned by a reload, a navigation or a closed tab would leave the old cookie in
+  the jar, read as a lost race at the next page load and as theft 30 seconds later. Its answer
+  lands after the page is gone, and the next page's one retry picks up the new cookie.
 - **Sign-out** is immediate in the tab and in the other open tabs (`BroadcastChannel`), including
   one that was picking up the session at that moment (its refresh never lands). The
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next
@@ -156,15 +160,23 @@ API decides what is **allowed**. Never rely on a hidden link or a client guard a
   or the scheme and host the request was sent to) or one of `CORS_ORIGINS`, and `Origin: null` is
   refused. Set `APP_ORIGIN` in production: behind the web image, nginx sends the API its own
   upstream name as `Host`, so nothing else tells the API its public origin (it warns at boot
-  without it). Requests with neither header pass: non-browser clients carry no victim's cookies,
-  and a browser that sends neither still applies SameSite. Bearer-token routes cannot be forged anyway
-  (browsers never attach the header), and the API accepts JSON bodies only
+  without it). In development the Vite proxy passes the browser's `Host` through, so a phone on
+  the LAN can use the dev server. Requests with neither header pass: non-browser clients carry no
+  victim's cookies, and a browser that sends neither still applies SameSite. Bearer-token routes
+  cannot be forged anyway (browsers never attach the header), and the API accepts JSON bodies only
   (`common/http/json-only.middleware.ts`, 415 otherwise): HTML forms, the one kind of body another
   site can send without a CORS preflight, never reach a handler.
 - **CORS:** off by default. The web app reaches the API on its own origin (Vite proxy in
-  development, the web image's nginx in production). Set `CORS_ORIGINS` only for a client on another
-  origin, sibling subdomains included; for another _site_, also set `AUTH_COOKIE_SAMESITE=none`
-  (production only).
+  development, the web image's nginx in production), and that is the only way it runs: it calls
+  `/api` on the page's own origin with same-origin credentials, and its boot reads the
+  `has_session` hint, a cookie of the API's host that a page on another origin cannot read.
+  **Serving the web app from another origin than the API is not supported**: serve both from one
+  host (the web image forwards `/api`). `CORS_ORIGINS` is for another browser client you build,
+  sibling subdomains included (same site: the `SameSite=Strict` cookie still travels). A client
+  on another _site_ also needs `AUTH_COOKIE_SAMESITE=none` (production only) and third-party
+  cookies, which Safari blocks by default and other browsers block in private windows or by user
+  choice: there it cannot renew its session, and its users sign in again at every page load. Give
+  such a client a proxy to the API on its own origin instead.
 - **XSS:** React escapes output; never use `dangerouslySetInnerHTML` without a sanitizer (OPCIONAL:
   DOMPurify). The web image sends a strict CSP (`default-src 'self'`, no inline scripts, no
   framing); widen it per directive, in review, when a feature needs it.
@@ -576,10 +588,11 @@ Accepted on purpose, each with its way out:
   into a log message stays readable. Way out: log ids (review rule).
 - **No MFA, no account lockout, no breached-password check**: the account lifecycle is product
   work (see Authentication).
-- **A refresh response lost on the network** (the server rotated the token, the browser kept the
-  old cookie) looks like theft once 30 seconds have passed: the family ends and the user signs in
-  again. That is the price of reuse detection (RFC 9700 accepts it); raise
-  `REFRESH_REUSE_LEEWAY_SEC` only with a reason.
+- **A refresh response lost on the network** (the server rotated the token, the connection
+  dropped before the answer arrived) looks like theft once 30 seconds have passed: the family
+  ends and the user signs in again. That is the price of reuse detection (RFC 9700 accepts it);
+  raise `REFRESH_REUSE_LEEWAY_SEC` only with a reason. A reload or a closed tab does not lose it:
+  the web app sends its refreshes with `keepalive`.
 - **Old browsers** without `BroadcastChannel` keep a signed-out tab's access token until it expires
   (15 minutes), and without Web Locks three or more tabs refreshing at the same moment can sign one
   of them out locally (it signs in again; the session itself is fine). The server session is
@@ -600,7 +613,8 @@ Accepted on purpose, each with its way out:
 
 - [ ] `SECURITY.md`: a real private contact, and GitHub private vulnerability reporting enabled.
 - [ ] TLS and HSTS at the edge; `TRUST_PROXY` (and nginx realip) for the real topology.
-- [ ] `CORS_ORIGINS` / `AUTH_COOKIE_SAMESITE` if the app and the API live on different origins.
+- [ ] `CORS_ORIGINS` / `AUTH_COOKIE_SAMESITE` only for another browser client on another origin;
+      the web app itself is served on the API's origin ([CSRF, CORS, XSS](#csrf-cors-xss)).
 - [ ] `RATE_LIMIT_STORE=redis` (with a private, authenticated, TLS Redis) if more than one API
       instance runs.
 - [ ] Error tracking (Sentry projects for API and web), its access and retention; tracing backend
