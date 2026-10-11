@@ -951,7 +951,7 @@
   "info": {
     "title": "API",
     "description": "REST API under /api. Every response body is { data, message }; errors carry data: null. Authenticated routes take the access token from POST /api/auth/sign-in as a bearer token; the refresh token is an httpOnly cookie.",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "contact": {}
   },
   "tags": [],
