@@ -124,6 +124,15 @@ describe('refresh', () => {
     expect(getAccessToken()).toBeNull();
   });
 
+  it('keeps a refresh going when the page is reloaded or closed, so its new cookie lands', async () => {
+    // The server rotates the token before it answers: a refresh abandoned by a
+    // reload would leave the browser the old cookie, which the next page load
+    // presents as a lost race, and later as theft (its family is revoked).
+    const { calls } = stubFetch({ [REFRESH]: () => session('token-1') });
+    await expect(boot()).resolves.toBe(true);
+    expect(calls[0]?.keepalive).toBe(true);
+  });
+
   it('refreshes one tab at a time through a Web Lock when the browser has them', async () => {
     const held: string[] = [];
     const locks = {
