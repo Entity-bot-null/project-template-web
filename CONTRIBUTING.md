@@ -2,8 +2,8 @@
 
 ## Setup
 
-Node.js 24, pnpm (`corepack enable`), Docker. Then follow the quick start in the
-[README](README.md). `pnpm install` also installs the Git hooks.
+Node.js 24, pnpm (`corepack enable`; from Node.js 25, `npm install -g corepack` first), Docker.
+Then follow the quick start in the [README](README.md). `pnpm install` also installs the Git hooks.
 
 ## From issue to main
 

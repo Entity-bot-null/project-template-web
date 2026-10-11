@@ -27,8 +27,12 @@ updates:
       prefix: chore
       include: scope
 
+  # The workflows, and the composite action they share (.github/actions/setup):
+  # '/' alone covers .github/workflows and a root action.yml only.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     cooldown:
@@ -64,6 +68,14 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # A PostgreSQL or Redis major moves by hand, with docker-compose.yml and,
+      # for PostgreSQL, the managed database and its data
+      # (docs/ci-cd.md#keeping-the-stack-current): CI tests the version that runs.
+      - dependency-name: docker/library/postgres
+        update-types: [version-update:semver-major]
+      - dependency-name: docker/library/redis
+        update-types: [version-update:semver-major]
     groups:
       tools:
         patterns: ['*']
@@ -80,6 +92,13 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # Majors by hand, with the CI images above: a PostgreSQL data directory
+      # (the local volume) does not start under the next major.
+      - dependency-name: postgres
+        update-types: [version-update:semver-major]
+      - dependency-name: redis
+        update-types: [version-update:semver-major]
     commit-message:
       prefix: build
 

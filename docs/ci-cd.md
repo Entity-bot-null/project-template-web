@@ -298,6 +298,8 @@ which the gate enforces.
 | Compose images                                                                                                                                                | tag                                                                | Dependabot (`docker-compose`)                            |
 | npm packages                                                                                                                                                  | `pnpm-lock.yaml` (integrity hashes)                                | Dependabot (`npm`), `pnpm update`                        |
 | Terraform providers (`infra/terraform`)                                                                                                                       | exact version in `versions.tf`, checksums in `.terraform.lock.hcl` | Dependabot (`terraform`), version and checksums together |
+| Node.js                                                                                                                                                       | the major in `.nvmrc` (CI, hooks); the base images above           | the major by hand ([below](#nodejs))                     |
+| pnpm                                                                                                                                                          | `packageManager` in `package.json`, recorded in `pnpm-lock.yaml`   | by hand ([below](#pnpm))                                 |
 
 The Dockerfiles' base images come from registries without Docker Hub's anonymous pull limit, which
 CI runners share and hit: the same images, with the same digests, as on Docker Hub.
@@ -318,6 +320,84 @@ official images on Amazon ECR Public). The images only Docker Hub hosts are pull
 stays the fallback, and Dependabot keeps updating the pins from their source. GHCR and ECR Public
 limit anonymous pulls too, so before a script runs a tool image it pulls it and, when a registry
 answers with its rate limit, retries after 5, 10 and 20 seconds (`ensureImage`).
+
+## Keeping the stack current
+
+Dependabot's pull requests are the weekly routine ([Dependency updates](#dependency-updates)). What
+it never proposes is moved by a person, on its own branch, with the full CI on its pull request
+(the images are built and scanned there too):
+
+| Part                | Dependabot proposes                                                   | Moved by hand                                                                      |
+| ------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| npm packages        | minors and patches (grouped), majors (one per pull request)           | merging a major, after its release notes; [TypeScript](#typescript)                |
+| Node.js             | the base image's new digest within the major, weekly                  | [the major](#nodejs), and `@types/node`'s with it                                  |
+| pnpm                | nothing: it never edits `packageManager`                              | [a new version](#pnpm)                                                             |
+| GitHub Actions      | new SHA and version comment, in the workflows and `.github/actions/*` | merging: the auto-merge never merges a change to a workflow or an action           |
+| Tool images         | tag and digest together                                               | a Terraform minor also needs `required_version` ([above](#infrastructure-as-code)) |
+| PostgreSQL, Redis   | the new digest within the major (CI images); Compose tags within it   | [the major](#postgresql-and-redis)                                                 |
+| Terraform providers | version and lock-file checksums together                              | nothing                                                                            |
+
+### Node.js
+
+`.nvmrc` names the major (`24`), not a release: CI runs a release of it, and the Dockerfiles' base
+image (`node:24-bookworm-slim`, by digest) gets the new patch releases through Dependabot. A major
+moves once it is an LTS release (an even major, from its October):
+
+1. `.nvmrc`: the new major. `package.json` `engines.node` accepts it already
+   (`^24.15.0 || >=26.0.0`); drop the old major once everybody has moved (`engineStrict` refuses an
+   install outside the range).
+2. `@types/node` in the root and both apps: `pnpm add -D @types/node@^<major>` in each (Dependabot
+   leaves its majors to this step).
+3. The Dockerfiles (`apps/api/Dockerfile`, every `FROM` of the base image; `apps/web/Dockerfile`):
+   the new tag with its digest, from
+   `docker buildx imagetools inspect public.ecr.aws/docker/library/node:<major>-bookworm-slim`.
+4. Corepack is not part of Node.js 25 and later, and the images install pnpm with it: replace
+   `RUN corepack enable` with `RUN npm install -g corepack@<version> && corepack enable` (an exact
+   version, at least a week old). On `node:26-bookworm-slim` this gives the pnpm of
+   `packageManager`; the hardened stage already deletes npm and Corepack from the shipped images.
+5. The documents and comments that name the major:
+   `grep -rnE "Node\.js 24|24\.15|node:24" README.md CONTRIBUTING.md docs apps/*/Dockerfile`
+   (the manual and the step-by-step guide in both languages).
+6. `pnpm install`, the gates ([Running the gates locally](#running-the-gates-locally)) and the
+   images (`docker compose --profile stack up --build`). On the pull request, CI builds and scans
+   the images on the new base.
+
+### pnpm
+
+`packageManager` in `package.json` pins pnpm for developers (pnpm switches to it by itself), CI
+(`pnpm/action-setup` reads it) and the images (Corepack reads it); `pnpm-lock.yaml` records it
+with its checksum (`packageManagerDependencies`). Dependabot only rewrites dependency declarations,
+never `packageManager`.
+
+1. Read the release notes: the settings of `pnpm-workspace.yaml` (the supply-chain policies) change
+   between majors; `pnpm deps:check` (in `pnpm security`) checks they still hold.
+2. `pnpm self-update <version>`, a release at least a week old: it rewrites `packageManager` (the
+   project's `minimumReleaseAge` does not apply to `self-update`).
+3. `pnpm install`: it records the version in `pnpm-lock.yaml`. Without it every
+   `pnpm install --frozen-lockfile` fails ("Cannot update packageManagerDependencies").
+4. The version named in the manual and the step-by-step guide (both languages).
+5. The gates, and the images.
+
+### TypeScript
+
+Dependabot proposes TypeScript like any package, a major in its own pull request. typescript-eslint
+supports a range of TypeScript versions (`pnpm view typescript-eslint peerDependencies`:
+`>=4.8.4 <6.1.0` with typescript-eslint 8.71, so neither 6.1 nor 7 yet): a version outside it is not
+merged until typescript-eslint supports it. Then `pnpm typecheck`, `pnpm lint` and the tests.
+
+### PostgreSQL and Redis
+
+Their majors move by hand, together, so CI keeps testing what runs:
+
+1. `docker-compose.yml` (`db`, `redis`) and `.github/tool-images/Dockerfile` (`postgres`, `redis`,
+   tag and digest): the same major.
+2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure,
+   then `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the
+   accepted majors), and a restore drill afterwards
+   ([disaster-recovery.md](disaster-recovery.md#checklist)).
+3. Local data: a PostgreSQL data directory does not start under the next major. Dump it before
+   (`docker compose exec db pg_dumpall -U app > dump.sql`), remove the volume, start the new
+   version and restore it; or start empty, with `pnpm db:migrate` and `pnpm db:seed`.
 
 ## Deployment
 
