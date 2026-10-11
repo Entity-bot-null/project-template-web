@@ -1,12 +1,16 @@
 import { Logger } from '@nestjs/common';
+import { PrismaPg } from '@prisma/adapter-pg';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestApp, resetDatabase, type TestApp } from '../../test/app.js';
 import { bearer, cookiesOf, seedUser, signIn, TEST_PASSWORD } from '../../test/auth.js';
 import { envelopeOf } from '../../test/http.js';
+import { env } from '../env/env.js';
+import { PrismaClient } from '../prisma/generated/client.js';
+import type { PrismaService } from '../prisma/prisma.service.js';
 import { REFRESH_REUSE_LEEWAY_SEC, SIGN_IN_RATE_LIMIT } from './auth.constants.js';
 import { hashPassword } from './password.js';
-import { hashRefreshToken, SessionsService } from './sessions.service.js';
+import { hashRefreshToken, RefreshRaceLostException, SessionsService } from './sessions.service.js';
 
 const EMAIL = 'user@example.com';
 const tokenOf = (cookie: string) => cookie.slice(cookie.indexOf('=') + 1);
@@ -339,6 +343,40 @@ describe('Auth (integration)', () => {
       .set('Cookie', refreshCookieOf(winner ?? results[0]!))
       .expect(200);
     await expect(t.prisma.session.count({ where: { revokedAt: null } })).resolves.toBe(1);
+  });
+
+  it('settles concurrent refreshes the same way whatever isolation the database defaults to', async () => {
+    // A database or role configured with a stricter default isolation (a
+    // managed service's parameter, a DBA's choice): every transaction of this
+    // client starts SERIALIZABLE unless it says otherwise.
+    const url = new URL(env.DATABASE_URL);
+    url.searchParams.set('options', '-c default_transaction_isolation=serializable');
+    const strict = new PrismaClient({
+      adapter: new PrismaPg({ connectionString: url.toString() }),
+    });
+    try {
+      await expect(strict.$queryRaw`SHOW default_transaction_isolation`).resolves.toEqual([
+        { default_transaction_isolation: 'serializable' },
+      ]);
+      // The service only needs the client's queries and transactions.
+      const sessions = new SessionsService(strict as unknown as PrismaService);
+      const token = tokenOf((await signIn(t.server, EMAIL)).refreshCookie);
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: 5 }, () => sessions.rotate(token)),
+      );
+
+      expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      // The others lost a race (401, the cookie the winner set is kept), not a
+      // serialization failure (500, and a database error alert).
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          expect(outcome.reason).toBeInstanceOf(RefreshRaceLostException);
+        }
+      }
+      await expect(t.prisma.session.count({ where: { revokedAt: null } })).resolves.toBe(1);
+    } finally {
+      await strict.$disconnect();
+    }
   });
 
   it('leaves no live session when a logout races a refresh of the same token', async () => {

@@ -597,15 +597,15 @@ demás comandos de migración ([7.7](#77-comandos-de-operación)).
 
 ### 7.7 Comandos de operación
 
-| Comando                                                                                                             | Uso                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `curl http://<api>:3000/api/health/ready`                                                                           | readiness de una instancia, desde dentro de la plataforma                                            |
-| `pnpm smoke --url <URL pública> --api <URL de la API> --release <sha>`                                              | después de un despliegue, un restore o un incidente                                                  |
-| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate>`                                                        | aplica las migraciones pendientes                                                                    |
-| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate> node node_modules/prisma/build/index.js migrate status` | qué migraciones tiene un entorno                                                                     |
-| `... migrate resolve --rolled-back <migración>` / `--applied <migración>`                                           | registra el resultado de una migración fallida ([database.md](database.md#when-a-migration-fails))   |
-| `pg_dump`, `pg_restore`, `createdb`                                                                                 | backups y restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine)) |
-| `UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL;`                             | termina todas las sesiones de un usuario (incidente de seguridad)                                    |
+| Comando                                                                                                                                                   | Uso                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness de una instancia, desde dentro de la plataforma                                                                             |
+| `pnpm smoke --url <URL pública> --api <URL de la API> --release <sha>`                                                                                    | después de un despliegue, un restore o un incidente                                                                                   |
+| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate>`                                                                                              | aplica las migraciones pendientes                                                                                                     |
+| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate> node node_modules/prisma/build/index.js migrate status`                                       | qué migraciones tiene un entorno                                                                                                      |
+| `... migrate resolve --rolled-back <migración>` / `--applied <migración>`                                                                                 | registra el resultado de una migración fallida ([database.md](database.md#when-a-migration-fails))                                    |
+| `pg_dump`, `pg_restore`, `createdb`                                                                                                                       | backups y restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine))                                  |
+| `BEGIN; SELECT id FROM users WHERE id = '<id>' FOR UPDATE; UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL; COMMIT;` | termina todas las sesiones de un usuario (incidente de seguridad); el bloqueo del usuario impide que un refresh en curso la sobreviva |
 
 ## 8. CI/CD
 
