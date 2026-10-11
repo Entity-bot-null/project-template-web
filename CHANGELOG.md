@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1](https://github.com/Entity-bot-null/project-template-web/compare/v1.1.0...v1.1.1) (2026-10-11)
+
+
+### Bug fixes
+
+* **api:** keep session changes serialized under any isolation level and in manual revocations ([#27](https://github.com/Entity-bot-null/project-template-web/issues/27)) ([314e8fc](https://github.com/Entity-bot-null/project-template-web/commit/314e8fc992b9807eaf2589d7c84ea34c38d2efa7))
+* **db:** refuse a database whose applied migrations were edited, and contract steps without a reason ([#30](https://github.com/Entity-bot-null/project-template-web/issues/30)) ([fd94e60](https://github.com/Entity-bot-null/project-template-web/commit/fd94e60433fcd15f07a906e6a89b290efaa7e083))
+* **deploy:** one deployment or rollback at a time on the server, readiness after a rollback ([#25](https://github.com/Entity-bot-null/project-template-web/issues/25)) ([a02b87b](https://github.com/Entity-bot-null/project-template-web/commit/a02b87b962724ad2409e46a3025773f132509b4a))
+* **web:** keep a refresh alive across a reload so its rotated cookie lands ([#28](https://github.com/Entity-bot-null/project-template-web/issues/28)) ([146422d](https://github.com/Entity-bot-null/project-template-web/commit/146422d96bb33b77df68dd5690224d5cb53d8b6a))
+* **web:** pass the browser's Host through the dev proxy, and document the one-origin topology ([#29](https://github.com/Entity-bot-null/project-template-web/issues/29)) ([da2a5c4](https://github.com/Entity-bot-null/project-template-web/commit/da2a5c415e346ade48c45e545a1a53d8ddb25f4d))
+
 ## [1.1.0](https://github.com/Entity-bot-null/project-template-web/compare/v1.0.0...v1.1.0) (2026-10-11)
 
 
