@@ -10,6 +10,7 @@ import type { Request, Response } from 'express';
 import { RedisUnavailableError } from '../../infrastructure/redis/redis.service.js';
 import { errorTracker } from '../../observability/error-tracker.js';
 import { type ErrorOrigin, recordServerError } from '../../observability/metrics.js';
+import { isDatabaseConnectionFailure } from '../../prisma/connection-failures.js';
 import { Prisma } from '../../prisma/generated/client.js';
 import { ExternalServiceError } from '../http/external-http.js';
 import { pathOf } from '../logging/request-context.middleware.js';
@@ -116,7 +117,9 @@ export function classifyFailure(exception: unknown): FailureOrigin {
     exception instanceof Prisma.PrismaClientKnownRequestError ||
     exception instanceof Prisma.PrismaClientUnknownRequestError ||
     exception instanceof Prisma.PrismaClientInitializationError ||
-    exception instanceof Prisma.PrismaClientRustPanicError
+    exception instanceof Prisma.PrismaClientRustPanicError ||
+    // A lost connection reaches us as the driver's plain Error.
+    isDatabaseConnectionFailure(exception)
   ) {
     return { origin: 'database', report: true };
   }

@@ -213,19 +213,19 @@ The first commit runs the pre-commit hook over every file (about 40 seconds).
 
 Then the repository settings (REQUIERE CONFIGURACIÓN), in the web UI or with `gh`:
 
-| Setting                                                                                             | Where / command                                                                                                      |
-| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Squash merge only, default message = pull request title, delete branches after merge                | Settings → General → Pull Requests                                                                                   |
-| Ruleset for `main`: pull requests, **CI passed** and **Conventions**, code owners, no force push    | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/main.json` (public repository or paid plan) |
-| Release tags `v*` immutable                                                                         | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/tags.json`                                  |
-| Read-only default token for workflows                                                               | Settings → Actions → General → Workflow permissions → Read repository contents                                       |
-| Environments `staging` and `production`, deployment branches "`main` only", reviewers on production | Settings → Environments                                                                                              |
-| Token for release pull requests (so CI runs on them)                                                | `gh secret set RELEASE_PLEASE_TOKEN` (a GitHub App token or a fine-grained token: contents, pull requests, issues)   |
-| Registry for the images                                                                             | `gh variable set IMAGE_PREFIX --body ghcr.io/OWNER/REPO`                                                             |
-| Passive DAST of staging, once it exists                                                             | `gh variable set DAST_STAGING_URL --body https://<staging host>`                                                     |
-| CodeQL, dependency review (public repository or GitHub Advanced Security)                           | `gh variable set ENABLE_CODEQL --body true`, `gh variable set ENABLE_DEPENDENCY_REVIEW --body true`                  |
-| Dependabot alerts and security updates, private vulnerability reporting, push protection            | Settings → Code security                                                                                             |
-| Deployment secrets of an environment                                                                | `gh secret set <NAME> --env production` (or the platform's secret store)                                             |
+| Setting                                                                                             | Where / command                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Squash merge only, default message = pull request title, delete branches after merge                | Settings → General → Pull Requests                                                                                                                                         |
+| Ruleset for `main`: pull requests, **CI passed** and **Conventions**, code owners, no force push    | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/main.json` (public repository or paid plan)                                                       |
+| Release tags `v*` immutable                                                                         | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/tags.json`                                                                                        |
+| Read-only default token for workflows                                                               | Settings → Actions → General → Workflow permissions → Read repository contents; tick "Allow GitHub Actions to create and approve pull requests" (the release pull request) |
+| Environments `staging` and `production`, deployment branches "`main` only", reviewers on production | Settings → Environments                                                                                                                                                    |
+| Optional token for release pull requests (every pull request workflow runs on them)                 | `gh secret set RELEASE_PLEASE_TOKEN` (a GitHub App token or a fine-grained token: contents, pull requests, issues)                                                         |
+| Registry for the images                                                                             | `gh variable set IMAGE_PREFIX --body ghcr.io/OWNER/REPO`                                                                                                                   |
+| Passive DAST of staging, once it exists                                                             | `gh variable set DAST_STAGING_URL --body https://<staging host>`                                                                                                           |
+| CodeQL, dependency review (public repository or GitHub Advanced Security)                           | `gh variable set ENABLE_CODEQL --body true`, `gh variable set ENABLE_DEPENDENCY_REVIEW --body true`                                                                        |
+| Dependabot alerts and security updates, private vulnerability reporting, push protection            | Settings → Code security                                                                                                                                                   |
+| Deployment secrets of an environment                                                                | `gh secret set <NAME> --env production` (or the platform's secret store)                                                                                                   |
 
 Details and reasons: [ci-cd.md](ci-cd.md#repository-settings-requiere-configuración).
 
@@ -425,16 +425,16 @@ value: `Environment variable JWT_ACCESS_SECRET is invalid: ...`.
 Required: `NODE_ENV`, `DATABASE_URL`, `JWT_ACCESS_SECRET`; in production also `TRUST_PROXY`.
 Everything else has a safe default. The full table with every rule: [environment.md](environment.md).
 
-| Group               | Variables (default)                                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime             | `NODE_ENV` (none), `HOST` (127.0.0.1; every interface in production), `PORT` (3000)                                                                                                                                       |
-| Database            | `DATABASE_URL` (none), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                    |
-| Authentication      | `JWT_ACCESS_SECRET` (none), `JWT_ACCESS_SECRET_PREVIOUS` (unset), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                         |
-| HTTP                | `CORS_ORIGINS` (empty), `APP_ORIGIN` (unset; set it in production), `TRUST_PROXY` (loopback; required in production), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60)                                                |
-| Logs and identity   | `LOG_LEVEL` (log), `LOG_FORMAT` (json in production, else text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (from the image, else unversioned)                                                                           |
-| Error tracking      | `SENTRY_DSN` (unset: off), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                       |
-| Tracing and metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` (unset: off), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000) |
-| Redis               | `REDIS_URL` (unset: off), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                      |
+| Group               | Variables (default)                                                                                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime             | `NODE_ENV` (none), `HOST` (127.0.0.1; every interface in production), `PORT` (3000)                                                                                                                                                                   |
+| Database            | `DATABASE_URL` (none), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                                                |
+| Authentication      | `JWT_ACCESS_SECRET` (none), `JWT_ACCESS_SECRET_PREVIOUS` (unset), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                                                     |
+| HTTP                | `CORS_ORIGINS` (empty), `APP_ORIGIN` (unset; set it in production), `TRUST_PROXY` (loopback; required in production), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60)                                                                            |
+| Logs and identity   | `LOG_LEVEL` (log), `LOG_FORMAT` (json in production, else text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (from the image, else unversioned)                                                                                                       |
+| Error tracking      | `SENTRY_DSN` (unset: off), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                   |
+| Tracing and metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` (unset: off), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES` |
+| Redis               | `REDIS_URL` (unset: off), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                  |
 
 ### 6.3 Web variables
 
@@ -601,7 +601,7 @@ runs `prisma migrate deploy` by default; the same image answers the other migrat
 | `docker-images.yml`         | called by the gates (build and scan) and by a deployment (push) | builds `api`, `api-migrate`, `web`, scans them with Trivy; pushes with SBOM and provenance when asked                           |
 | `codeql.yml`                | pull requests, `main`, weekly, when `ENABLE_CODEQL=true`        | cross-file security analysis (ADVISORY)                                                                                         |
 | `dast.yml`                  | Mondays 04:41 UTC, by hand                                      | production images on the runner, smoke test, ZAP baseline and API scan; or the passive scan of staging (ADVISORY)               |
-| `release.yml`               | pushes to `main`                                                | the release pull request; once merged, the tag, the GitHub release and the SBOM                                                 |
+| `release.yml`               | pushes to `main`                                                | the release pull request and CI on it; once merged, the tag, the GitHub release and the SBOM                                    |
 | `main-guard.yml`            | every push to `main`                                            | checks that each pushed commit is a merged pull request; otherwise fails and opens an issue                                     |
 | `dependabot-auto-merge.yml` | an approval of a Dependabot pull request                        | merges a patch or minor update once **CI passed** (checks the approval and CI itself)                                           |
 | `deploy.yml` (**Deploy**)   | by hand, from `main`                                            | resolves the ref to a commit on `main`, re-runs the gates, releases (the VPS target, or a job of your own)                      |
@@ -640,9 +640,10 @@ The same checks locally: `pnpm verify`, `pnpm test:integration`, `pnpm test:e2e`
    attaches `sbom.cdx.json`.
 4. Deploy the tag ([10](#10-deploying-and-rolling-back)): releasing and deploying are separate steps.
 
-The first release is `0.1.0`; to start at `1.0.0`, merge a commit with the footer
-`Release-As: 1.0.0`. Without `RELEASE_PLEASE_TOKEN`, CI does not start on the release pull request:
-close and reopen it ([ci-cd.md](ci-cd.md#releases)).
+The version continues from the template's `1.0.0`: the first `fix` makes 1.0.1, the first `feat`
+1.1.0; the footer `Release-As: <version>` on a merged commit chooses another. The release workflow
+starts CI and **Conventions** on the release pull request itself; with `RELEASE_PLEASE_TOKEN` set,
+every pull request workflow runs on it instead ([ci-cd.md](ci-cd.md#release-pull-requests)).
 
 ## 10. Deploying and rolling back
 

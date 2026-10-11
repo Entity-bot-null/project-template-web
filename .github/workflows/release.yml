@@ -29,18 +29,51 @@ jobs:
     outputs:
       created: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
+      # The release pull request this run opened or updated (JSON); empty
+      # when it stayed as it was.
+      pr: ${{ steps.release.outputs.pr }}
+      own-token: ${{ secrets.RELEASE_PLEASE_TOKEN != '' }}
     steps:
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          # Pull requests opened with the default GITHUB_TOKEN start no
-          # workflows, so CI would never report on the release pull request.
-          # REQUIERE CONFIGURACIÓN: a GitHub App token or a fine-grained token
-          # (contents, pull requests and issues: write) in this secret. Without
-          # it, close and reopen the release pull request to start CI.
+          # Optional (docs/ci-cd.md#release-pull-requests): a GitHub App token
+          # or a fine-grained token (contents, pull requests and issues:
+          # write) opens the release pull request as that identity, so every
+          # pull request workflow runs on it. Without it, the workflow's token
+          # opens it, and the next job starts CI on it.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # A pull request opened or updated with the workflow's token gets its
+  # pull request runs only once someone approves them, and the ruleset
+  # requires "CI passed" and "Conventions" on it. A dispatched run always
+  # starts: each reports its check on the release branch's latest commit, the
+  # one the pull request shows and the ruleset checks. Neither workflow holds
+  # a secret, and the branch is main plus release-please's version and
+  # changelog commit.
+  release-pr-ci:
+    name: CI on the release pull request
+    needs: release-please
+    if: ${{ needs.release-please.outputs.pr != '' && needs.release-please.outputs.own-token != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # start CI and Conventions on the release branch
+    steps:
+      - name: Start CI and Conventions on the release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+        run: |
+          set -euo pipefail
+          [[ "$BRANCH" == release-please--* ]] || {
+            echo "::error::Not a release-please branch: $BRANCH"
+            exit 1
+          }
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          gh workflow run conventions.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
 
   # The SBOM in two jobs: the one that installs the dependencies (their
   # install scripts run) and runs the SBOM tool holds a read-only token; the

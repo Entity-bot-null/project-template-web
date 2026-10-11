@@ -22,7 +22,7 @@ push / pull request
 merge to main (squash)
   ├─ CI on main
   ├─ Main guard (main-guard.yml)   a pushed commit that is no merged pull request → failure + issue
-  └─ Release (release.yml)     release pull request: next version + changelog
+  └─ Release (release.yml)     release pull request: next version + changelog, and CI on it
                                merged → tag vX.Y.Z, GitHub release, SBOM attached
 weekly / on demand
   ├─ Dependabot                update pull requests (dependabot.yml), the full CI on each
@@ -131,12 +131,12 @@ do not hold. The step-by-step guide sets everything below up in order
   (the deploy workflow runs from `main` and deploys any commit on it), production with required
   reviewers. The rule matters: the workflow's own checks live in a file a branch could edit.
 - Actions → General → Workflow permissions: **Read repository contents** (the default token is
-  read-only; jobs that write ask for it themselves). Tick "Allow GitHub Actions to create pull
-  requests" only when `RELEASE_PLEASE_TOKEN` is not set: release-please then opens its pull
-  request with the default token.
-- Secret `RELEASE_PLEASE_TOKEN`: a GitHub App installation token or a fine-grained token limited to
-  this repository (contents, pull requests, issues: write), so CI runs on the release pull request
-  ([Releases](#releases)).
+  read-only; jobs that write ask for it themselves), and tick "Allow GitHub Actions to create and
+  approve pull requests": without `RELEASE_PLEASE_TOKEN`, release-please opens its pull request
+  with the default token.
+- Secret `RELEASE_PLEASE_TOKEN` (optional): a GitHub App installation token or a fine-grained token
+  limited to this repository (contents, pull requests, issues: write), for release pull requests
+  that run every pull request workflow ([Release pull requests](#release-pull-requests)).
 - Variables: `IMAGE_PREFIX` (registry/namespace for images), `DAST_STAGING_URL` (staging origin
   for the passive scan), `ENABLE_CODEQL`, `ENABLE_DEPENDENCY_REVIEW` (both need a public
   repository or GitHub Advanced Security).
@@ -186,13 +186,34 @@ Commits on `main` (the squashed pull request titles, docs/commits.md) by **relea
    GitHub release with the same notes, then attaches the SBOM (`sbom.cdx.json`).
 3. Deploying is separate: run **Deploy** with the tag as the ref, staging first.
 
-The first release is `0.1.0`; to start at `1.0.0`, merge a commit with the footer
-`Release-As: 1.0.0`. Pull requests opened with the default token start no workflows, so set
-`RELEASE_PLEASE_TOKEN` (above); without it, close and reopen the release pull request to start CI.
-Changesets was not chosen: it suits packages published separately, with a changeset file per
+A project created from the template continues from the template's version (`1.0.0` in
+`.release-please-manifest.json`): its first `fix` makes 1.0.1, its first `feat` 1.1.0. To choose
+another version, merge a pull request with the footer `Release-As: <version>` added to its commit
+message in the **Squash and merge** dialog. Changesets was not chosen: it suits packages published separately, with a changeset file per
 change; here the apps ship together under one version and the commit titles already say what
 changed. semantic-release would release on every merge; the release pull request lets the team
 choose the moment and review the notes.
+
+## Release pull requests
+
+release-please opens and updates the release pull request with the workflow's token. GitHub holds
+the pull request runs that token causes until someone with write access approves them, and the
+ruleset requires **CI passed** and **Conventions** on every pull request. The release workflow
+therefore starts both on the release branch itself (`gh workflow run ci.yml` and
+`gh workflow run conventions.yml`, events that token can trigger): their checks land on the branch's
+latest commit, the one the ruleset checks. Nothing to configure. A dispatched **Conventions** checks
+the branch name and the title of the branch's open pull request, as on a pull request event, and
+only runs for a `release-please--` branch. The pull request's other workflows (CodeQL) keep waiting
+for an approval no rule requires; a project that makes one of them a required check starts it in
+the same job (`release-pr-ci` in `release.yml`). A change that adds nothing to the changelog
+(`chore`, `docs`, `ci`, `build`, Dependabot's updates…) leaves the release pull request as it was,
+behind `main`: **Update branch** on it brings it up to date, and CI runs as for anyone's push.
+
+`RELEASE_PLEASE_TOKEN` is optional: a GitHub App token or a fine-grained token (contents, pull
+requests and issues: read and write) opens the release pull request as that identity instead. Every
+pull request workflow then runs on it as on a person's, and the release workflow starts nothing
+itself. A personal token makes its owner the pull request's author, who then cannot approve it under
+the ruleset: prefer a GitHub App token.
 
 ## Images
 

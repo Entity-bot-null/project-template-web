@@ -28,14 +28,24 @@ vi.mock('web-vitals', () => {
   };
 });
 
-/** A metric as web-vitals reports it, with the fields that must not leave the browser. */
-function metric(name: MetricType['name'], value: number): MetricType {
+let metricIds = 0;
+
+/**
+ * A metric as web-vitals reports it, with the fields that must not leave the
+ * browser. Each metric of a page load has its own id; a later report of the
+ * same metric (CLS and INP when the page is hidden again) keeps it.
+ */
+function metric(
+  name: MetricType['name'],
+  value: number,
+  id = `v5-1700000000000-${String((metricIds += 1))}`,
+): MetricType {
   return {
     name,
     value,
     rating: 'good',
     delta: value,
-    id: 'v5-1700000000000-123',
+    id,
     entries: [],
     navigationType: 'navigate',
     navigationId: 1,
@@ -117,6 +127,42 @@ describe('createReporter', () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
+  it('counts each metric of a page load once: a later report of it is not sent again', () => {
+    // web-vitals reports CLS and INP again each time the page is hidden after
+    // they grew (a tab hidden and shown again): sent again, one page load
+    // would count as several in every histogram.
+    const transport = vi.fn();
+    const reporter = createReporter('/', transport);
+    reporter.add(metric('INP', 120, 'v5-inp'));
+    reporter.add(metric('CLS', 0.02, 'v5-cls'));
+    reporter.flush();
+    reporter.add(metric('INP', 480, 'v5-inp'));
+    reporter.add(metric('CLS', 0.3, 'v5-cls'));
+    reporter.flush();
+
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(transport.mock.calls[0]?.[0] as string)).toEqual({
+      route: '/',
+      metrics: [
+        { name: 'INP', value: 120, navigationType: 'navigate' },
+        { name: 'CLS', value: 0.02, navigationType: 'navigate' },
+      ],
+    });
+  });
+
+  it('sends the latest value of a metric reported again before the batch left', () => {
+    const transport = vi.fn();
+    const reporter = createReporter('/', transport);
+    reporter.add(metric('CLS', 0.02, 'v5-cls'));
+    reporter.add(metric('CLS', 0.11, 'v5-cls'));
+    reporter.flush();
+
+    expect(JSON.parse(transport.mock.calls[0]?.[0] as string)).toEqual({
+      route: '/',
+      metrics: [{ name: 'CLS', value: 0.11, navigationType: 'navigate' }],
+    });
+  });
+
   it('sends a full batch at once, within what the API accepts', () => {
     const transport = vi.fn();
     const reporter = createReporter('/', transport);
@@ -146,6 +192,14 @@ describe('send', () => {
   it.each([
     ['refuses the beacon', { sendBeacon: () => false }],
     ['has no sendBeacon', {}],
+    [
+      'throws on the beacon',
+      {
+        sendBeacon: () => {
+          throw new DOMException('Blob type not allowed', 'SecurityError');
+        },
+      },
+    ],
   ])('falls back to fetch with keepalive when the browser %s', (_case, browser) => {
     vi.stubGlobal('navigator', browser);
     const fetchMock = vi.fn(() => Promise.reject(new TypeError('the page is going away')));
@@ -197,6 +251,32 @@ describe('reportWebVitals', () => {
     // pagehide right after: nothing left to send.
     window.dispatchEvent(new Event('pagehide'));
     expect(transport).toHaveBeenCalledTimes(1);
+    visibility.mockRestore();
+  });
+
+  it('counts a page load once when its tab is hidden, shown and hidden again', () => {
+    const transport = vi.fn();
+    reportWebVitals('/', transport);
+    const visibility = vi.spyOn(document, 'visibilityState', 'get');
+    const hide = (report: () => void) => {
+      visibility.mockReturnValue('hidden');
+      window.addEventListener('visibilitychange', report, { capture: true, once: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      visibility.mockReturnValue('visible');
+    };
+
+    hide(() => {
+      observers.get('INP')?.(metric('INP', 96, 'v5-inp'));
+    });
+    // Back in the tab, a slower interaction: the library reports INP again.
+    hide(() => {
+      observers.get('INP')?.(metric('INP', 640, 'v5-inp'));
+    });
+
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(transport.mock.calls[0]?.[0] as string)).toMatchObject({
+      metrics: [{ name: 'INP', value: 96 }],
+    });
     visibility.mockRestore();
   });
 

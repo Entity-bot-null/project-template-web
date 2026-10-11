@@ -28,13 +28,14 @@ arithmetic):
 
 ```
 # Availability over 30 days ("or vector(0)": with no 5xx at all the series does not exist, and
-# the ratio would be empty instead of 1)
-1 - (sum(increase(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30d])) or vector(0))
-  / sum(increase(http_server_request_duration_seconds_count[30d]))
+# the ratio would be empty instead of 1); the Web Vitals beacons are left out (below)
+1 - (sum(increase(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[30d])) or vector(0))
+  / sum(increase(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[30d]))
 
-# Latency: share of requests within 500 ms over 30 days (authentication routes excluded, below)
-sum(increase(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[30d]))
-  / sum(increase(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[30d]))
+# Latency: share of requests within 500 ms over 30 days (authentication routes and the beacons
+# excluded, below)
+sum(increase(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[30d]))
+  / sum(increase(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[30d]))
 ```
 
 Both SLOs are implemented in `observability/prometheus/rules/api-slo.yaml`: recording rules for
@@ -48,6 +49,10 @@ threshold means changing that file and its unit tests together.
   `apps/api/src/observability/telemetry-sdk.ts`.
 - **Route classes:** sign-in hashes passwords with argon2id, slow on purpose; give authentication
   routes their own latency SLO (or none) so they do not hide regressions elsewhere.
+- **Telemetry is not traffic:** the Web Vitals beacons (`POST /api/telemetry/web-vitals`) come
+  with every page load, are fast and never touch the database. Counted, they would dilute both
+  ratios as page views grow and hide a failing API behind them: the SLOs leave them out, and their
+  route still has its own errors and latency on the "API service" dashboard and in the route alerts.
 - **What the API cannot see:** when no instance answers, there are no API metrics at all. The
   uptime SLI covers that blind spot; count both.
 - **Low traffic:** with a few hundred requests a day one failure moves the ratio by whole percents.
