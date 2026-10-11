@@ -347,7 +347,11 @@ unit test.
 
 Health probes are not in the HTTP metrics: `ApiReadinessFailing` counts the 503s the error filter
 records (`app_server_errors_total{error_origin="unavailable", http_route="/api/health/ready"}`),
-so something must probe readiness (the orchestrator, or an internal uptime check).
+so something must probe readiness (the orchestrator, or an internal uptime check). On the VPS
+target nothing does between deployments: the container health check probes liveness, and the edge
+answers 404 to `/api/health/` from outside. There, `ApiReadinessFailing` stays silent until an
+internal check polls readiness; a database outage still shows as `ApiDatabaseErrors`, the SLO
+alerts and the uptime check.
 `ApiMetricsAbsent` names the job `api`: edit it if `OTEL_SERVICE_NAME` differs.
 
 ### Use them with your backend
@@ -371,6 +375,12 @@ The files stay the same; only how they are loaded changes (REQUIRES CONFIGURATIO
 - **Grafana and Prometheus, self-hosted:** the dashboards through a file provider like
   `observability/grafana/dashboards.yaml` (or imported as above); the rule files in Prometheus'
   `rule_files` (`promtool check config` before reloading); an Alertmanager for the routing.
+- **The data source's scrape interval**, in every case: the API pushes its metrics every
+  `OTEL_METRIC_EXPORT_INTERVAL` (60 s), and the panels' `$__rate_interval` is derived from the
+  Prometheus data source's scrape interval (15 s unless set). Set it to 60 s (the data source's
+  settings, "Scrape interval"), or the rate panels can show gaps or nothing over short ranges. The
+  2-minute rules (`ApiReadinessFailing`, `ApiDatabaseErrors`) need two exports in their window:
+  keep `OTEL_METRIC_EXPORT_INTERVAL` at 60000 or below.
 - **Routing**, in every case: `severity="critical"` to the on-call person's pager,
   `severity="warning"` to the team's channel, per
   [alerting.md](alerting.md#escalation-requiere-configuración).
@@ -437,9 +447,12 @@ of its page loads, so the dashboard and the alerts read the 75th percentile.
    initial bundle (budgets in `apps/web/performance-budget.json`); `WEB_VITALS_SAMPLE_RATE=0`
    loads no library at all.
 2. The values are queued and sent in one request when the page is hidden (`visibilitychange`, or
-   `pagehide`), the moment the library reports its final CLS, INP and LCP: with
-   `navigator.sendBeacon`, which survives the page closing, or `fetch` with `keepalive` where a
-   beacon is refused. A queue of 10 is sent at once.
+   `pagehide`), the moment the library reports CLS, INP and LCP: with `navigator.sendBeacon`,
+   which survives the page closing, or `fetch` with `keepalive` where a beacon is refused. A queue
+   of 10 is sent at once. Each metric of a page load is sent once: the library reports CLS and INP
+   again when a tab hidden and shown again is hidden once more, and those later values are not
+   sent, so a page load is one sample of each metric (CLS and INP as they were when the page was
+   first hidden), never one per visit to the tab.
 3. `POST /api/telemetry/web-vitals` validates the batch and records two histograms; with metrics
    off it validates and answers 204 all the same, at the cost of a few function calls. The route is
    public and protected like every other ([security.md](security.md#web-vitals)).
@@ -472,6 +485,21 @@ sum(rate(app_web_vitals_duration_seconds_count{web_vital_name="INP", web_vital_r
 The "Web Vitals" dashboard shows them, and three alerts warn when a page's LCP, INP or CLS p75
 stays above "good" ([Alerts](#alerts)). With a lot of traffic, lower `WEB_VITALS_SAMPLE_RATE`: a
 p75 is stable from a few hundred page loads per page and hour, and the alerts need 100.
+
+**The first report of a new series is not counted.** The API pushes cumulative histograms, and
+Prometheus computes `rate()` and `increase()` from the difference between two samples of a
+series. A series starts when an API process records the first value of a label set (metric, page,
+rating, navigation type): its first export has no sample before it, so the page loads it holds,
+those of the first export interval (60 s), are in no `rate()` or `increase()`. Every API process
+does this once per label set, and every restart or deployment starts new series (`instance` is new).
+With steady traffic the loss is small. With little traffic it is not: a label set seen once per
+process, such as a `poor` rating on a quiet page, is never counted, so the page-load counts read
+low, the alerts' 100 page loads take longer to reach, and on quiet pages the p75 and the share of
+good page loads lean towards good. The alerts and the dashboard are meant for pages with steady
+traffic; read a quiet page over a longer range. Prometheus (3.15, the version the checks pin) has
+no setting that turns the start of an OTLP series into a zero sample:
+`created-timestamp-zero-ingestion` covers the scraped formats only. Every API metric behaves the
+same right after a process starts.
 
 ## Database
 

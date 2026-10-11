@@ -5,8 +5,8 @@ import { routes } from '../router';
 
 // The lazy half of Web Vitals (webVitals.ts loads it): measures with the
 // web-vitals library, queues the values, and sends them in one request when
-// the page is hidden, the moment the library reports its final CLS, INP and
-// LCP and the last one a page is sure to get.
+// the page is hidden, the moment the library reports CLS, INP and LCP and the
+// last one a page is sure to get. Each metric of a page load is sent once.
 //
 // What leaves the browser: the metric, its value, the navigation type, and the
 // route pattern of the page ("/admin/users"), never its URL, query string or
@@ -36,15 +36,9 @@ export function routePattern(pathname: string, routeList: RouteObject[] = routes
 
 /** Sends a batch: sendBeacon, which survives the page closing; else fetch with keepalive. */
 export function send(body: string): void {
-  const beacon = typeof navigator.sendBeacon === 'function';
-  if (
-    beacon &&
-    navigator.sendBeacon(WEB_VITALS_URL, new Blob([body], { type: 'application/json' }))
-  ) {
-    return;
-  }
-  // sendBeacon refused (over its quota) or missing. A lost report is not an
-  // error to report: the page may be going away.
+  if (beacon(body)) return;
+  // sendBeacon refused (over its quota), threw or missing. A lost report is
+  // not an error to report: the page may be going away.
   fetch(WEB_VITALS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -54,28 +48,52 @@ export function send(body: string): void {
   }).catch(() => undefined);
 }
 
+function beacon(body: string): boolean {
+  if (typeof navigator.sendBeacon !== 'function') return false;
+  try {
+    return navigator.sendBeacon(WEB_VITALS_URL, new Blob([body], { type: 'application/json' }));
+  } catch {
+    // Some browsers refused a JSON Blob in a beacon (a SecurityError): an
+    // exception here would escape the page-hide listener on every hide.
+    return false;
+  }
+}
+
 export interface Reporter {
   add: (metric: MetricType) => void;
   /** Sends what is queued, if anything. */
   flush: () => void;
 }
 
+/**
+ * Queues the metrics of one page load and sends each of them once. The
+ * library reports CLS and INP again whenever the page is hidden after they
+ * grew (a tab hidden and shown again), with the same id: a metric already
+ * sent is not sent again, so one page load is one sample of each metric, as
+ * the histograms and the "page loads" counts assume. Its value is the one at
+ * the first hide; until then a newer report replaces the queued one.
+ */
 export function createReporter(route: PageRoute, transport: (body: string) => void): Reporter {
-  const queue: ReportedMetric[] = [];
+  const queue = new Map<string, ReportedMetric>();
+  const sent = new Set<string>();
   const flush = () => {
-    if (queue.length === 0) return;
-    const report: Report = { route, metrics: queue.splice(0) };
+    if (queue.size === 0) return;
+    const report: Report = { route, metrics: [...queue.values()] };
+    for (const id of queue.keys()) sent.add(id);
+    queue.clear();
     transport(JSON.stringify(report));
   };
   return {
     add: (metric) => {
+      if (sent.has(metric.id)) return;
       const { value, navigationType } = metric;
-      queue.push(
+      queue.set(
+        metric.id,
         metric.name === 'CLS'
           ? { name: 'CLS', value, navigationType }
           : { name: metric.name, value, navigationType },
       );
-      if (queue.length >= MAX_BATCH) flush();
+      if (queue.size >= MAX_BATCH) flush();
     },
     flush,
   };
