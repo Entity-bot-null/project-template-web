@@ -77,11 +77,16 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   A request that went out without a token is left alone; when another request already refreshed,
   the replay uses that token instead of rotating again; and a request is never replayed for
   another user than the one who sent it.
-- **One refresh at a time across tabs** (`web/src/auth/session.ts`): tabs share the cookie and
-  every refresh rotates it, so they take turns through a Web Lock and none presents a token another
-  has just rotated. A refresh gives up after 10 seconds without an answer, so a stalled one cannot
-  hold the lock for every tab. Without Web Locks (or when the browser refuses the lock), one retry
-  covers a race between two tabs.
+- **One cookie change at a time across tabs** (`web/src/auth/session.ts`): tabs share the cookie,
+  and refresh (which rotates it), sign-in (which replaces it) and logout (which clears it) all
+  write it, so they take turns through one Web Lock. No tab presents a token another has just
+  rotated, and no late answer undoes a newer one: a refresh answered after another tab's sign-in
+  would put the old session back, a logout would clear the new one. A refresh gives up after 10
+  seconds without an answer, so a stalled one cannot hold the lock for every tab. Without Web Locks
+  (or when the browser refuses the lock), one retry covers a race between two refreshes.
+- **A rate-limited boot** (`429` on the first refresh of a page) waits out a `Retry-After` of up to
+  5 seconds once, then settles as usual: people behind one address share the per-address limit, and
+  a `429` says nothing about the session.
 - **Sign-out** is immediate in the tab and in the other open tabs (`BroadcastChannel`), including
   one that was picking up the session at that moment (its refresh never lands). The
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next

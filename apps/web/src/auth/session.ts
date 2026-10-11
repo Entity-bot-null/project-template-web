@@ -92,6 +92,21 @@ async function doRefresh(): Promise<boolean> {
   if (!result.ok && result.failure.status === 401 && epoch === started) {
     result = await refreshOnce();
   }
+  // At boot a 429 says nothing about the session (everyone behind one address
+  // shares the per-address limit): a short Retry-After is waited out once,
+  // rather than show the sign-in page to someone who is signed in.
+  const retryAfter = result.ok ? undefined : result.failure.retryAfterSec;
+  if (
+    !result.ok &&
+    result.failure.status === 429 &&
+    state.status === 'loading' &&
+    retryAfter !== undefined &&
+    retryAfter <= BOOT_RETRY_MAX_WAIT_SEC &&
+    epoch === started
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+    if (epoch === started) result = await refreshOnce();
+  }
   // A sign-in or a sign-out happened meanwhile: its outcome stands.
   if (epoch !== started) return state.status === 'authenticated';
   if (result.ok && isSession(result.data)) {
@@ -111,19 +126,42 @@ async function doRefresh(): Promise<boolean> {
  */
 export const REFRESH_TIMEOUT_MS = 10_000;
 
+/**
+ * The longest Retry-After a boot waits out once. Longer, it settles as
+ * anonymous like any other boot failure, rather than hold a loading page.
+ */
+const BOOT_RETRY_MAX_WAIT_SEC = 5;
+
 function refreshOnce(): Promise<ApiResult<AuthSession>> {
-  let sent = false;
-  const send = () => {
-    sent = true;
-    return call(api.POST('/api/auth/refresh', { signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) }));
-  };
-  if (!('locks' in navigator)) return send();
-  // A browser can still refuse the lock (a sandboxed frame, a storage
-  // policy): the tab then refreshes without it, like one without Web Locks.
-  return navigator.locks.request('auth-refresh', send).catch((error: unknown) => {
-    if (sent) throw error;
+  return withAuthLock(() =>
+    call(api.POST('/api/auth/refresh', { signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS) })),
+  );
+}
+
+/**
+ * Sends a request that sets or clears the shared refresh cookie (refresh,
+ * sign-in, logout) under the cross-tab Web Lock, one tab at a time: no answer
+ * lands after another tab's newer one and undoes it (a refresh answered after
+ * a sign-in would put the old session's cookie back; a logout would clear the
+ * new one).
+ */
+async function withAuthLock<T>(send: () => Promise<T>): Promise<T> {
+  // A property, not a local: `start` sets it inside the lock's callback, where
+  // control-flow analysis does not follow it.
+  const attempt = { sent: false };
+  const start = () => {
+    attempt.sent = true;
     return send();
-  });
+  };
+  if (!('locks' in navigator)) return start();
+  try {
+    return await navigator.locks.request('auth-refresh', start);
+  } catch (error: unknown) {
+    // A browser can still refuse the lock (a sandboxed frame, a storage
+    // policy): the tab then sends without it, like one without Web Locks.
+    if (attempt.sent) throw error;
+    return start();
+  }
 }
 
 // The contract types the body, but something in between (a misconfigured
@@ -182,7 +220,10 @@ async function sendSignIn(email: string, password: string): Promise<ApiResult<Au
   // sign-in sets: the logout clears it, a late rotation replaces it.
   if (logoutInFlight) await logoutInFlight;
   if (refreshInFlight) await refreshInFlight;
-  const result = await call(api.POST('/api/auth/sign-in', { body: { email, password } }));
+  // Another tab's refresh or logout goes through the same lock (withAuthLock).
+  const result = await withAuthLock(() =>
+    call(api.POST('/api/auth/sign-in', { body: { email, password } })),
+  );
   // Checked like a refresh: a proxy, a captive portal or a deploy in progress
   // can answer 2xx with something that is not a session.
   if (result.ok && !isSession(result.data)) {
@@ -231,7 +272,7 @@ export async function retrySignOut(): Promise<boolean> {
 // cancel it. It need not wait for a rotation in flight: any token of the
 // family, rotated or not, ends the whole family.
 function endServerSession(): Promise<boolean> {
-  logoutInFlight ??= call(api.POST('/api/auth/logout', { keepalive: true }))
+  logoutInFlight ??= withAuthLock(() => call(api.POST('/api/auth/logout', { keepalive: true })))
     .then(({ ok }) => {
       if (state.status === 'anonymous') {
         emit(ok ? SIGNED_OUT : { status: 'anonymous', user: null, signedOut: 'failed' });
