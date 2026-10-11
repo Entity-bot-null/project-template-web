@@ -245,6 +245,37 @@ describe('boot', () => {
     await boot();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('waits out a short Retry-After once instead of settling a rate-limited boot as signed out', async () => {
+    // Several people behind one address share the per-address limit: a 429 at
+    // boot says nothing about the session, which is still valid.
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      stubFetch({
+        [REFRESH]: () =>
+          attempts++ === 0
+            ? failure(429, 'Too many requests', { 'Retry-After': '2' })
+            : session('token-1'),
+      });
+      const booted = boot();
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(booted).resolves.toBe(true);
+      expect(attempts).toBe(2);
+      expect(getState()).toEqual({ status: 'authenticated', user: member });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not hold the page on a long Retry-After at boot', async () => {
+    const { fetchMock } = stubFetch({
+      [REFRESH]: () => failure(429, 'Too many requests', { 'Retry-After': '120' }),
+    });
+    await expect(boot()).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getState()).toEqual({ status: 'anonymous', user: null });
+  });
 });
 
 describe('api middleware', () => {
@@ -473,6 +504,55 @@ describe('signIn and signOut', () => {
     await expect(retried).resolves.toBe(true);
     expect(calls.map(routeOf)).toEqual([SIGN_IN, LOGOUT]);
     expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  // Every tab shares one refresh cookie, and refresh, sign-in and logout all
+  // set or clear it. Another tab's refresh answered after this tab's sign-in
+  // would put the old session's cookie back; its logout would clear the new
+  // one. So the three go one at a time through the same cross-tab lock.
+  const exclusiveLock = () => {
+    let released: Promise<unknown> = Promise.resolve();
+    const locks = {
+      request: (_name: string, work: () => Promise<unknown>) => {
+        const held = released.then(work);
+        released = held.catch(() => undefined);
+        return held;
+      },
+    };
+    vi.stubGlobal('navigator', { locks });
+    return locks;
+  };
+
+  it("sends a sign-in only after another tab's refresh or logout let go of the lock", async () => {
+    const locks = exclusiveLock();
+    const otherTab = deferred<undefined>();
+    void locks.request('auth-refresh', () => otherTab.promise);
+    const { fetchMock } = stubFetch({ [SIGN_IN]: () => session('token-1') });
+
+    const signedIn = signIn(member.email, 'right');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock).not.toHaveBeenCalled();
+    otherTab.resolve(undefined);
+    await expect(signedIn).resolves.toMatchObject({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getAccessToken()).toBe('token-1');
+  });
+
+  it("sends a logout only after another tab's sign-in or refresh let go of the lock", async () => {
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const locks = exclusiveLock();
+    const otherTab = deferred<undefined>();
+    void locks.request('auth-refresh', () => otherTab.promise);
+    const { fetchMock } = stubFetch({ [LOGOUT]: signedOut });
+
+    const loggedOut = signOut();
+    // The tab is signed out at once; only the request to the server waits.
+    expect(getState()).toEqual(SIGNED_OUT);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock).not.toHaveBeenCalled();
+    otherTab.resolve(undefined);
+    await expect(loggedOut).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
