@@ -87,6 +87,10 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 - **A rate-limited boot** (`429` on the first refresh of a page) waits out a `Retry-After` of up to
   5 seconds once, then settles as usual: people behind one address share the per-address limit, and
   a `429` says nothing about the session.
+- **A refresh survives the page** (`keepalive`): the server rotates the token before it answers,
+  so a refresh abandoned by a reload, a navigation or a closed tab would leave the old cookie in
+  the jar, read as a lost race at the next page load and as theft 30 seconds later. Its answer
+  lands after the page is gone, and the next page's one retry picks up the new cookie.
 - **Sign-out** is immediate in the tab and in the other open tabs (`BroadcastChannel`), including
   one that was picking up the session at that moment (its refresh never lands). The
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next
@@ -571,10 +575,11 @@ Accepted on purpose, each with its way out:
   into a log message stays readable. Way out: log ids (review rule).
 - **No MFA, no account lockout, no breached-password check**: the account lifecycle is product
   work (see Authentication).
-- **A refresh response lost on the network** (the server rotated the token, the browser kept the
-  old cookie) looks like theft once 30 seconds have passed: the family ends and the user signs in
-  again. That is the price of reuse detection (RFC 9700 accepts it); raise
-  `REFRESH_REUSE_LEEWAY_SEC` only with a reason.
+- **A refresh response lost on the network** (the server rotated the token, the connection
+  dropped before the answer arrived) looks like theft once 30 seconds have passed: the family
+  ends and the user signs in again. That is the price of reuse detection (RFC 9700 accepts it);
+  raise `REFRESH_REUSE_LEEWAY_SEC` only with a reason. A reload or a closed tab does not lose it:
+  the web app sends its refreshes with `keepalive`.
 - **Old browsers** without `BroadcastChannel` keep a signed-out tab's access token until it expires
   (15 minutes), and without Web Locks three or more tabs refreshing at the same moment can sign one
   of them out locally (it signs in again; the session itself is fine). The server session is
