@@ -10,6 +10,7 @@ Installed by `pnpm install` (the root `prepare` script runs Husky, which sets `c
 |              | every file: secretlint, also on files forced past `.gitignore`                         |              | a secret is found                                  |
 |              | `*.ts, *.tsx, *.js, *.mjs, *.cjs`: `eslint --fix`, then `prettier --write`             |              | a lint error cannot be fixed automatically         |
 |              | `*.json, *.md, *.yml, *.yaml, *.css, *.html`: `prettier --write`                       |              |                                                    |
+|              | migrations: `scripts/check-migrations.mjs` (docs/database.md#expand-and-contract)      |              | a contract step has no `-- contract:` reason       |
 | `commit-msg` | `commitlint` (docs/commits.md)                                                         | < 1 s        | the message is not a Conventional Commit           |
 | `pre-push`   | `scripts/git/pre-push.mjs`: refuses pushes to `main`/`master` and badly named branches | < 1 s        | pushing to a protected branch, branch name invalid |
 |              | `pnpm typecheck`: every app, including the contract types check                        | about 30 s   | type errors, stale `schema.d.ts`                   |

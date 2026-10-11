@@ -72,9 +72,12 @@ on another origin ([security.md](security.md#csrf-cors-xss)), deploy and roll ba
 
 3. Review `apps/api/prisma/migrations/<timestamp>_add_notes/migration.sql`: locks on big tables,
    defaults, `DROP` statements. A column that existing rows cannot fill needs a default or the
-   [expand/contract](database.md#expand-and-contract) steps.
+   [expand/contract](database.md#expand-and-contract) steps. A contract step (a drop, a rename, a
+   column made required) needs `-- contract: <why it is safe now>` right above it, or the commit
+   and CI stop (`scripts/check-migrations.mjs`).
 4. Commit the schema and the migration folder together with the code that uses them. Never edit a
-   migration that is already on `main`.
+   migration that is already on `main`: the migration image refuses a database that applied an
+   earlier text of it.
 5. If the development accounts need data in the new table, extend `apps/api/src/seed/seed.ts`
    (idempotent: upsert on a unique key).
 

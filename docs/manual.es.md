@@ -394,11 +394,11 @@ Para comprobar un mensaje sin hacer commit:
 
 Los hooks se ejecutan solos:
 
-| Hook         | Ejecuta                                                                                              | Tarda        |
-| ------------ | ---------------------------------------------------------------------------------------------------- | ------------ |
-| `pre-commit` | sobre los ficheros en stage: rechaza ficheros `.env`, secretlint, `eslint --fix`, `prettier --write` | segundos     |
-| `commit-msg` | commitlint                                                                                           | menos de 1 s |
-| `pre-push`   | rechaza pushes a `main`/`master` y ramas mal nombradas, después `pnpm typecheck` y `pnpm test`       | unos 30 s    |
+| Hook         | Ejecuta                                                                                                                                                          | Tarda        |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `pre-commit` | sobre los ficheros en stage: rechaza ficheros `.env`, secretlint, `eslint --fix`, `prettier --write`, la comprobación de pasos de contracción de las migraciones | segundos     |
+| `commit-msg` | commitlint                                                                                                                                                       | menos de 1 s |
+| `pre-push`   | rechaza pushes a `main`/`master` y ramas mal nombradas, después `pnpm typecheck` y `pnpm test`                                                                   | unos 30 s    |
 
 `--no-verify` se los salta: solo para el primer push de un repositorio nuevo o una emergencia real,
 y diciéndolo en el pull request ([git-hooks.md](git-hooks.md)). CI ejecuta las mismas
@@ -564,6 +564,7 @@ Todos los comandos que trae la plantilla.
 | `node scripts/smoke-test.mjs ...`                                                                               | el smoke test (`pnpm smoke`)                                                                                                                                     |
 | `node apps/web/scripts/api-types.mjs [--check]`                                                                 | regenera, o comprueba, los tipos del cliente web                                                                                                                 |
 | `scripts/git/pre-push.mjs`, `scripts/forbid-env-files.mjs`                                                      | los usan los hooks de Git                                                                                                                                        |
+| `node scripts/check-migrations.mjs [<migration.sql>...]`                                                        | pasos de contracción sin motivo en las migraciones ([database.md](database.md#expand-and-contract)); lo ejecutan `pnpm test:scripts` y el hook de pre-commit     |
 | `scripts/check-dependencies.mjs`, `scan-secrets.mjs`, `sast.mjs`, `lint-workflows.mjs`, `check-bundle-size.mjs` | están detrás de los scripts de la raíz con el mismo propósito                                                                                                    |
 | `scripts/check-iac.mjs`, `scripts/iac-database.mjs`                                                             | están detrás de `pnpm iac:check` y `pnpm iac:database`                                                                                                           |
 
@@ -592,20 +593,22 @@ docker build -f apps/web/Dockerfile -t web --build-arg APP_RELEASE=$(git rev-par
 ```
 
 El contexto de build es la raíz del repositorio (una lista de permitidos en `.dockerignore`). La
-imagen de migraciones ejecuta `prisma migrate deploy` por defecto; la misma imagen responde a los
-demás comandos de migración ([7.7](#77-comandos-de-operación)).
+imagen de migraciones ejecuta `prisma migrate deploy` por defecto, después de rechazar una base de
+datos cuyas migraciones aplicadas se editaron después (`apps/api/scripts/migrate-deploy.mjs`); la
+misma imagen responde a los demás comandos de migración ([7.7](#77-comandos-de-operación)).
 
 ### 7.7 Comandos de operación
 
-| Comando                                                                                                                                                   | Uso                                                                                                                                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness de una instancia, desde dentro de la plataforma                                                                             |
-| `pnpm smoke --url <URL pública> --api <URL de la API> --release <sha>`                                                                                    | después de un despliegue, un restore o un incidente                                                                                   |
-| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate>`                                                                                              | aplica las migraciones pendientes                                                                                                     |
-| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate> node node_modules/prisma/build/index.js migrate status`                                       | qué migraciones tiene un entorno                                                                                                      |
-| `... migrate resolve --rolled-back <migración>` / `--applied <migración>`                                                                                 | registra el resultado de una migración fallida ([database.md](database.md#when-a-migration-fails))                                    |
-| `pg_dump`, `pg_restore`, `createdb`                                                                                                                       | backups y restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine))                                  |
-| `BEGIN; SELECT id FROM users WHERE id = '<id>' FOR UPDATE; UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL; COMMIT;` | termina todas las sesiones de un usuario (incidente de seguridad); el bloqueo del usuario impide que un refresh en curso la sobreviva |
+| Comando                                                                                                                                                   | Uso                                                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness de una instancia, desde dentro de la plataforma                                                                                    |
+| `pnpm smoke --url <URL pública> --api <URL de la API> --release <sha>`                                                                                    | después de un despliegue, un restore o un incidente                                                                                          |
+| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate>`                                                                                              | rechaza una base de datos cuyas migraciones aplicadas se editaron y después aplica las pendientes                                            |
+| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate> node node_modules/prisma/build/index.js migrate status`                                       | qué migraciones tiene un entorno                                                                                                             |
+| `... migrate resolve --rolled-back <migración>` / `--applied <migración>`                                                                                 | registra el resultado de una migración fallida ([database.md](database.md#when-a-migration-fails))                                           |
+| `... migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`                                                                  | compara el esquema de un entorno con el de la imagen, después de un restore ([disaster-recovery.md](disaster-recovery.md#restore-procedure)) |
+| `pg_dump`, `pg_restore`, `createdb`                                                                                                                       | backups y restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine))                                         |
+| `BEGIN; SELECT id FROM users WHERE id = '<id>' FOR UPDATE; UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL; COMMIT;` | termina todas las sesiones de un usuario (incidente de seguridad); el bloqueo del usuario impide que un refresh en curso la sobreviva        |
 
 ## 8. CI/CD
 

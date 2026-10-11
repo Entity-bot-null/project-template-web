@@ -278,7 +278,10 @@ per-instance counters`; `Cache unavailable, serving from the source`;
 
 - **Symptoms:** the `api-migrate` job exits with `Error: P3018 A migration failed to apply` and the
   database error; later runs fail with `P3009 migrate found failed migrations`; or the job hangs on
-  a lock and the deployment times out.
+  a lock and the deployment times out. Two more stop it before any statement runs:
+  `P1002 ... Timed out trying to acquire a postgres advisory lock` (another migration run holds the
+  database: wait for it, then deploy again) and
+  `Migrations changed after they were applied to this database: <names>` (below).
 - **Impact:** the deployment stops before the rollout, so the running version keeps serving.
   **Prisma does not wrap a migration in a transaction on PostgreSQL:** the statements before the
   failing one stay applied (verified with Prisma 7 on PostgreSQL 18). An expand migration leaves an
@@ -297,7 +300,13 @@ per-instance counters`; `Cache unavailable, serving from the source`;
     migration in a new pull request (editing the failed file is acceptable only if it has not been
     applied in any environment);
   - finishing it by hand is the last resort: apply the remaining statements, then
-    `migrate resolve --applied <migration>`.
+    `migrate resolve --applied <migration>`;
+  - `Migrations changed after they were applied to this database`: nothing ran; a migration
+    applied here was edited since (docs/database.md#migrations). Put the file back as it was
+    applied (`git log -p -- apps/api/prisma/migrations/<name>/migration.sql` shows its versions),
+    ship the change as a new migration, and deploy again. Never update the checksum in
+    `_prisma_migrations` to get past it: this database would keep a schema the new code does not
+    expect.
 - **Roll back when:** the partial migration broke the running version: repair the schema by hand
   first; if data was destroyed, restore ([disaster-recovery.md](disaster-recovery.md)).
 - **Recovered when:** `migrate status` says `Database schema is up to date!` and the deployment
