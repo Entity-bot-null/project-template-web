@@ -201,4 +201,31 @@ describe('classifyFailure', () => {
       report: false,
     });
   });
+
+  // The pg driver raises a lost or unanswered connection as a plain Error
+  // that Prisma passes through (src/prisma/connection-failures.int.spec.ts
+  // shows each one against a real database).
+  it.each([
+    'Connection terminated unexpectedly',
+    'Query read timeout',
+    'timeout exceeded when trying to connect',
+    'Client has encountered a connection error and is not queryable',
+  ])('counts the driver error "%s" as a database failure', (message) => {
+    expect(classifyFailure(new Error(message))).toEqual({ origin: 'database', report: true });
+  });
+
+  it('follows the cause of a wrapped driver error', () => {
+    const timeout = new Error('Connection terminated due to connection timeout', {
+      cause: new Error('Connection terminated unexpectedly'),
+    });
+    expect(classifyFailure(timeout).origin).toBe('database');
+    expect(classifyFailure(new Error('import failed', { cause: timeout })).origin).toBe('database');
+  });
+
+  it('does not take an application error for a database one by a similar message', () => {
+    expect(
+      classifyFailure(new Error('Connection terminated unexpectedly: retry later')).origin,
+    ).toBe('application');
+    expect(classifyFailure('Connection terminated unexpectedly').origin).toBe('application');
+  });
 });

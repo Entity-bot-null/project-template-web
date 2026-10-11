@@ -50,6 +50,11 @@ Every JSON log line, error report and span says which deployment and build produ
 - `release` (`APP_RELEASE`): the images are built with the commit SHA (`docker-images.yml`);
   `unversioned` when nothing set it (local runs).
 
+Spans and metrics also carry `service.instance.id`, a random id per process (the `instance` label
+the dashboards and alerts group by), and nothing about the machine: no host name (a container's id,
+or on a developer's computer often the person's name) and no machine id. To name the server, set
+`OTEL_RESOURCE_ATTRIBUTES=host.name=<name>`.
+
 ## Logs
 
 - One logger for the API (`common/logging/logger.ts`, Nest's `ConsoleLogger` extended): **JSON
@@ -219,9 +224,14 @@ with `import()`, so the SDK also registers an in-thread ESM loader hook (`import
 limited to the instrumented modules (`http`, `https`, `express`, `pg`, `pg-pool`).
 
 Health probes are never traced. Every span is checked before export (`RedactingSpanProcessor`):
-query strings and URL credentials removed, and string attributes redacted like log lines, on the
-span and on its events (an exception event carries the error's message and stack trace), and so is
-its status message.
+query strings and URL credentials removed, a value under a sensitive name (`authorization`,
+`cookie`, `password`, `token`...: the log redaction's list) masked whole, and every other string
+attribute, string arrays included, redacted like log lines, on the span and on its events (an
+exception event carries the error's message and stack trace), and so is its status message.
+
+The telemetry's own requests (the OTLP exports, the error tracker's reports) are sent with tracing
+suppressed and never counted in `http.client.request.duration`: the collector does not show up as
+an external service.
 
 **Where it goes:** OTLP over HTTP (JSON) to `<OTEL_EXPORTER_OTLP_ENDPOINT>/v1/traces` and
 `/v1/metrics`, metrics every `OTEL_METRIC_EXPORT_INTERVAL` ms (default 60 s). Provider credentials
