@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { sha256Hex } from '../common/utils/sha256.js';
-import type { Prisma } from '../prisma/generated/client.js';
+import { Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   REFRESH_FAMILY_MAX_AGE_SEC,
@@ -48,6 +48,15 @@ export class RefreshRaceLostException extends UnauthorizedException {
 }
 
 type Tx = Prisma.TransactionClient;
+
+// Every session transaction takes the user's row lock, then reads again what
+// it is about to change: once the lock is granted, each statement must see
+// what the transaction it waited for committed. That is READ COMMITTED,
+// PostgreSQL's default, pinned here: under a stricter default set on the
+// database or the role (REPEATABLE READ, SERIALIZABLE), the second read would
+// see the snapshot from before the wait, and a refresh that lost a race would
+// fail with a serialization error (500) instead of being answered as a race.
+const SESSION_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted };
 
 type RotateOutcome =
   | { user: AuthUser; session: IssuedSession }
@@ -109,7 +118,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         },
       });
       return sessionExpiresAt;
-    });
+    }, SESSION_TRANSACTION);
     return { token, expiresAt };
   }
 
@@ -158,7 +167,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         },
       });
       return { user: current.user, session: { token: next, expiresAt } };
-    });
+    }, SESSION_TRANSACTION);
 
     if ('error' in outcome) {
       if (outcome.error === 'race') {
@@ -190,7 +199,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         current.revokedAt !== null &&
         now - current.revokedAt.getTime() > REFRESH_REUSE_LEEWAY_SEC * 1000;
       return reused ? current.userId : null;
-    });
+    }, SESSION_TRANSACTION);
     if (reusedBy !== null) this.logReuse(reusedBy, during);
   }
 
@@ -202,7 +211,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         where: { userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
-    });
+    }, SESSION_TRANSACTION);
   }
 
   /** Deletes rows past their own expiry; revoked ones are kept until then. */

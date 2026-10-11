@@ -53,9 +53,13 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   cannot be reached it answers 500 and keeps them: the family is still live, and the sign-in page's
   retry needs the cookie to end it.
 - **Concurrent changes:** every change to a user's sessions takes that user's row lock first, so
-  sign-ins, rotations, logouts and revocations never interleave. A sign-in whose password hash
-  changed between the check and the session (a password change with `revokeAll` in between) is
-  refused, so it cannot outlive the revocation.
+  sign-ins, rotations, logouts and revocations never interleave. Those transactions run in READ
+  COMMITTED whatever the database's default, so what they read after the lock is what the one they
+  waited for committed. A sign-in whose password hash changed between the check and the session (a
+  password change with `revokeAll` in between) is refused, so it cannot outlive the revocation.
+  Revoking sessions by hand takes the same lock
+  ([incident-response.md](incident-response.md#11-authentication-or-security-attack)): a plain
+  `UPDATE` misses the token a refresh in flight commits after it.
 - **Two refresh cookies** (one planted for a parent domain next to ours, where the prefix is not
   available) are never guessed between: refresh answers `401 Ambiguous session cookies` without
   clearing anything (clearing would delete only ours and hand the next refresh to the planted one);
