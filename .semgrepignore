@@ -2,6 +2,7 @@
 # defaults, so tests are scanned too. Untracked files are skipped anyway.
 node_modules/
 dist/
+dist-dev/
 coverage/
 playwright-report/
 test-results/

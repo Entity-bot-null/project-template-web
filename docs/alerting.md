@@ -46,7 +46,7 @@ threshold means changing that file and its unit tests together.
 - **The latency threshold must be a bucket boundary.** The HTTP histogram's buckets are 5, 10, 25,
   50, 75, 100, 250, 500, 750 ms, 1, 2.5, 5, 7.5 and 10 s; a threshold between two of them (300 ms)
   cannot be computed from the buckets. Pick a boundary, or add one with a metrics View in
-  `observability/telemetry-sdk.ts`.
+  `apps/api/src/observability/telemetry-sdk.ts`.
 - **Route classes:** sign-in hashes passwords with argon2id, slow on purpose; give authentication
   routes their own latency SLO (or none) so they do not hide regressions elsewhere.
 - **Telemetry is not traffic:** the Web Vitals beacons (`POST /api/telemetry/web-vitals`) come
@@ -88,9 +88,10 @@ proves it is still happening (the multiwindow method of Google's SRE workbook):
 The same table applies to the latency SLO, with "slower than the threshold" as the bad event. Each
 alert also needs 100 requests in its long window (low traffic, above).
 
-### When the budget runs out (REQUIERE CONFIGURACIÓN: agree on it before the first incident)
+### When the budget runs out
 
-Who decides is the product owner with the engineering lead. A policy to start from:
+REQUIERE CONFIGURACIÓN: agree on it before the first incident. Who decides is the product owner with
+the engineering lead. A policy to start from:
 
 - **Budget left:** ship features as usual; spend budget on planned risk (migrations, upgrades).
 - **Budget exhausted** (the SLI is below the SLO over the window): feature releases stop, except

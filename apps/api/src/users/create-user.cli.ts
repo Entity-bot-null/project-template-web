@@ -6,8 +6,10 @@ import { env } from '../env/env.js';
 import { PrismaClient } from '../prisma/generated/client.js';
 import { createUser, describeInvalidInput } from './create-user.js';
 
-// `pnpm --filter api user:create -- --email <email> --name <name> --role admin`
-// locally, or in a deployment with the API image (docs/deploy-vps.md):
+// Locally (no `--` before the options: pnpm passes it on, and parseArgs
+// refuses it):
+//   printf '%s' "$PASSWORD" | pnpm --filter api user:create --email <email> --name <name> --role admin
+// in a deployment, with the API image (docs/deploy-vps.md):
 //   docker compose ... run --rm -T api node dist/users/create-user.cli.js --email ... --role admin
 // The password is read from standard input (pipe it in; one trailing newline
 // is dropped). The database is the one in DATABASE_URL.
