@@ -490,8 +490,9 @@ releases: expand, migrate the readers and writers, contract.
 | A release whose contract step already ran     | The previous version may need what was removed: roll forward with a fix instead, or restore. That is why contract steps ship one release after the code stopped using what they remove.                                                                     |
 
 Running **Deploy** with an earlier release tag also rolls back, through every gate on that old
-commit: slower, it rebuilds the images unless they still exist in the registry, and a gate can
-fail on an advisory published since that release. Keep it for planned rollbacks; in an incident,
+commit: slower, it rebuilds the images unless an earlier run recorded them (the VPS target keeps
+its records 90 days; an image still in the registry is not enough, by design), and a gate can fail
+on an advisory published since that release. Keep it for planned rollbacks; in an incident,
 redeploy the recorded digests. Never roll back by reversing a migration in production.
 
 ## Running the gates locally

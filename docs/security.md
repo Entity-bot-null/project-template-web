@@ -561,19 +561,42 @@ reaches; authenticated scanning is per project (OPCIONAL: a ZAP context with a t
 
 ## Artifact integrity
 
-| What                                    | Status                              | How                                                                                                                                                                        |
-| --------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                                                                       |
-| SBOM of each release                    | Obligatorio                         | CycloneDX of the production dependencies, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)                                                   |
-| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on the push in `docker-images.yml`, stored next to the image                                                  |
-| Scanned image = shipped image           | Obligatorio                         | The VPS deployment scans the digest it pushed and deploys that digest from the run's record; production reuses staging's record, never the mutable tag, and scans it again |
-| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready in `docker-images.yml`; needs a public repository or GitHub Enterprise Cloud                                                  |
-| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                                                                    |
+| What                                    | Status                              | How                                                                                                                                                                                                             |
+| --------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lockfile integrity                      | Obligatorio                         | sha512 per package, frozen installs, registry sources only ([Dependency policy](#dependency-policy))                                                                                                            |
+| SBOM of each release                    | Obligatorio                         | CycloneDX of the npm packages the production dependencies resolve to at the tag, attached to the GitHub release by `release.yml` (`pnpm sbom:generate` locally)                                                 |
+| SBOM and provenance of published images | Obligatorio once images are pushed  | BuildKit attestations (`sbom: true`, `provenance: mode=max`) on every push (the `publish` job of `deploy.yml`, `docker-images.yml` with `push: true`), in the image index whose digest is recorded and deployed |
+| Scanned image = shipped image           | Obligatorio                         | The VPS deployment scans the digest it pushed and deploys that digest from the run's record; production reuses staging's record, never the mutable tag, and scans it again                                      |
+| Signed attestations (Sigstore)          | OPCIONAL                            | `actions/attest-build-provenance` step ready (commented) in `docker-images.yml`; the `publish` job of `deploy.yml` needs the same step after its push. Needs a public repository or GitHub Enterprise Cloud     |
+| Verification before deploying           | OPCIONAL (with signed attestations) | `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>` in the release job of `deploy.yml`                                                                                                         |
 
 Signing with a separate tool (cosign with keys) is not included: GitHub attestations are already
 Sigstore signatures, verifiable without managing keys. To see what a pushed image carries:
 `docker buildx imagetools inspect <image>@<digest> --format '{{ json .Provenance }}'` (or
 `.SBOM`).
+
+**Which SBOM describes what runs.** The release's CycloneDX file lists the npm packages of the
+lockfile that the production dependencies need, peer dependencies included (so a few build tools,
+TypeScript among them, appear): what a review of the code's dependencies needs, the same whenever
+the tag is built. It does not list what an image adds (the Debian or Alpine packages, Node.js,
+nginx), and it names no image. Each image's own SBOM does: BuildKit scans the image's files when it
+is built and stores an SPDX document, with the SLSA provenance of the build (the commit, the
+Dockerfile, the build arguments, the base images), in the image index next to the image. The
+digest the Deploy workflow records and deploys is that index's, so the command above, with the
+digest of `release.env` or of the run's summary, shows the SBOM of exactly what runs. Checked
+with a build of this repository: the pushed digest is the index, which lists the image and an
+attestation manifest that references it; the api image's SBOM lists 424 packages: 334 npm, 88
+Debian, and Node.js itself.
+
+**What an SBOM proves, and what it does not.** It is an inventory: the components a scanner found,
+with versions and identifiers, so a new advisory can be matched against what runs and "do we ship
+X?" has an answer. It does not prove that the components are free of vulnerabilities (the Trivy
+scan covers the known ones that have a fix), nor that the list is complete (code copied outside a
+package manager, or linked into a binary, can be missed), nor who built the artifact or from what
+(that is the provenance), nor that nobody changed it: BuildKit's attestations are not signed. They
+are worth what the digest that leads to them is worth: the digest fixes their content, and it
+comes from a run of `deploy.yml` on `main` (`scripts/recorded-images.mjs`). A signed attestation
+(above) lets anyone check where an image comes from without access to that run.
 
 ## Known limits
 
