@@ -89,7 +89,7 @@ van solo en el gestor de contraseñas.
 | Contraseña de `app_runtime` (por entorno)                  | gestor de contraseñas | 7    |
 | `JWT_ACCESS_SECRET` (por entorno, y uno para tu máquina)   | gestor de contraseñas | 3, 7 |
 | Clave SSH de despliegue (por entorno)                      | gestor de contraseñas | 7    |
-| `RELEASE_PLEASE_TOKEN`                                     | gestor de contraseñas | 5    |
+| `RELEASE_PLEASE_TOKEN` (opcional)                          | gestor de contraseñas | 5    |
 | DSNs de Sentry (API, web)                                  |                       | 9    |
 | Email del primer administrador                             |                       | 8    |
 
@@ -179,6 +179,7 @@ Abre el proyecto en tu editor (`code .`) y cambia:
 | `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Producto> API')`                                   |
 | `SECURITY.md`                     | `security@example.com` → tu contacto de seguridad                                    |
 | `.github/CODEOWNERS`              | sustituye `@your-org/...` por usuarios o equipos reales y quita el `#`               |
+| `CHANGELOG.md`                    | deja solo el título `# Changelog`: la historia de la plantilla no es la tuya         |
 
 Los paquetes `apps/api` y `apps/web` conservan sus nombres (`api`, `web`): son privados.
 
@@ -359,8 +360,8 @@ En GitHub → **Settings**:
 1. **General → Pull Requests**: permite solo **squash merging**; mensaje de commit por defecto
    "**Pull request title**"; marca **Automatically delete head branches**.
 2. **Actions → General → Workflow permissions**: **Read repository contents and packages
-   permissions**. Deja sin marcar "Allow GitHub Actions to create and approve pull requests" (5.3
-   le da a release-please su propio token).
+   permissions**, y marca **Allow GitHub Actions to create and approve pull requests** (el
+   workflow **Release** abre el pull request de release con el token del workflow).
 3. **Environments → New environment** `staging`: **Deployment branches and tags → Selected
    branches and tags → Add rule `main`**.
 4. **Environments → New environment** `production`: la misma regla para `main`, y **Required
@@ -390,8 +391,12 @@ En GitHub → **Settings**:
 
 ### 5.3 El token para los pull requests de release
 
-Los pull requests de release abiertos con el token por defecto de GitHub no arrancan CI. Crea un
-token para ellos:
+Opcional, el token de release: sin él, el workflow **Release** lanza él mismo el CI en el pull
+request de release, y la comprobación de convenciones (**CI passed** y **Conventions**, los dos
+checks que pide el ruleset). Con un token de una GitHub App o un **fine-grained personal access
+token**, guardado como `RELEASE_PLEASE_TOKEN`, el pull request de release ejecuta todos los
+workflows de pull request, como el de una persona ([ci-cd.md](ci-cd.md#release-pull-requests)). El
+token fine-grained:
 
 1. GitHub → tu avatar → **Settings → Developer settings → Personal access tokens → Fine-grained
    tokens → Generate new token**.
@@ -407,14 +412,15 @@ token para ellos:
 
    y pégalo cuando te lo pida.
 
-**Comprueba:** `gh secret list` muestra `RELEASE_PLEASE_TOKEN`. Apunta su fecha de caducidad en el
+**Comprueba:** si configuraste el token de release, `gh secret list` muestra
+`RELEASE_PLEASE_TOKEN`; apunta su fecha de caducidad en el
 [calendario de mantenimiento](#fase-12-el-calendario-de-mantenimiento).
 
 ### 5.4 Comprueba el flujo de pull request
 
 ```
 git switch -c chore/check-pipeline
-echo "" >> README.md
+printf '\nBuilt from the web template.\n' >> README.md
 git commit -am "docs: check the pipeline"
 git push -u origin HEAD
 gh pr create --fill
@@ -424,7 +430,9 @@ gh pr checks --watch
 **Comprueba:** el pull request muestra **CI passed** en verde (unos 15 minutos la primera vez) y,
 con el ruleset, no se puede mergear sin una aprobación. Mergéalo (**Squash and merge**).
 
-Después del merge, el workflow **Release** abre un pull request "chore(main): release 0.1.0".
+Un cambio `docs` o `chore` no publica nada, así que aún no aparece ningún pull request de release:
+el workflow **Release** abre uno cuando el primer `feat` o `fix` llega a `main`, y lanza en él el CI
+y Conventions (**CI passed** y **Conventions** en verde en ese pull request unos minutos después).
 Déjalo abierto: mergéalo cuando quieras publicar tu primera release (fase 8).
 
 ---
@@ -747,14 +755,19 @@ todavía: las bases de datos de producción no tienen cuentas.
 
 ### 8.3 Publica la primera release y despliégala en producción
 
-1. Mergea el pull request de release "chore(main): release 0.1.0" (fase 5.4). El workflow
-   **Release** crea el tag `v0.1.0` y la GitHub release.
+1. Mergea el pull request de release, "chore(main): release <versión>" (5.4: existe en cuanto un
+   `feat` o un `fix` llega a `main`). La versión sale de los commits desde el `1.0.0` de la
+   plantilla: el primer `fix` la convierte en 1.0.1, el primer `feat` en 1.1.0. Para elegir la
+   primera versión, mergea antes un pull request añadiendo el pie `Release-As: <versión>` a su
+   mensaje de commit en el diálogo de **Squash and merge**. Si el pull request de release ofrece
+   **Update branch**, púlsalo antes ([ci-cd.md](ci-cd.md#release-pull-requests)). El workflow
+   **Release** crea el tag `v<versión>` y la GitHub release.
 2. Despliega ese tag en staging y después en producción:
 
    ```
-   gh workflow run deploy.yml --ref main -f environment=staging -f ref=v0.1.0
+   gh workflow run deploy.yml --ref main -f environment=staging -f ref=v<versión>
    gh run watch
-   gh workflow run deploy.yml --ref main -f environment=production -f ref=v0.1.0
+   gh workflow run deploy.yml --ref main -f environment=production -f ref=v<versión>
    ```
 
 3. La ejecución de producción se detiene en **Release to production (server)** esperando la
@@ -791,7 +804,7 @@ o sus invitaciones (fase 6).
 
 ### 8.5 Ensaya un rollback (staging)
 
-Staging ejecuta `v0.1.0` (8.3) y guarda el build de 8.1 como la release anterior: es lo que un
+Staging ejecuta `v<versión>` (8.3) y guarda el build de 8.1 como la release anterior: es lo que un
 rollback vuelve a poner. En el servidor de staging:
 
 ```
@@ -806,12 +819,12 @@ funcionando.
 Después devuelve staging a la release con el workflow, como cualquier despliegue:
 
 ```
-gh workflow run deploy.yml --ref main -f environment=staging -f ref=v0.1.0
+gh workflow run deploy.yml --ref main -f environment=staging -f ref=v<versión>
 gh run watch
 ```
 
 **Comprueba:** la ejecución termina en verde y `app-config.json` vuelve a mostrar el commit de
-`v0.1.0`. Hacer un rollback (una vuelta atrás) ya es algo que has hecho, no algo que has leído.
+`v<versión>`. Hacer un rollback (una vuelta atrás) ya es algo que has hecho, no algo que has leído.
 
 ---
 
@@ -902,7 +915,7 @@ corrige hacia delante con un pull request nuevo ([deploy-vps.md](deploy-vps.md#r
 | Cada semana                              | Aprueba los pull requests de actualización de Dependabot: los patch y minor se mergean solos cuando el CI está en verde; las majors y las de workflows las mergeas a mano.                                                                   |
 | Cada semana                              | Lee los resultados del DAST (el workflow **DAST** se ejecuta los lunes).                                                                                                                                                                     |
 | Cada mes                                 | En cada servidor: `docker image prune`, y `docker image rm` de las imágenes de release que no nombran `release.env` ni `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reinícialo si existe `/var/run/reboot-required`. |
-| Cada trimestre                           | Un simulacro de restore de la base de datos; revisa las alertas; comprueba la caducidad de `RELEASE_PLEASE_TOKEN`.                                                                                                                           |
+| Cada trimestre                           | Un simulacro de restore de la base de datos; revisa las alertas; comprueba la caducidad de `RELEASE_PLEASE_TOKEN`, si lo configuraste.                                                                                                       |
 | Cuando un secreto puede haberse filtrado | Rótalo de inmediato ([security.md](security.md#secret-rotation)).                                                                                                                                                                            |
 | Después de cada incidente                | Un postmortem breve; actualiza el runbook y las alertas.                                                                                                                                                                                     |
 

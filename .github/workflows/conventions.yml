@@ -7,12 +7,19 @@ name: Conventions
 # "Conventions", is required next to "CI passed" (docs/ci-cd.md#required-check).
 # It runs on every event, never skipped by what changed: a skipped run would
 # count as a pass.
+#
+# release.yml also dispatches it on the release pull request's branch: GitHub
+# holds the pull request runs the workflow token causes until someone
+# approves them (docs/ci-cd.md#release-pull-requests). A dispatched run checks
+# the same two things, reading the title from the branch's open pull request,
+# and reports "Conventions" on the branch's latest commit.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
 
 concurrency:
-  group: conventions-${{ github.event.pull_request.number }}
+  group: conventions-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,6 +32,9 @@ jobs:
     if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # a dispatched run reads the title of the branch's pull request
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,9 +42,30 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Branch name
         env:
-          BRANCH: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: node scripts/check-branch-name.mjs "$BRANCH"
       - name: Pull request title follows Conventional Commits
         env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
           TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$TITLE" | pnpm exec commitlint --verbose
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            # Only the release branch: its pull request's own runs wait for an
+            # approval. The title is the open pull request's, as it is now.
+            [[ "$BRANCH" == release-please--* ]] || {
+              echo "::error::A dispatched run checks a release-please branch only, not $BRANCH."
+              exit 1
+            }
+            count=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
+              --json number --jq length)
+            [ "$count" -eq 1 ] || {
+              echo "::error::Expected one open pull request from $BRANCH, found $count."
+              exit 1
+            }
+            TITLE=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open \
+              --json title --jq '.[0].title')
+          fi
+          printf '%s\n' "$TITLE" | pnpm exec commitlint --verbose

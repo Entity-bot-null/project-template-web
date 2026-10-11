@@ -86,7 +86,7 @@ password manager.
 | `app_runtime` password (per environment)                        | password manager | 7     |
 | `JWT_ACCESS_SECRET` (per environment, and one for your machine) | password manager | 3, 7  |
 | Deploy SSH key (per environment)                                | password manager | 7     |
-| `RELEASE_PLEASE_TOKEN`                                          | password manager | 5     |
+| `RELEASE_PLEASE_TOKEN` (optional)                               | password manager | 5     |
 | Sentry DSNs (API, web)                                          |                  | 9     |
 | First administrator's email                                     |                  | 8     |
 
@@ -175,6 +175,7 @@ Open the project in your editor (`code .`) and change:
 | `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                            |
 | `SECURITY.md`                     | `security@example.com` → your security contact                               |
 | `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`          |
+| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours     |
 
 The packages `apps/api` and `apps/web` keep their names (`api`, `web`): they are private.
 
@@ -351,8 +352,8 @@ In GitHub → **Settings**:
 1. **General → Pull Requests**: allow only **squash merging**; default commit message
    "**Pull request title**"; tick **Automatically delete head branches**.
 2. **Actions → General → Workflow permissions**: **Read repository contents and packages
-   permissions**. Leave "Allow GitHub Actions to create and approve pull requests" unticked (5.3
-   gives release-please its own token).
+   permissions**, and tick **Allow GitHub Actions to create and approve pull requests** (the
+   **Release** workflow opens the release pull request with the workflow's token).
 3. **Environments → New environment** `staging`: **Deployment branches and tags → Selected
    branches and tags → Add rule `main`**.
 4. **Environments → New environment** `production`: the same rule for `main`, and **Required
@@ -382,7 +383,11 @@ In GitHub → **Settings**:
 
 ### 5.3 The token for release pull requests
 
-Release pull requests opened with GitHub's default token do not start CI. Create a token for it:
+Optional, the release token: without it, the **Release** workflow starts CI on the release pull
+request itself, and the conventions check (**CI passed** and **Conventions**, the two checks the
+ruleset requires). With a GitHub App token or a **fine-grained personal access token**, saved as
+`RELEASE_PLEASE_TOKEN`, the release pull request runs every pull request workflow, like a person's
+([ci-cd.md](ci-cd.md#release-pull-requests)). The fine-grained token:
 
 1. GitHub → your avatar → **Settings → Developer settings → Personal access tokens → Fine-grained
    tokens → Generate new token**.
@@ -397,14 +402,14 @@ Release pull requests opened with GitHub's default token do not start CI. Create
 
    and paste it when asked.
 
-**Check:** `gh secret list` shows `RELEASE_PLEASE_TOKEN`. Write its expiration date in the
-[maintenance calendar](#phase-12-the-maintenance-calendar).
+**Check:** if you set the release token, `gh secret list` shows `RELEASE_PLEASE_TOKEN`; write its
+expiration date in the [maintenance calendar](#phase-12-the-maintenance-calendar).
 
 ### 5.4 Prove the pull request flow
 
 ```
 git switch -c chore/check-pipeline
-echo "" >> README.md
+printf '\nBuilt from the web template.\n' >> README.md
 git commit -am "docs: check the pipeline"
 git push -u origin HEAD
 gh pr create --fill
@@ -414,8 +419,10 @@ gh pr checks --watch
 **Check:** the pull request shows **CI passed** green (about 15 minutes the first time) and, with
 the ruleset, cannot be merged without an approval. Merge it (**Squash and merge**).
 
-After the merge, the **Release** workflow opens a pull request "chore(main): release 0.1.0". Leave
-it open: merge it when you want to cut your first release (phase 8).
+A `docs` or `chore` change releases nothing, so no release pull request appears yet: the
+**Release** workflow opens one when the first `feat` or `fix` reaches `main`, and starts CI and
+Conventions on it (**CI passed** and **Conventions** green on that pull request a few minutes
+later). Leave it open: merge it when you want to cut your first release (phase 8).
 
 ---
 
@@ -729,14 +736,19 @@ have no accounts.
 
 ### 8.3 Cut the first release and deploy it to production
 
-1. Merge the release pull request "chore(main): release 0.1.0" (phase 5.4). The **Release**
-   workflow creates the tag `v0.1.0` and the GitHub release.
+1. Merge the release pull request, "chore(main): release <version>" (5.4: it exists once a `feat`
+   or `fix` reached `main`). The version follows from the commits since the template's `1.0.0`:
+   the first `fix` makes it 1.0.1, the first `feat` 1.1.0. To choose the first version instead,
+   first merge a pull request with the footer `Release-As: <version>` added to its commit message in
+   the **Squash and merge** dialog. If the release pull request offers **Update branch**, press it
+   first ([ci-cd.md](ci-cd.md#release-pull-requests)). The **Release** workflow creates the tag
+   `v<version>` and the GitHub release.
 2. Deploy that tag to staging, then to production:
 
    ```
-   gh workflow run deploy.yml --ref main -f environment=staging -f ref=v0.1.0
+   gh workflow run deploy.yml --ref main -f environment=staging -f ref=v<version>
    gh run watch
-   gh workflow run deploy.yml --ref main -f environment=production -f ref=v0.1.0
+   gh workflow run deploy.yml --ref main -f environment=production -f ref=v<version>
    ```
 
 3. The production run stops at **Release to production (server)** waiting for approval: a
@@ -771,7 +783,7 @@ invitations (phase 6).
 
 ### 8.5 Rehearse a rollback (staging)
 
-Staging runs `v0.1.0` (8.3) and keeps the build of 8.1 as the release before it: that one is what
+Staging runs `v<version>` (8.3) and keeps the build of 8.1 as the release before it: that one is what
 a rollback puts back. On the staging server:
 
 ```
@@ -785,11 +797,11 @@ shows that commit as `release`; the site still works.
 Then bring staging back to the release through the workflow, as for any deployment:
 
 ```
-gh workflow run deploy.yml --ref main -f environment=staging -f ref=v0.1.0
+gh workflow run deploy.yml --ref main -f environment=staging -f ref=v<version>
 gh run watch
 ```
 
-**Check:** the run ends green and `app-config.json` shows the commit of `v0.1.0` again. Rolling
+**Check:** the run ends green and `app-config.json` shows the commit of `v<version>` again. Rolling
 back is now something you have done, not something you read about.
 
 ---
@@ -879,7 +891,7 @@ new pull request ([deploy-vps.md](deploy-vps.md#roll-back)).
 | Every week                    | Approve Dependabot's update pull requests: patch and minor ones merge themselves once CI is green; majors and workflow updates you merge by hand.                                                                              |
 | Every week                    | Read the DAST results (the **DAST** workflow runs on Mondays).                                                                                                                                                                 |
 | Every month                   | On each server: `docker image prune`, and `docker image rm` the release images not named in `release.env` or `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reboot if `/var/run/reboot-required` exists. |
-| Every quarter                 | A database restore drill; review the alerts; check `RELEASE_PLEASE_TOKEN`'s expiration.                                                                                                                                        |
+| Every quarter                 | A database restore drill; review the alerts; check `RELEASE_PLEASE_TOKEN`'s expiration, if you set it.                                                                                                                         |
 | When a secret may have leaked | Rotate it at once ([security.md](security.md#secret-rotation)).                                                                                                                                                                |
 | After every incident          | A short postmortem; update the runbook and the alerts.                                                                                                                                                                         |
 
