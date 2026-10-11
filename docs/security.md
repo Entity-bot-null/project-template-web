@@ -303,9 +303,11 @@ protects it:
   contract; anything else is a 400 and nothing is recorded.
 - **Bounded labels, no personal data:** the page is a route pattern from a closed list (the app's
   routes), never a URL, a path value or a query string, so ids, emails and tokens in a URL never
-  leave the browser; the rating is computed by the API. Nothing identifies the visitor: no user
-  id, no session, no user agent. The browser attaches its cookies to a same-origin beacon, but the
-  route reads none, and the client's IP serves the rate limit only.
+  leave the browser; the rating is computed by the API. The metrics identify no visitor: no user
+  id, no session, no user agent in them. The browser attaches its cookies to a same-origin beacon,
+  but the route reads none. Like every request, a beacon is in the access log with the client's IP
+  (and, with tracing on, in a server span with the IP and the user agent): it serves the rate limit
+  and the logs, never the metrics.
 - **Nothing stored but metrics:** the values become histogram samples, aggregated per label set. A
   client can at worst skew the distribution of the pages it reports, within the rate limit.
 
@@ -329,10 +331,13 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
   error tracking off silently. Use separate Sentry projects for API and web, restrict who can read
   them, and set the data retention the project's policy allows.
 - Telemetry follows the same rules: spans carry statements with placeholders, never values; URL
-  attributes lose their query string and credentials; string attributes are redacted, on the span,
-  on its events (exception messages and stack traces) and in its status message
-  (`RedactingSpanProcessor`). Provider credentials (`OTEL_EXPORTER_OTLP_HEADERS`) are read by the
-  exporters from the environment, never by application code.
+  attributes lose their query string and credentials; values under a sensitive name are masked
+  whole and every other string attribute (string arrays included) is redacted, on the span, on its
+  events (exception messages and stack traces) and in its status message
+  (`RedactingSpanProcessor`). The resource names the process (`service.instance.id`), not the
+  machine: no host name or machine id unless the operator sets one. Provider credentials
+  (`OTEL_EXPORTER_OTLP_HEADERS`) are read by the exporters from the environment, never by
+  application code.
 
 ## Redis
 
