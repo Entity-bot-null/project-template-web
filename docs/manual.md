@@ -579,15 +579,15 @@ runs `prisma migrate deploy` by default; the same image answers the other migrat
 
 ### 7.7 Operations commands
 
-| Command                                                                                                            | Use                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `curl http://<api>:3000/api/health/ready`                                                                          | readiness of one instance, from inside the platform                                                    |
-| `pnpm smoke --url <public URL> --api <API URL> --release <sha>`                                                    | after a deployment, a restore, an incident                                                             |
-| `docker run --rm -e DATABASE_URL=<url> <api-migrate image>`                                                        | applies pending migrations                                                                             |
-| `docker run --rm -e DATABASE_URL=<url> <api-migrate image> node node_modules/prisma/build/index.js migrate status` | which migrations an environment has                                                                    |
-| `... migrate resolve --rolled-back <migration>` / `--applied <migration>`                                          | records the outcome of a failed migration ([database.md](database.md#when-a-migration-fails))          |
-| `pg_dump`, `pg_restore`, `createdb`                                                                                | backups and restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine)) |
-| `UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL;`                            | ends every session of one user (security incident)                                                     |
+| Command                                                                                                                                                   | Use                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness of one instance, from inside the platform                                                             |
+| `pnpm smoke --url <public URL> --api <API URL> --release <sha>`                                                                                           | after a deployment, a restore, an incident                                                                      |
+| `docker run --rm -e DATABASE_URL=<url> <api-migrate image>`                                                                                               | applies pending migrations                                                                                      |
+| `docker run --rm -e DATABASE_URL=<url> <api-migrate image> node node_modules/prisma/build/index.js migrate status`                                        | which migrations an environment has                                                                             |
+| `... migrate resolve --rolled-back <migration>` / `--applied <migration>`                                                                                 | records the outcome of a failed migration ([database.md](database.md#when-a-migration-fails))                   |
+| `pg_dump`, `pg_restore`, `createdb`                                                                                                                       | backups and restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine))          |
+| `BEGIN; SELECT id FROM users WHERE id = '<id>' FOR UPDATE; UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL; COMMIT;` | ends every session of one user (security incident); the user's lock keeps a refresh in flight from outliving it |
 
 ## 8. CI/CD
 
