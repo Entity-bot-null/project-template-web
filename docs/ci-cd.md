@@ -478,7 +478,10 @@ rollback runs the old version against the new schema. So every release must be:
   web image rolls out after the API for that reason.
 
 A change that cannot meet these (a rename, a type change, a new required field) is split across
-releases: expand, migrate the readers and writers, contract.
+releases: expand, migrate the readers and writers, contract. Nothing at run time tells a contract
+step that came too early (readiness and the smoke test read no table), so the migration that
+contracts says why it is safe, `-- contract: <reason>` above the statement, and
+`scripts/check-migrations.mjs` refuses one without it (docs/database.md#expand-and-contract).
 
 ### Rollback
 

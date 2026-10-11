@@ -65,16 +65,19 @@ RUN apt-get update \
         /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # Migrations job: the Prisma CLI with its engine and the committed migrations;
-# no source code, no development tools.
+# no source code, no development tools. Its command refuses a database whose
+# applied migrations were edited since, then runs prisma migrate deploy
+# (scripts/migrate-deploy.mjs).
 FROM hardened AS migrate
 WORKDIR /repo
 COPY --from=migrate-deps /repo/node_modules ./node_modules
 COPY --from=migrate-deps /repo/apps/api/node_modules ./apps/api/node_modules
 COPY apps/api/package.json apps/api/prisma.config.ts ./apps/api/
 COPY apps/api/prisma ./apps/api/prisma
+COPY apps/api/scripts/migrate-deploy.mjs ./apps/api/scripts/
 WORKDIR /repo/apps/api
 USER node
-CMD ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
+CMD ["node", "scripts/migrate-deploy.mjs"]
 
 FROM hardened AS runtime
 # The build this image holds (CI passes the commit SHA): on every log line,
