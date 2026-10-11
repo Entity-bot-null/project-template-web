@@ -13,6 +13,9 @@
 #    release.previous.env, the target of rollback.sh); on failure, starts
 #    the release of release.env again.
 #
+# One deployment or rollback at a time: a second deploy.sh or rollback.sh
+# started meanwhile stops at once, before changing anything.
+#
 # Registry login: when REGISTRY_TOKEN is set (the workflow passes its short
 # lived token on stdin), the server logs in for this run only.
 set -eu
@@ -39,8 +42,24 @@ for file in server.env api.env migrate.env web.env; do
   fi
 done
 
+# Two runs at once (the workflow and a person, or two people) would share
+# release.next.env and move the release pointers under each other: the server
+# would run one release while release.env names another, or none. The lock is
+# the kernel's, on an open file: it goes with this process, however it ends.
+exec 9> .deploy.lock
+if ! flock -n 9; then
+  echo "deploy: another deployment or rollback is running on this server; run this again once it has finished" >&2
+  exit 1
+fi
+
 compose() {
   docker compose --env-file server.env --env-file "$release_file" "$@"
+}
+
+# The API answers readiness (its database reachable), not only liveness, which
+# is all the containers' health checks ask.
+api_ready() {
+  compose exec -T api node -e "fetch('http://127.0.0.1:3000/api/health/ready', { signal: AbortSignal.timeout(10000) }).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 }
 
 logout_registry() {
@@ -65,20 +84,25 @@ fi
 
 release_file=release.next.env
 echo "deploy: pulling release $4"
-compose --profile migrate pull migrate api web proxy
+# By digest: Docker refuses content whose digest is not the one asked for.
+if ! compose --profile migrate pull migrate api web proxy; then
+  rm -f release.next.env
+  echo "deploy: could not pull release $4; nothing changed" >&2
+  exit 1
+fi
 if [ -n "${REGISTRY_TOKEN:-}" ]; then
   logout_registry
 fi
 
 echo "deploy: migrating the database"
 if ! compose --profile migrate run --rm migrate; then
+  rm -f release.next.env
   echo "deploy: the migration failed; the running release keeps serving" >&2
   exit 1
 fi
 
 echo "deploy: rolling out"
-if compose up --detach --wait --wait-timeout 180 api web proxy &&
-  compose exec -T api node -e "fetch('http://127.0.0.1:3000/api/health/ready', { signal: AbortSignal.timeout(10000) }).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"; then
+if compose up --detach --wait --wait-timeout 180 api web proxy && api_ready; then
   # Only a release that went live moves the pointers: the one it replaces
   # becomes the rollback target of rollback.sh. Redeploying the running
   # release changes nothing, so the rollback target stays the one before it.
@@ -94,8 +118,11 @@ echo "deploy: the rollout failed; the new containers' last log lines:" >&2
 compose logs --no-color --tail 60 api web >&2 || true
 if [ -f release.env ]; then
   release_file=release.env
-  compose up --detach --wait --wait-timeout 180 api web proxy &&
+  if compose up --detach --wait --wait-timeout 180 api web proxy && api_ready; then
     echo "deploy: back to the release that was running" >&2
+  else
+    echo "deploy: the release that was running did not come back ready either: docker compose ps, and the API's log" >&2
+  fi
 fi
 rm -f release.next.env
 exit 1
