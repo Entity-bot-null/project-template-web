@@ -223,19 +223,19 @@ de commit van en inglés, como el resto del repositorio ([commits.md](commits.md
 
 Después, los ajustes del repositorio (REQUIERE CONFIGURACIÓN), en la web o con `gh`:
 
-| Ajuste                                                                                                     | Dónde / comando                                                                                                          |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Solo squash merge, mensaje por defecto = título del pull request, borrar ramas tras el merge               | Settings → General → Pull Requests                                                                                       |
-| Ruleset de `main`: pull requests, **CI passed** y **Conventions**, code owners, sin force push             | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/main.json` (repositorio público o plan de pago) |
-| Tags de release `v*` inmutables                                                                            | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/tags.json`                                      |
-| Token por defecto de solo lectura para los workflows                                                       | Settings → Actions → General → Workflow permissions → Read repository contents                                           |
-| Entornos `staging` y `production`, ramas de despliegue "solo `main`", revisores en producción              | Settings → Environments                                                                                                  |
-| Token para los pull requests de release (para que CI se ejecute en ellos)                                  | `gh secret set RELEASE_PLEASE_TOKEN` (token de una GitHub App o fine-grained: contents, pull requests, issues)           |
-| Registro de las imágenes                                                                                   | `gh variable set IMAGE_PREFIX --body ghcr.io/OWNER/REPO`                                                                 |
-| DAST pasivo de staging, cuando exista                                                                      | `gh variable set DAST_STAGING_URL --body https://<host de staging>`                                                      |
-| CodeQL y dependency review (repositorio público o GitHub Advanced Security)                                | `gh variable set ENABLE_CODEQL --body true`, `gh variable set ENABLE_DEPENDENCY_REVIEW --body true`                      |
-| Alertas y actualizaciones de seguridad de Dependabot, reporte privado de vulnerabilidades, push protection | Settings → Code security                                                                                                 |
-| Secretos de despliegue de un entorno                                                                       | `gh secret set <NOMBRE> --env production` (o el gestor de secretos de la plataforma)                                     |
+| Ajuste                                                                                                      | Dónde / comando                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Solo squash merge, mensaje por defecto = título del pull request, borrar ramas tras el merge                | Settings → General → Pull Requests                                                                                                                                            |
+| Ruleset de `main`: pull requests, **CI passed** y **Conventions**, code owners, sin force push              | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/main.json` (repositorio público o plan de pago)                                                      |
+| Tags de release `v*` inmutables                                                                             | `gh api repos/OWNER/REPO/rulesets --method POST --input .github/rulesets/tags.json`                                                                                           |
+| Token por defecto de solo lectura para los workflows                                                        | Settings → Actions → General → Workflow permissions → Read repository contents; marca "Allow GitHub Actions to create and approve pull requests" (el pull request de release) |
+| Entornos `staging` y `production`, ramas de despliegue "solo `main`", revisores en producción               | Settings → Environments                                                                                                                                                       |
+| Token opcional para los pull requests de release (todos los workflows de pull request se ejecutan en ellos) | `gh secret set RELEASE_PLEASE_TOKEN` (token de una GitHub App o fine-grained: contents, pull requests, issues)                                                                |
+| Registro de las imágenes                                                                                    | `gh variable set IMAGE_PREFIX --body ghcr.io/OWNER/REPO`                                                                                                                      |
+| DAST pasivo de staging, cuando exista                                                                       | `gh variable set DAST_STAGING_URL --body https://<host de staging>`                                                                                                           |
+| CodeQL y dependency review (repositorio público o GitHub Advanced Security)                                 | `gh variable set ENABLE_CODEQL --body true`, `gh variable set ENABLE_DEPENDENCY_REVIEW --body true`                                                                           |
+| Alertas y actualizaciones de seguridad de Dependabot, reporte privado de vulnerabilidades, push protection  | Settings → Code security                                                                                                                                                      |
+| Secretos de despliegue de un entorno                                                                        | `gh secret set <NOMBRE> --env production` (o el gestor de secretos de la plataforma)                                                                                          |
 
 Detalles y motivos: [ci-cd.md](ci-cd.md#repository-settings-requiere-configuración).
 
@@ -619,7 +619,7 @@ demás comandos de migración ([7.7](#77-comandos-de-operación)).
 | `docker-images.yml`         | lo llaman los gates (build y escaneo) y un despliegue (push) | construye `api`, `api-migrate`, `web` y las escanea con Trivy; las publica con SBOM y provenance cuando se le pide                       |
 | `codeql.yml`                | pull requests, `main`, semanal, si `ENABLE_CODEQL=true`      | análisis de seguridad entre ficheros (ADVISORY)                                                                                          |
 | `dast.yml`                  | los lunes a las 04:41 UTC, a mano                            | imágenes de producción en el runner, smoke test, ZAP baseline y API scan; o el escaneo pasivo de staging (ADVISORY)                      |
-| `release.yml`               | pushes a `main`                                              | el pull request de release; una vez mergeado, el tag, la GitHub release y el SBOM                                                        |
+| `release.yml`               | pushes a `main`                                              | el pull request de release y el CI en él; una vez mergeado, el tag, la GitHub release y el SBOM                                          |
 | `main-guard.yml`            | en cada push a `main`                                        | comprueba que cada commit subido es un pull request mergeado; si no, falla y abre un issue                                               |
 | `dependabot-auto-merge.yml` | al aprobar un pull request de Dependabot                     | mergea una actualización patch o minor cuando **CI passed** pasa (comprueba él mismo la aprobación y el CI)                              |
 | `deploy.yml` (**Deploy**)   | a mano, desde `main`                                         | resuelve la ref a un commit de `main`, repite los gates y publica la release (el destino VPS, o un job propio)                           |
@@ -661,9 +661,11 @@ Las mismas comprobaciones en local: `pnpm verify`, `pnpm test:integration`, `pnp
 4. Despliega el tag ([10](#10-desplegar-y-hacer-rollback)): publicar una release y desplegarla son
    pasos separados.
 
-La primera release es `0.1.0`; para empezar en `1.0.0`, mergea un commit con el pie
-`Release-As: 1.0.0`. Sin `RELEASE_PLEASE_TOKEN`, CI no arranca en el pull request de release:
-ciérralo y vuelve a abrirlo ([ci-cd.md](ci-cd.md#releases)).
+La versión continúa desde el `1.0.0` de la plantilla: el primer `fix` da 1.0.1, el primer `feat`
+1.1.0; el pie `Release-As: <versión>` en un commit mergeado elige otra. El workflow de release lanza
+él mismo el CI y **Conventions** en el pull request de release; con `RELEASE_PLEASE_TOKEN`
+configurado, en cambio, se ejecutan en él todos los workflows de pull request
+([ci-cd.md](ci-cd.md#release-pull-requests)).
 
 ## 10. Desplegar y hacer rollback
 
