@@ -7,7 +7,10 @@
 #                     authentication routes excluded (sign-in hashes passwords
 #                     on purpose, slowly).
 #
-# Health probes never reach these numbers: the API does not measure them.
+# Health probes never reach these numbers: the API does not measure them. The
+# Web Vitals beacons (POST /api/telemetry/web-vitals) are left out too: one or
+# two per page load, fast, answered without the database, they would dilute
+# both ratios as page views grow and hide a failing API behind them.
 # The recording rules compute each SLI's error ratio (bad events / all
 # events) over the windows of the burn-rate alerts; the alerts follow the
 # multiwindow, multi-burn-rate method of Google's SRE Workbook, with the
@@ -40,71 +43,71 @@ groups:
           slo: api-availability
         expr: |
           (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[5m]))
             or on (job, deployment_environment_name)
-            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[5m]))
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[5m]))
           )
           /
-          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[5m]))
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[5m]))
       - record: slo:sli_error:ratio_rate30m
         labels:
           slo: api-availability
         expr: |
           (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30m]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[30m]))
             or on (job, deployment_environment_name)
-            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30m]))
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[30m]))
           )
           /
-          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30m]))
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[30m]))
       - record: slo:sli_error:ratio_rate1h
         labels:
           slo: api-availability
         expr: |
           (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1h]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[1h]))
             or on (job, deployment_environment_name)
-            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[1h]))
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[1h]))
           )
           /
-          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[1h]))
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[1h]))
       - record: slo:sli_error:ratio_rate6h
         labels:
           slo: api-availability
         expr: |
           (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[6h]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[6h]))
             or on (job, deployment_environment_name)
-            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[6h]))
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[6h]))
           )
           /
-          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[6h]))
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[6h]))
       - record: slo:sli_error:ratio_rate3d
         labels:
           slo: api-availability
         expr: |
           (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[3d]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[3d]))
             or on (job, deployment_environment_name)
-            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[3d]))
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[3d]))
           )
           /
-          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[3d]))
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[3d]))
       # Request rates of the long windows: an SLO alert needs at least 100
       # requests in its long window. With fewer, one failure moves the ratio
       # by whole percents; the uptime checks cover low traffic instead.
       - record: slo:sli_requests:rate1h
         labels:
           slo: api-availability
-        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[1h]))
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[1h]))
       - record: slo:sli_requests:rate6h
         labels:
           slo: api-availability
-        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[6h]))
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[6h]))
       - record: slo:sli_requests:rate3d
         labels:
           slo: api-availability
-        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[3d]))
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[3d]))
 
   # Error ratio = responses slower than 500 ms / all responses, from the
   # cumulative bucket le="0.5" (responses that took 500 ms or less).
@@ -115,58 +118,58 @@ groups:
           slo: api-latency
         expr: |
           1 - (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[5m]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[5m]))
             /
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[5m]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[5m]))
           )
       - record: slo:sli_error:ratio_rate30m
         labels:
           slo: api-latency
         expr: |
           1 - (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[30m]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[30m]))
             /
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[30m]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[30m]))
           )
       - record: slo:sli_error:ratio_rate1h
         labels:
           slo: api-latency
         expr: |
           1 - (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[1h]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[1h]))
             /
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[1h]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[1h]))
           )
       - record: slo:sli_error:ratio_rate6h
         labels:
           slo: api-latency
         expr: |
           1 - (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[6h]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[6h]))
             /
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[6h]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[6h]))
           )
       - record: slo:sli_error:ratio_rate3d
         labels:
           slo: api-latency
         expr: |
           1 - (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[3d]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[3d]))
             /
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[3d]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[3d]))
           )
       - record: slo:sli_requests:rate1h
         labels:
           slo: api-latency
-        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[1h]))
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[1h]))
       - record: slo:sli_requests:rate6h
         labels:
           slo: api-latency
-        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[6h]))
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[6h]))
       - record: slo:sli_requests:rate3d
         labels:
           slo: api-latency
-        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[3d]))
+        expr: sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[3d]))
 
   # The compliance window itself, for the SLO dashboard (the SLI and the
   # error budget left over 30 days). Evaluated every 5 minutes: a 30-day rate
@@ -179,20 +182,20 @@ groups:
           slo: api-availability
         expr: |
           (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30d]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5..", http_route!="/api/telemetry/web-vitals"}[30d]))
             or on (job, deployment_environment_name)
-            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30d]))
+            0 * sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[30d]))
           )
           /
-          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count[30d]))
+          sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!="/api/telemetry/web-vitals"}[30d]))
       - record: slo:sli_error:ratio_rate30d
         labels:
           slo: api-latency
         expr: |
           1 - (
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*"}[30d]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_bucket{le="0.5", http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[30d]))
             /
-            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*"}[30d]))
+            sum by (job, deployment_environment_name) (rate(http_server_request_duration_seconds_count{http_route!~"/api/auth/.*|/api/telemetry/web-vitals"}[30d]))
           )
 
   # Burn rate = error ratio / error budget. 14.4 over 1 hour spends 2 % of
