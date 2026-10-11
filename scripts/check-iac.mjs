@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rolesScript } from './iac-database.mjs';
-import { pullableImage, toolImage } from './tool-image.mjs';
+import { ensureImage, pullableImage, toolImage } from './tool-image.mjs';
 
 const INFRA = fileURLToPath(new URL('../infra/terraform', import.meta.url));
 
@@ -49,6 +49,8 @@ chmodSync(work, 0o755);
 function inContainer(tool, script, env = {}) {
   const name = `${randomBytes(4).toString('hex')}.sh`;
   writeFileSync(join(work, name), script);
+  const image = pullableImage(toolImage(tool));
+  ensureImage(image);
   const run = spawnSync(
     'docker',
     [
@@ -61,7 +63,7 @@ function inContainer(tool, script, env = {}) {
       ...Object.entries(env).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
       '--entrypoint',
       'sh',
-      pullableImage(toolImage(tool)),
+      image,
       `/out/${name}`,
     ],
     { stdio: 'inherit' },

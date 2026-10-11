@@ -1,7 +1,7 @@
 // Tests of the tool image resolver (scripts/tool-image.mjs). Run: pnpm test:scripts
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { pullableImage, toolImage } from './tool-image.mjs';
+import { ensureImage, pullableImage, toolImage } from './tool-image.mjs';
 
 const DIGEST = `@sha256:${'a'.repeat(64)}`;
 const MIRROR = 'mirror.example';
@@ -74,5 +74,70 @@ describe('pullableImage', () => {
       const digest = image.slice(image.indexOf('@'));
       assert.ok(pullableImage(image, { mirror: MIRROR, pull }).endsWith(digest), name);
     }
+  });
+});
+
+/**
+ * A fake `docker`: `image inspect` answers whether the image is here, and each
+ * `pull` takes the next answer of the list.
+ * @param {{ present?: boolean, pulls?: { status: number, stderr?: string }[] }} answers
+ */
+function dockerWith({ present = false, pulls = [] }) {
+  /** @type {string[]} */
+  const calls = [];
+  /** @type {number[]} */
+  const paused = [];
+  let next = 0;
+  return {
+    calls,
+    paused,
+    pause: (/** @type {number} */ ms) => {
+      paused.push(ms);
+    },
+    run: (/** @type {string} */ _command, /** @type {string[]} */ args) => {
+      calls.push(args.slice(0, 2).join(' '));
+      if (args[0] === 'image') return { status: present ? 0 : 1, stdout: '', stderr: '' };
+      const answer = pulls[next++] ?? { status: 0 };
+      return { stdout: '', stderr: '', ...answer };
+    },
+  };
+}
+
+const IMAGE = `public.ecr.aws/docker/library/postgres:18-alpine${DIGEST}`;
+const RATE_LIMITED = { status: 1, stderr: 'toomanyrequests: Rate exceeded' };
+
+describe('ensureImage', () => {
+  test('an image already here is not pulled again', () => {
+    const docker = dockerWith({ present: true });
+    ensureImage(IMAGE, docker);
+    assert.deepEqual(docker.calls, ['image inspect']);
+  });
+
+  test("a pull the registry's rate limit refused is retried after a growing pause", () => {
+    // CI runners share their addresses, and Docker Hub, GHCR and ECR Public
+    // all limit anonymous pulls per address.
+    const docker = dockerWith({ pulls: [RATE_LIMITED, RATE_LIMITED, { status: 0 }] });
+    ensureImage(IMAGE, docker);
+    assert.deepEqual(docker.calls, [
+      'image inspect',
+      'pull --quiet',
+      'pull --quiet',
+      'pull --quiet',
+    ]);
+    assert.deepEqual(docker.paused, [5000, 10_000]);
+  });
+
+  test('any other failure is left to docker run, which reports it', () => {
+    const docker = dockerWith({ pulls: [{ status: 1, stderr: 'manifest unknown' }] });
+    ensureImage(IMAGE, docker);
+    assert.deepEqual(docker.calls, ['image inspect', 'pull --quiet']);
+    assert.deepEqual(docker.paused, []);
+  });
+
+  test('it gives up after four attempts', () => {
+    const docker = dockerWith({ pulls: Array.from({ length: 6 }, () => RATE_LIMITED) });
+    ensureImage(IMAGE, docker);
+    assert.equal(docker.calls.filter((call) => call === 'pull --quiet').length, 4);
+    assert.deepEqual(docker.paused, [5000, 10_000, 20_000]);
   });
 });

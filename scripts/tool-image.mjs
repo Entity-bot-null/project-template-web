@@ -60,6 +60,46 @@ function dockerPull(reference) {
   return spawnSync('docker', ['pull', '--quiet', reference], { stdio: 'ignore' }).status === 0;
 }
 
+// The answers of a registry that limits anonymous pulls per address: Docker
+// Hub ("toomanyrequests"), ECR Public ("Rate exceeded"), GHCR (429).
+const RATE_LIMITED = /toomanyrequests|rate exceeded|too many requests|\b429\b/i;
+
+/**
+ * Makes sure an image is here before `docker run` uses it. CI runners share
+ * their addresses, and every registry the pins use limits anonymous pulls per
+ * address: a pull refused for that is retried after 5, 10 and 20 seconds.
+ * Any other failure is left to `docker run`, which reports it.
+ * @param {string} reference
+ * @param {{ run?: Run, pause?: (ms: number) => void, attempts?: number }} [options]
+ */
+export function ensureImage(reference, { run = spawnRun, pause = sleep, attempts = 4 } = {}) {
+  if (run('docker', ['image', 'inspect', reference], { stdio: 'ignore' }).status === 0) return;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const pull = run('docker', ['pull', '--quiet', reference], { encoding: 'utf8' });
+    if (pull.status === 0) return;
+    const output = [pull.stderr, pull.stdout].filter((part) => typeof part === 'string').join('');
+    if (attempt === attempts || !RATE_LIMITED.test(output)) return;
+    const waitMs = 5000 * 2 ** (attempt - 1);
+    console.error(
+      `${reference}: the registry limited anonymous pulls; retrying in ${waitMs / 1000} s (attempt ${attempt + 1} of ${attempts}).`,
+    );
+    pause(waitMs);
+  }
+}
+
+/**
+ * How the scripts call `docker`; the tests pass a fake.
+ * @typedef {(command: string, args: string[], options: import('node:child_process').SpawnSyncOptions) => { status: number | null, stdout?: unknown, stderr?: unknown }} Run
+ */
+
+/** @type {Run} */
+const spawnRun = (command, args, options) => spawnSync(command, args, options);
+
+/** Blocks for `ms`: the scripts run their tools one after another anyway. */
+function sleep(/** @type {number} */ ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 /**
  * Runs a tool image with the repository mounted at `mount` (also the working
  * directory) and returns its exit status.
@@ -77,6 +117,8 @@ export function runTool(
   { env = [], mount = '/repo', entrypoint, source = process.cwd(), input } = {},
 ) {
   const passEnv = env.filter((key) => process.env[key]).flatMap((key) => ['-e', key]);
+  const image = pullableImage(toolImage(name));
+  ensureImage(image);
   const run = spawnSync(
     'docker',
     [
@@ -89,7 +131,7 @@ export function runTool(
       mount,
       ...passEnv,
       ...(entrypoint ? ['--entrypoint', entrypoint] : []),
-      pullableImage(toolImage(name)),
+      image,
       ...args,
     ],
     input === undefined ? { stdio: 'inherit' } : { stdio: ['pipe', 'inherit', 'inherit'], input },
