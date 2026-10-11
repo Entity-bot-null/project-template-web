@@ -580,11 +580,47 @@ docker compose --env-file server.env --env-file release.env exec api \
 Edit the `.env` file on the server, then recreate the service:
 
 ```
+cp api.env api.env.previous      # the way back: rollback.sh puts back images, never settings
 docker compose --env-file server.env --env-file release.env up -d --wait api web
 ```
 
+To undo the change, copy the previous file back and recreate the service again.
+
 Rotating `JWT_ACCESS_SECRET` without signing everyone out: [security.md](security.md#secret-rotation)
 (`JWT_ACCESS_SECRET_PREVIOUS`).
+
+### Recover a lost server
+
+The server holds the only copy of its settings (the `*.env` files) and of the release pointers;
+the database, the images and the code live elsewhere. A server that is gone (deleted, its disk
+lost) or compromised comes back like this; never reuse a compromised one: keep it off for the
+investigation ([incident-response.md](incident-response.md#11-authentication-or-security-attack)).
+
+1. **A new server**: `terraform apply -replace=digitalocean_droplet.app -var-file=production.tfvars`
+   (the reserved IP and the DNS record stay), or sections 2 to 4 by hand. A Droplet backup
+   (`droplet_backups`) brings `/srv/app` back as it was on that day, settings included: fine
+   after a lost disk, not after a compromise.
+2. **The files**, section 6, from a checkout of the release that was running (the last successful
+   Deploy run of the environment names it). The settings are made again, not copied from a
+   compromised server:
+   - `DATABASE_URL` of `api.env` and `migrate.env`: `terraform output -raw database_runtime_url`
+     and `database_migrator_url`; by hand, the URLs of section 5. After a compromise, new
+     passwords first ([Later changes](#later-changes); by hand, `ALTER ROLE ... PASSWORD` as the
+     administrator).
+   - `JWT_ACCESS_SECRET`: a new one (`openssl rand -hex 32`). Nobody is signed out: sessions live
+     in the database, and an access token signed with the old secret is refused and renewed by the
+     next refresh ([security.md](security.md#secret-rotation)).
+   - `server.env`, `web.env`, `APP_ENVIRONMENT`, `APP_ORIGIN`: as in section 6; the optional
+     settings (`SENTRY_DSN`, ...) from their services.
+3. **GitHub**: `DEPLOY_KNOWN_HOSTS` with the new server's host key (section 4).
+   `DEPLOY_SSH_KEY` stays when the new server has the same deploy key (Terraform registers it);
+   after a compromise, a new key pair, on the server and in the environment.
+4. **The release**: run Deploy with the ref that was running. It reuses the digests recorded by
+   that run (90 days; later it builds them again), pulls them, migrates (nothing to do) and starts
+   them; Caddy obtains the certificates at the first request. `release.previous.env` starts
+   empty: the next release makes this one the rollback target.
+5. **Check**: the smoke test of the run, a sign-in, and `ApiMetricsAbsent` and the uptime checks
+   back to normal.
 
 ### Keep the server healthy
 
