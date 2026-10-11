@@ -51,21 +51,27 @@ The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
    files is this release's (it stops otherwise, before changing anything,
    [Update the server files](#update-the-server-files)), takes the three digests this run
    recorded, connects to the server over SSH and runs `deploy.sh`, which
+   - stops at once if another `deploy.sh` or `rollback.sh` is running on the server (a person's,
+     say): two at once would move the release pointers under each other,
    - pulls the images by digest with the run's short-lived token (then logs out: the server keeps
-     no registry credential),
+     no registry credential); Docker refuses content whose digest is not the one asked for,
    - runs the migration (`api-migrate` with the migrator role) and stops there if it fails, the
      running release untouched,
    - starts the new `api` and `web`, waits until both are healthy and the API is ready,
    - on success records it in `release.env` (the release it replaced moves to
      `release.previous.env`, the rollback target; redeploying the running release keeps the
      rollback target as it was); on failure starts the release that was running
-     again, by itself;
-4. runs the smoke test against the public URL; if it fails, runs `rollback.sh` on the server.
+     again, by itself, and checks that it is ready;
+4. runs the smoke test against the public URL; if it fails, runs `rollback.sh` on the server,
+   which fails in turn when the release it puts back is not ready.
 
 Tested end to end on Docker (a local registry and PostgreSQL standing in for GHCR and the managed
 database): first deployment, migration with the two roles, HTTPS and HSTS, the smoke test, the
-client address through Caddy, the first administrator, a second release, `rollback.sh`, and a
-broken release rolled back automatically.
+client address through Caddy, the first administrator, a second release, `rollback.sh`, a broken
+release rolled back automatically, a failed migration (the running release untouched), two
+deployments at once (the second refused) and a registry serving content that does not match its
+digest (the pull refused). In CI, `scripts/deploy-vps.test.mjs` runs both scripts against a
+stand-in for Docker.
 
 Nothing in the repository or in GitHub holds a database password or a JWT secret: they live in
 files on the server, readable by the deploy user only.
@@ -88,6 +94,7 @@ files on the server, readable by the deploy user only.
 | `web.env`              | `APP_ENVIRONMENT`, optional `WEB_SENTRY_DSN`, `WEB_VITALS_SAMPLE_RATE`                   | no (server only) |
 | `release.env`          | the digests and release running now (written by `deploy.sh`)                             | no (server only) |
 | `release.previous.env` | the release before it                                                                    | no (server only) |
+| `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                        | no (server only) |
 
 Why `realip.conf`: the web image replaces `X-Forwarded-For` with the address that connected to it
 (so a client cannot choose its own address). Behind Caddy that address would be Caddy's, and the
@@ -548,7 +555,9 @@ docker compose --env-file server.env --env-file release.env up -d --force-recrea
 
 - **Automatic**: a failed rollout or smoke test puts the previous release back.
 - **By hand**, on the server: `cd /srv/app && ./rollback.sh` (uses the images already there; no
-  registry access needed).
+  registry access needed). It ends once the API is ready, and fails, saying so, when the release it
+  put back is not (a database credential changed since, for example). While a deployment runs it
+  stops at once: a failed deployment puts the running release back by itself.
 - **Planned**: run Deploy with the previous tag.
 
 Migrations are never reversed: the previous release runs on the current schema

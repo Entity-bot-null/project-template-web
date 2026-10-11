@@ -111,17 +111,32 @@ Run it from the incident record (docs/incident-response.md), writing down the ti
    down.
 3. **Restore into a new database**, never over the damaged one: it is the evidence, and it holds
    whatever was written after the recovery point. Managed service: point-in-time restore to a new
-   instance (REQUIERE CONFIGURACIÓN: the provider's procedure). Logical backup:
-   `createdb` then `pg_restore --no-owner --no-privileges --exit-on-error -d <new database> <dump>`
-   (see the [rehearsal](#rehearsal-on-a-development-machine)).
+   instance (REQUIERE CONFIGURACIÓN: the provider's procedure); it brings the roles and their
+   rights back with the data. Logical backup: a new database owned by the migrator
+   (`CREATE DATABASE <new database> OWNER app_migrator`, as the administrator), then, as the
+   migrator, `pg_restore --no-owner --exit-on-error -d <new database> <dump>`, then the runtime
+   role's rights again, connected as the migrator to the new database: the four `GRANT` and
+   `ALTER DEFAULT PRIVILEGES` statements of [deploy-vps.md](deploy-vps.md#5-the-database) with the
+   new database's name. Without them the API connects and its readiness answers ok (it reads no
+   table) while every request that does fails with `permission denied for table ...`: checked
+   with a restore made with `--no-privileges`, or from a dump taken with it. See the
+   [rehearsal](#rehearsal-on-a-development-machine).
 4. **Validate integrity.**
    - The restore itself finished without errors (`--exit-on-error`, or the provider's status).
-   - The schema matches the migrations: run `migrate status` with the `api-migrate` image of the
-     release that will run,
+   - No migration is pending: run `migrate status` with the `api-migrate` image of the release
+     that will run,
      `docker run --rm -e DATABASE_URL=<restored database URL> <api-migrate image>@<digest> node node_modules/prisma/build/index.js migrate status`.
      `Database schema is up to date!` (exit 0) is the expected answer. If it lists migrations
      not applied, the recovery point predates them: apply them (`migrate deploy`, the same image's
      default command; they are backward compatible) or run the release that matches the schema.
+   - The schema is the release's. `migrate status` compares migration names only: it answers "up
+     to date" for a database with a column, table or index the release does not describe
+     (checked). Compare the schema itself with the same image:
+     `docker run --rm -e DATABASE_URL=<restored database URL> <api-migrate image>@<digest> node node_modules/prisma/build/index.js migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`.
+     `No difference detected.` (exit 0) is the expected answer; exit 2 lists each difference (a
+     table, column or index too many or missing). What Prisma's schema cannot describe stays
+     invisible to it: a `CHECK` constraint or a partial index that a migration adds in raw SQL is
+     not compared (checked with Prisma 7.10), so look at those with `\d <table>` in `psql`.
    - Row counts and the newest rows of the critical tables are what the recovery point implies
      ([Verify critical data](#restore-testing)). Optionally, `pg_amcheck` verifies indexes and
      tables where the `amcheck` extension is available.
@@ -174,7 +189,9 @@ Restore drill — date, environment, people
 [ ] Backup chosen: type (full / PITR), source, timestamp asked for
 [ ] Restore started (time) into a new, isolated database
 [ ] Restore finished (time) without errors
+[ ] Logical restore: the runtime role's rights given again (step 3)
 [ ] migrate status with the release's api-migrate image: "Database schema is up to date!"
+[ ] migrate diff with the same image: "No difference detected."; raw-SQL objects checked by hand
 [ ] Row counts of the critical tables match the expectation for that point
 [ ] Newest row (e.g. max(created_at)) within the RPO of the point asked for
 [ ] Application started against it; readiness 200 with database "ok"
@@ -198,8 +215,9 @@ docker compose exec -T db pg_dump -U app -d app --format=custom --no-owner --no-
 docker compose exec -T db createdb -U app app_restore_check
 docker compose exec -T db pg_restore -U app -d app_restore_check --no-owner --no-privileges --exit-on-error /tmp/app.dump
 
-# 3. Integrity: schema against the migrations, then counts
+# 3. Integrity: no pending migration, the schema itself ("No difference detected."), then counts
 DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api exec prisma migrate status
+DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 docker compose exec -T db psql -U app -d app_restore_check -c "SELECT count(*) FROM users" -c "SELECT max(created_at) FROM sessions"
 
 # 4. The API on the restored copy (after pnpm build; a variable set on the command line wins
