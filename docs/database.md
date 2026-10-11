@@ -41,10 +41,25 @@ and the test commands also regenerate it before running. Step by step, with an e
 [how-to.md](how-to.md#add-a-table-or-a-column).
 
 - Every schema change ships as a **committed migration** in the same pull request as the code.
-- Never edit a migration that reached `main`; fix forward with a new one.
+- Never edit a migration that reached `main`; fix forward with a new one. Prisma's
+  `migrate deploy` compares migrations by name only: it would skip an edited migration as already
+  applied, and that database would keep a schema every new one (CI, a new environment, a restore
+  into an empty database) does not have. So the `api-migrate` image's command
+  (`apps/api/scripts/migrate-deploy.mjs`) first compares the checksum Prisma recorded for each
+  applied migration with the file it ships, and stops before migrating anything when one differs:
+  `Migrations changed after they were applied to this database: <names>`
+  ([what to do](incident-response.md#10-failed-database-migration)).
 - Review the generated SQL: locks on large tables, defaults, data loss warnings.
 - Releases run `prisma migrate deploy` from the `api-migrate` image **before** the new API version
   takes traffic (docs/ci-cd.md#deployment). `migrate dev` and `migrate reset` are for development only.
+- **One migration run at a time.** `prisma migrate deploy` holds a PostgreSQL advisory lock while
+  it runs (Prisma 7's schema engine, `pg_advisory_lock(72707369)`): a second run against the same
+  database waits up to 10 seconds, then fails with `P1002`
+  (`Timed out trying to acquire a postgres advisory lock`) without applying anything; checked with
+  two runs at once on PostgreSQL 18. The lock belongs to the database session, so the migration
+  job connects to the database directly, never through a pooler in transaction mode (PgBouncer, a
+  provider's connection pool), which would share the session with others. The guide's
+  `migrate.env` and the Terraform outputs connect directly.
 
 ### Expand and contract
 
@@ -56,6 +71,26 @@ the new schema. So every migration must be compatible with the version before it
 3. **Contract:** in a later release, drop the old column or constraint.
 
 Renames are add + copy + drop across releases, never a single `RENAME`.
+
+Nothing at run time notices a contract step that came too early: readiness asks the database for
+`SELECT 1`, and the smoke test reads no table. Checked on Docker: after a release whose migration
+dropped `users.name`, and again after `rollback.sh`, readiness and the smoke test passed while every
+sign-in answered 500 (the column `users.name` does not exist in the current database). So a
+contract step must say why it is safe, in a comment right above the statement:
+
+```sql
+-- contract: release 1.4.0 stopped reading users.name, and every server runs it
+ALTER TABLE "users" DROP COLUMN "name";
+```
+
+`scripts/check-migrations.mjs` refuses a contract step without that reason; it runs in
+`pnpm test:scripts` (so in CI) and on the migrations staged at each commit. Contract steps:
+dropping a table, column, type or view; renaming a table, column, type or enum value; changing a
+column's type; making a column required, adding a required column without a default, or removing a
+default; emptying a table. A Prisma change that removes an enum value writes several of them
+(retype the column, rename the types, drop the old one), each with its reason. Expand steps (new
+tables, nullable columns, columns with a default, indexes, looser constraints) need nothing. The
+check reads plain statements, not SQL inside a `DO` block or a function body.
 
 ### Safe migrations
 
