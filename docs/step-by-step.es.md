@@ -243,9 +243,9 @@ admin   admin@example.com / admin-password
 member  member@example.com / member-password
 ```
 
-**Si falla:** `port is already allocated` (habitual en Windows: el puerto 5432 está reservado) →
-crea el `.env` de la raíz con `cp .env.example .env`, pon `DB_PORT=5442` en él, cambia el puerto de
-`DATABASE_URL` en `apps/api/.env` a `5442` y repite.
+**Si falla:** `port is already allocated` (el puerto 5442 está ocupado o, en Windows, reservado) →
+crea el `.env` de la raíz con `cp .env.example .env`, pon `DB_PORT=5443` en él, cambia el puerto de
+`DATABASE_URL` en `apps/api/.env` a `5443` y repite.
 
 ### 3.4 Arranca la app
 
