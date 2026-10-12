@@ -319,9 +319,19 @@ official images on Amazon ECR Public). ECR Public caps anonymous pulls per addre
 pulled in CI through `mirror.gcr.io` by their digest (`TOOL_IMAGE_MIRROR` in `quality-gates.yml`,
 read by `scripts/tool-image.mjs`; an ECR Public image under its Docker Hub name): the digest makes
 the content identical whatever the source, the pinned registry stays the fallback, and Dependabot
-keeps updating the pins from their source. GHCR limits anonymous pulls too, so before a script runs
-a tool image it pulls it and, when a registry answers with its rate limit, retries after 5, 10 and
-20 seconds (`ensureImage`).
+keeps updating the pins from their source. The same goes for what CI pulls without a script:
+
+- the PostgreSQL and Redis service containers of the integration and end-to-end jobs get the
+  mirror's copy from the `Tool images` job (`node scripts/tool-image.mjs --mirrored <name>`), which
+  first asks the mirror whether it has that digest, since a service container cannot fall back;
+- the image builds, of the gates (`docker-images.yml`) and of a deployment (`deploy.yml`), get a
+  BuildKit build context per base image the mirror has
+  (`node scripts/tool-image.mjs --build-contexts <Dockerfile>`): a context named like a `FROM`
+  reference replaces it, so the Dockerfiles keep their pins and Dependabot its updates. The image
+  is the same, but its provenance names `mirror.gcr.io` as where the base image came from.
+
+GHCR limits anonymous pulls too, so before a script runs a tool image it pulls it and, when a
+registry answers with its rate limit, retries after 5, 10 and 20 seconds (`ensureImage`).
 
 ## Keeping the stack current
 
