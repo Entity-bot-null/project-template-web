@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/Entity-bot-null/project-template-web/compare/v1.1.1...v1.1.2) (2026-10-12)
+
+
+### Bug fixes
+
+* **ci:** pull ECR Public tool images through the Docker Hub mirror ([#35](https://github.com/Entity-bot-null/project-template-web/issues/35)) ([770473c](https://github.com/Entity-bot-null/project-template-web/commit/770473ca55abd9a4abd415ebdb9f9da33d1589f3))
+
 ## [1.1.1](https://github.com/Entity-bot-null/project-template-web/compare/v1.1.0...v1.1.1) (2026-10-11)
 
 
