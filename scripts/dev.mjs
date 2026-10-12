@@ -48,17 +48,35 @@ export function pnpmCommand(execPath, args) {
 }
 
 /**
- * Whether `url` answers within `timeoutMs` (any HTTP status will do).
- * @param {string} url
+ * npm_execpath with its symbolic links resolved (a pnpm installed by npm is a
+ * link to its pnpm.mjs); as given when it cannot be resolved, so a stale value
+ * still reaches pnpmCommand instead of crashing here.
+ * @param {string | undefined} value
  */
-async function answers(url, timeoutMs = 30_000) {
+export function resolvedExecPath(value) {
+  if (!value) return undefined;
+  try {
+    return realpathSync(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Whether `url` answers within `timeoutMs` (any HTTP status will do). Gives
+ * up at once when `signal` aborts: the servers have exited.
+ * @param {string} url
+ * @param {AbortSignal} signal
+ */
+export async function answers(url, signal, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !signal.aborted) {
     try {
-      await fetch(url, { signal: AbortSignal.timeout(2_000) });
+      await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)]) });
       return true;
     } catch {
-      await delay(250);
+      // Not up yet, or this script is stopping (then the pause ends at once).
+      await delay(250, undefined, { signal }).catch(() => undefined);
     }
   }
   return false;
@@ -69,8 +87,7 @@ if (isCli) {
   // Piped, the servers would drop their colors: keep them when this output
   // is a terminal, as it would be without this script.
   const colors = process.stdout.isTTY && !process.env.NO_COLOR ? { FORCE_COLOR: '1' } : {};
-  const execPath = process.env.npm_execpath && realpathSync(process.env.npm_execpath);
-  const [command, args] = pnpmCommand(execPath, [
+  const [command, args] = pnpmCommand(resolvedExecPath(process.env.npm_execpath), [
     '--parallel',
     '--filter',
     'api',
@@ -87,13 +104,17 @@ if (isCli) {
     process.exitCode = 1;
   });
 
+  // Aborted once the servers have exited: a pending wait for the web server
+  // ends at once (it would keep this script alive) and prints nothing.
+  const stopped = new AbortController();
+
   // One box at a time, after the web server answers (at most 30 s: a web
   // server that does not start still gets the box, under its error).
   let shown = Promise.resolve();
   const showBanner = () => {
     shown = shown.then(async () => {
-      await answers(currentSettings().web);
-      process.stdout.write(`\n${currentBanner()}\n\n`);
+      await answers(currentSettings().web, stopped.signal);
+      if (!stopped.signal.aborted) process.stdout.write(`\n${currentBanner()}\n\n`);
     });
   };
   const watch = apiReadyWatcher(showBanner);
@@ -112,6 +133,7 @@ if (isCli) {
   });
   process.on('SIGTERM', () => servers.kill('SIGTERM'));
   servers.on('exit', (code, signal) => {
+    stopped.abort();
     process.exitCode = code ?? (signal ? 130 : 1);
   });
 }
