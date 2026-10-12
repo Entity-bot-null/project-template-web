@@ -50,6 +50,20 @@ jobs:
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "os-date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # The Dockerfile's base images from the mirror, by digest, where it has
+      # them (scripts/tool-image.mjs): ECR Public limits anonymous pulls per
+      # address, and runners share theirs. Same digests, so the same image.
+      - name: Base images through the mirror
+        id: base
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          TOOL_IMAGE_MIRROR: mirror.gcr.io
+        run: |
+          {
+            echo 'contexts<<CONTEXTS'
+            node scripts/tool-image.mjs --build-contexts "$DOCKERFILE"
+            echo 'CONTEXTS'
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -63,6 +77,7 @@ jobs:
             APP_RELEASE=${{ steps.commit.outputs.sha }}
             OS_UPGRADE_DATE=${{ steps.commit.outputs.os-date }}
           tags: scan/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
+          build-contexts: ${{ steps.base.outputs.contexts }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
       # Operating system packages and every Node.js package in the image. Only
@@ -99,6 +114,7 @@ jobs:
             APP_RELEASE=${{ steps.commit.outputs.sha }}
             OS_UPGRADE_DATE=${{ steps.commit.outputs.os-date }}
           tags: ${{ vars.IMAGE_PREFIX || 'local' }}/${{ matrix.image }}:${{ steps.commit.outputs.sha }}
+          build-contexts: ${{ steps.base.outputs.contexts }}
           cache-from: type=gha,scope=${{ matrix.image }}
           provenance: mode=max
           sbom: true

@@ -168,8 +168,23 @@ jobs:
         id: day
         if: steps.recorded.outputs.run-id == ''
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      # Same context, target and build cache as the scanned build of the
-      # gates: the layers are cache hits.
+      # The Dockerfile's base images from the mirror, by digest, where it has
+      # them (scripts/tool-image.mjs): ECR Public limits anonymous pulls per
+      # address, and runners share theirs. Same digests, so the same image.
+      - name: Base images through the mirror
+        id: base
+        if: steps.recorded.outputs.run-id == ''
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          TOOL_IMAGE_MIRROR: mirror.gcr.io
+        run: |
+          {
+            echo 'contexts<<CONTEXTS'
+            node scripts/tool-image.mjs --build-contexts "$DOCKERFILE"
+            echo 'CONTEXTS'
+          } >> "$GITHUB_OUTPUT"
+      # Same context, target, base images and build cache as the scanned
+      # build of the gates: the layers are cache hits.
       - name: Build and push
         id: build
         if: steps.recorded.outputs.run-id == ''
@@ -183,6 +198,7 @@ jobs:
             APP_RELEASE=${{ needs.resolve.outputs.sha }}
             OS_UPGRADE_DATE=${{ steps.day.outputs.date }}
           tags: ${{ vars.IMAGE_PREFIX }}/${{ matrix.image }}:${{ needs.resolve.outputs.sha }}
+          build-contexts: ${{ steps.base.outputs.contexts }}
           cache-from: type=gha,scope=${{ matrix.image }}
           provenance: mode=max
           sbom: true
