@@ -39,7 +39,8 @@ chmodSync(work, 0o755);
 
 /**
  * Runs `script` (POSIX sh) in the pinned image `tool` (through the mirror
- * of TOOL_IMAGE_MIRROR when it is a Docker Hub image, as runTool does), with
+ * of TOOL_IMAGE_MIRROR when it is a Docker Hub or ECR Public image, as
+ * runTool does), with
  * infra/terraform at /src (read-only) and the work directory at /out; returns
  * the exit status.
  * @param {string} tool a stage name of .github/tool-images/Dockerfile
