@@ -84,11 +84,17 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      # infra/terraform: fmt, validate and tests, TFLint, Trivy, the server's
-      # cloud-init against its schema, the database roles script on
-      # PostgreSQL, with the pinned images of .github/tool-images/Dockerfile
-      # (docs/ci-cd.md#infrastructure-as-code). No cloud account, no token,
-      # no install needed.
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.16.5
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends postgresql postgresql-contrib
+          sudo service postgresql start
+          sudo -u postgres psql -c "CREATE USER app WITH PASSWORD 'app';"
+          sudo -u postgres psql -c "CREATE DATABASE app OWNER app;"
       - run: node scripts/check-iac.mjs
 
   sast:

@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: A required job failed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        if: needs.gates.result == 'failure' || needs.gates.result == 'cancelled'
         run: |
           echo "::error::At least one gate failed or was cancelled; see the jobs above."
           exit 1

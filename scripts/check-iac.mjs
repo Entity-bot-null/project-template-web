@@ -47,6 +47,23 @@ chmodSync(work, 0o755);
  * @param {Record<string, string>} [env]
  */
 function inContainer(tool, script, env = {}) {
+  if (tool === 'terraform') {
+    const name = `${randomBytes(4).toString('hex')}.sh`;
+    writeFileSync(join(work, name), script);
+    const run = spawnSync('sh', [`/out/${name}`], {
+      cwd: work,
+      env: {
+        ...process.env,
+        ...env,
+        INFRA: INFRA,
+      },
+      stdio: 'inherit',
+    });
+    // Terraform binary is provided by setup-terraform in CI, but locally it might be installed.
+    // To keep it working locally with Docker, we fallback to container if not in CI.
+    if (run.status === 0) return 0;
+  }
+
   const name = `${randomBytes(4).toString('hex')}.sh`;
   writeFileSync(join(work, name), script);
   const image = pullableImage(toolImage(tool));
