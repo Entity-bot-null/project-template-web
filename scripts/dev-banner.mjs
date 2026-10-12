@@ -1,9 +1,9 @@
-// The box `pnpm dev` prints once the database is up and before the API and
-// web logs start: where the app, the API, its docs and the database are. Read
-// from the settings those processes read (apps/api/.env, DB_PORT), so it shows
-// what runs, not what the defaults would be.
+// The box `pnpm dev` prints under the API and web logs once both are up
+// (scripts/dev.mjs): where the app, the API, its docs and the database are.
+// Read from the settings those processes read (apps/api/.env, DB_PORT), so it
+// shows what runs, not what the defaults would be.
 //
-//   node scripts/dev-banner.mjs
+//   node scripts/dev-banner.mjs     print it
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseEnv, styleText } from 'node:util';
@@ -105,17 +105,24 @@ function readEnv(file) {
   return existsSync(file) ? parseEnv(readFileSync(file, 'utf8')) : {};
 }
 
-const isCli = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
-if (isCli) {
+/** The settings as they are now: read again after each restart of the API. */
+export function currentSettings() {
   const root = new URL('../', import.meta.url);
-  const app = /** @type {{ name: string; version: string }} */ (
-    JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
-  );
   // The environment wins over a .env file, for the API (process.loadEnvFile)
   // as for Compose.
-  const settings = devSettings({
+  return devSettings({
     api: { ...readEnv(new URL('apps/api/.env', root)), ...process.env },
     compose: { ...readEnv(new URL('.env', root)), ...process.env },
   });
-  console.log(`\n${renderBanner(settings, app)}\n`);
 }
+
+/** The box for the current settings. */
+export function currentBanner() {
+  const app = /** @type {{ name: string; version: string }} */ (
+    JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  );
+  return renderBanner(currentSettings(), app);
+}
+
+const isCli = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
+if (isCli) console.log(`\n${currentBanner()}\n`);

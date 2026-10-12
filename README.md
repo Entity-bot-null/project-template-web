@@ -47,7 +47,7 @@ Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `m
 
 | Command                                             | What it does                                                                                          |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                          | Database up, the URLs in a box, then the API and web dev servers                                      |
+| `pnpm dev`                                          | Database up, then API and web dev servers; their URLs in a box under the logs                         |
 | `pnpm build`                                        | Build every app                                                                                       |
 | `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                        |
 | `pnpm format` / `pnpm format:check`                 | Prettier                                                                                              |

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "prepare": "husky",
-    "dev": "pnpm db:up && node scripts/dev-banner.mjs && pnpm --parallel --filter api --filter web dev",
+    "dev": "pnpm db:up && node scripts/dev.mjs",
     "build": "pnpm --recursive build",
     "lint": "pnpm --filter api exec prisma generate && eslint . --max-warnings=0",
     "lint:fix": "pnpm --filter api exec prisma generate && eslint . --fix",
