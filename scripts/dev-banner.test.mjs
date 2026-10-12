@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { stripVTControlCharacters, styleText } from 'node:util';
 import { DEFAULT_DB_PORT, devSettings, renderBanner } from './dev-banner.mjs';
 
 const APP = { name: 'project-template', version: '1.2.3' };
@@ -98,9 +99,11 @@ describe('renderBanner', () => {
   });
 
   test('colors wrap the parts, never change the layout', () => {
-    /** @type {(format: unknown, text: string) => string} */
-    const tagged = (format, text) => `<${String(format)}>${text}</>`;
-    const strip = (/** @type {string} */ text) => text.replace(/<[^>]*>/g, '');
-    assert.equal(strip(renderBanner(settings, APP, tagged)), renderBanner(settings, APP, plain));
+    // The terminal's own color codes, as on a terminal, whatever runs the test.
+    /** @type {(format: Parameters<typeof styleText>[0], text: string) => string} */
+    const colored = (format, text) => styleText(format, text, { validateStream: false });
+    const output = renderBanner(settings, APP, colored);
+    assert.notEqual(output, renderBanner(settings, APP, plain));
+    assert.equal(stripVTControlCharacters(output), renderBanner(settings, APP, plain));
   });
 });
