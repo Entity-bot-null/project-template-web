@@ -26,16 +26,18 @@ export function toolImage(name) {
   throw new Error(`No tool image named "${name}" in .github/tool-images/Dockerfile`);
 }
 
-// Docker Hub limits anonymous pulls per address, and CI runners share theirs.
-// With TOOL_IMAGE_MIRROR set (CI sets mirror.gcr.io, a mirror of Docker Hub),
-// an image hosted on Docker Hub is pulled from the mirror by its digest. The
-// digest makes the content identical whatever the source, and Docker Hub is
-// used as before when the mirror does not have it. Without the variable
-// (local runs) nothing changes.
+// Docker Hub limits anonymous pulls per address, and CI runners share theirs;
+// ECR Public limits them too ("toomanyrequests: Data limit exceeded"). With
+// TOOL_IMAGE_MIRROR set (CI sets mirror.gcr.io, a mirror of Docker Hub), an
+// image hosted on Docker Hub, or republished on ECR Public with Docker Hub's
+// digest, is pulled from the mirror by that digest. The digest makes the
+// content identical whatever the source, and the pinned registry is used as
+// before when the mirror does not have it. Without the variable (local runs)
+// nothing changes.
 
 /**
- * The reference to run: the mirror's copy of a Docker Hub image, when a mirror
- * is set and has it; the pinned reference otherwise.
+ * The reference to run: the mirror's copy of a Docker Hub or ECR Public image,
+ * when a mirror is set and has it; the pinned reference otherwise.
  * @param {string} image a reference pinned by digest
  * @param {{ mirror?: string; pull?: (reference: string) => boolean }} [options]
  */
@@ -47,10 +49,17 @@ export function pullableImage(
   const at = image.indexOf('@');
   const parts = image.slice(0, at).split('/');
   const host = parts.length > 1 ? (parts[0] ?? '') : '';
-  const dockerHub = ['', 'docker.io', 'index.docker.io'].includes(host);
   const isHost = host.includes('.') || host.includes(':') || host === 'localhost';
-  if (!dockerHub && isHost) return image;
-  const path = (isHost ? parts.slice(1) : parts).join('/').replace(/:[^/]*$/, '');
+  /** @type {string[]} the repository on Docker Hub */
+  let repository;
+  if (!isHost) repository = parts;
+  else if (['docker.io', 'index.docker.io'].includes(host)) repository = parts.slice(1);
+  // ECR Public republishes Docker Hub images with their digests: Docker's
+  // official ones under docker/library/, a publisher's under its own
+  // namespace (hashicorp/terraform).
+  else if (host === 'public.ecr.aws') repository = parts.slice(parts[1] === 'docker' ? 2 : 1);
+  else return image;
+  const path = repository.join('/').replace(/:[^/]*$/, '');
   const copy = `${mirror}/${path.includes('/') ? path : `library/${path}`}${image.slice(at)}`;
   return pull(copy) ? copy : image;
 }

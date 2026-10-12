@@ -8,8 +8,9 @@
 #
 # Where an image is published outside Docker Hub with the same digest, it is
 # pulled from there: Docker Hub limits anonymous pulls per address, and CI
-# runners share theirs. The two left on Docker Hub (actionlint, Semgrep) are
-# pulled in CI through a mirror, by digest (scripts/tool-image.mjs).
+# runners share theirs. The two left on Docker Hub (actionlint, Semgrep), and
+# the ECR Public ones (ECR Public limits anonymous pulls too), are pulled in CI
+# through a mirror of Docker Hub, by digest (scripts/tool-image.mjs).
 
 # Workflow linting: actionlint (syntax, expressions, shellcheck) and zizmor
 # (security: permissions, injection, pinning, credential persistence).

@@ -48,11 +48,32 @@ describe('pullableImage', () => {
     }
   });
 
+  test('an ECR Public image is pulled from the mirror under its Docker Hub name', () => {
+    const { pull, pulled } = mirrorWith(true);
+    assert.equal(
+      pullableImage(`public.ecr.aws/docker/library/redis:8${DIGEST}`, { mirror: MIRROR, pull }),
+      `${MIRROR}/library/redis${DIGEST}`,
+    );
+    assert.equal(
+      pullableImage(`public.ecr.aws/hashicorp/terraform:1.0.0${DIGEST}`, { mirror: MIRROR, pull }),
+      `${MIRROR}/hashicorp/terraform${DIGEST}`,
+    );
+    assert.deepEqual(pulled, [
+      `${MIRROR}/library/redis${DIGEST}`,
+      `${MIRROR}/hashicorp/terraform${DIGEST}`,
+    ]);
+  });
+
+  test('when the mirror does not have an ECR Public image, ECR Public is used as before', () => {
+    const { pull } = mirrorWith(false);
+    const image = `public.ecr.aws/docker/library/postgres:18-alpine${DIGEST}`;
+    assert.equal(pullableImage(image, { mirror: MIRROR, pull }), image);
+  });
+
   test('an image of another registry is used as pinned', () => {
     const { pull, pulled } = mirrorWith(true);
     for (const image of [
       `ghcr.io/zizmorcore/zizmor:1.0.0${DIGEST}`,
-      `public.ecr.aws/docker/library/redis:8${DIGEST}`,
       `localhost:5000/tool:1${DIGEST}`,
     ]) {
       assert.equal(pullableImage(image, { mirror: MIRROR, pull }), image);
@@ -68,7 +89,16 @@ describe('pullableImage', () => {
 
   test('every pinned tool image resolves to a reference with the same digest', () => {
     const { pull } = mirrorWith(true);
-    const names = ['actionlint', 'zizmor', 'semgrep', 'gitleaks'];
+    const names = [
+      'actionlint',
+      'zizmor',
+      'semgrep',
+      'gitleaks',
+      'terraform',
+      'ubuntu',
+      'postgres',
+      'redis',
+    ];
     for (const name of names) {
       const image = toolImage(name);
       const digest = image.slice(image.indexOf('@'));
