@@ -1,7 +1,8 @@
 // Tests of the tool image resolver (scripts/tool-image.mjs). Run: pnpm test:scripts
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { ensureImage, pullableImage, toolImage } from './tool-image.mjs';
+import { readFileSync } from 'node:fs';
+import { buildContexts, ensureImage, pullableImage, toolImage } from './tool-image.mjs';
 
 const DIGEST = `@sha256:${'a'.repeat(64)}`;
 const MIRROR = 'mirror.example';
@@ -103,6 +104,52 @@ describe('pullableImage', () => {
       const image = toolImage(name);
       const digest = image.slice(image.indexOf('@'));
       assert.ok(pullableImage(image, { mirror: MIRROR, pull }).endsWith(digest), name);
+    }
+  });
+});
+
+describe('buildContexts', () => {
+  const NODE = `public.ecr.aws/docker/library/node:24-bookworm-slim${DIGEST}`;
+  const NGINX = `ghcr.io/nginx/nginx-unprivileged:1.31-alpine${DIGEST}`;
+  const DOCKERFILE = [
+    '# syntax=docker/dockerfile:1',
+    `FROM ${NODE} AS base`,
+    'FROM base AS build',
+    `FROM --platform=linux/amd64 ${NODE} AS hardened`,
+    `FROM ${NGINX} AS runtime`,
+    'FROM node:24 AS unpinned',
+  ].join('\n');
+
+  test('each base image pinned by digest gets its mirror copy, once', () => {
+    const { pull: has, pulled: asked } = mirrorWith(true);
+    assert.deepEqual(buildContexts(DOCKERFILE, { mirror: MIRROR, has }), [
+      `${NODE}=docker-image://${MIRROR}/library/node${DIGEST}`,
+    ]);
+    // Stages, other registries and unpinned references are not asked for.
+    assert.deepEqual(asked, [`${MIRROR}/library/node${DIGEST}`]);
+  });
+
+  test('an image the mirror does not have is built from its pinned registry', () => {
+    const { pull: has } = mirrorWith(false);
+    assert.deepEqual(buildContexts(DOCKERFILE, { mirror: MIRROR, has }), []);
+  });
+
+  test('without a mirror, nothing changes and nothing is asked', () => {
+    const { pull: has, pulled: asked } = mirrorWith(true);
+    assert.deepEqual(buildContexts(DOCKERFILE, { mirror: '', has }), []);
+    assert.deepEqual(asked, []);
+  });
+
+  test("the applications' Dockerfiles get a context for their ECR Public base image", () => {
+    const { pull: has } = mirrorWith(true);
+    for (const file of ['apps/api/Dockerfile', 'apps/web/Dockerfile']) {
+      const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+      const contexts = buildContexts(text, { mirror: MIRROR, has });
+      assert.ok(contexts.length > 0, file);
+      for (const context of contexts) {
+        const [image, copy] = context.split('=docker-image://');
+        assert.ok(image && copy && copy.endsWith(image.slice(image.indexOf('@'))), context);
+      }
     }
   });
 });

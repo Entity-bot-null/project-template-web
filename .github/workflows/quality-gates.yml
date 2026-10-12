@@ -26,7 +26,9 @@ env:
 jobs:
   # The pinned PostgreSQL and Redis images of .github/tool-images/Dockerfile
   # (updated by Dependabot, tag and digest), for the service containers below,
-  # which cannot read a file themselves.
+  # which cannot read a file themselves: the mirror's copy, by the same
+  # digest, when the mirror has it (a service container cannot fall back to
+  # another registry), the pinned reference otherwise.
   tool-images:
     name: Tool images
     runs-on: ubuntu-latest
@@ -46,8 +48,8 @@ jobs:
       - id: images
         run: |
           {
-            echo "postgres=$(node scripts/tool-image.mjs postgres)"
-            echo "redis=$(node scripts/tool-image.mjs redis)"
+            echo "postgres=$(node scripts/tool-image.mjs --mirrored postgres)"
+            echo "redis=$(node scripts/tool-image.mjs --mirrored redis)"
           } >> "$GITHUB_OUTPUT"
 
   static:

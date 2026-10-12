@@ -1,6 +1,12 @@
 // The pinned tool images of .github/tool-images/Dockerfile (docs/ci-cd.md#pinning).
 //
 //   node scripts/tool-image.mjs <name>     print the image reference (workflows)
+//   node scripts/tool-image.mjs --mirrored <name>
+//                                          the mirror's copy when TOOL_IMAGE_MIRROR
+//                                          is set and has it (service containers)
+//   node scripts/tool-image.mjs --build-contexts <Dockerfile>
+//                                          a build context per base image the
+//                                          mirror has (docker/build-push-action)
 //
 // Imported by the scripts that run a tool in Docker, so CI and the local
 // commands run the same pinned image the same way.
@@ -40,12 +46,52 @@ export function toolImage(name) {
  * when a mirror is set and has it; the pinned reference otherwise.
  * @param {string} image a reference pinned by digest
  * @param {{ mirror?: string; pull?: (reference: string) => boolean }} [options]
+ *   `pull` answers whether the mirror has the copy (default: it pulls it)
  */
 export function pullableImage(
   image,
   { mirror = process.env.TOOL_IMAGE_MIRROR, pull = dockerPull } = {},
 ) {
   if (!mirror) return image;
+  const copy = mirrorReference(image, mirror);
+  return copy && pull(copy) ? copy : image;
+}
+
+/**
+ * Build contexts that replace each base image of a Dockerfile pinned by
+ * digest with the mirror's copy, where the mirror has it: BuildKit uses a
+ * context named like a FROM reference instead of pulling it, so the
+ * Dockerfile keeps its pins (and Dependabot its updates). Same digest, same
+ * content. One `<reference>=docker-image://<copy>` line each.
+ * @param {string} dockerfile the Dockerfile's text
+ * @param {{ mirror?: string; has?: (reference: string) => boolean }} [options]
+ */
+export function buildContexts(
+  dockerfile,
+  { mirror = process.env.TOOL_IMAGE_MIRROR, has = manifestExists } = {},
+) {
+  if (!mirror) return [];
+  const images = new Set();
+  for (const line of dockerfile.split('\n')) {
+    // FROM [--platform=…] <image> [AS <stage>]; a stage name has no digest.
+    const words = line.trim().split(/\s+/);
+    if (words[0]?.toUpperCase() !== 'FROM') continue;
+    const image = words.slice(1).find((word) => !word.startsWith('--'));
+    if (image && /@sha256:[0-9a-f]{64}$/.test(image)) images.add(image);
+  }
+  return [...images].flatMap((image) => {
+    const copy = mirrorReference(image, mirror);
+    return copy && has(copy) ? [`${image}=docker-image://${copy}`] : [];
+  });
+}
+
+/**
+ * The mirror's name for an image of Docker Hub or ECR Public, by its digest;
+ * undefined for any other registry.
+ * @param {string} image a reference pinned by digest
+ * @param {string} mirror
+ */
+function mirrorReference(image, mirror) {
   const at = image.indexOf('@');
   const parts = image.slice(0, at).split('/');
   const host = parts.length > 1 ? (parts[0] ?? '') : '';
@@ -58,15 +104,23 @@ export function pullableImage(
   // official ones under docker/library/, a publisher's under its own
   // namespace (hashicorp/terraform).
   else if (host === 'public.ecr.aws') repository = parts.slice(parts[1] === 'docker' ? 2 : 1);
-  else return image;
+  else return undefined;
   const path = repository.join('/').replace(/:[^/]*$/, '');
-  const copy = `${mirror}/${path.includes('/') ? path : `library/${path}`}${image.slice(at)}`;
-  return pull(copy) ? copy : image;
+  return `${mirror}/${path.includes('/') ? path : `library/${path}`}${image.slice(at)}`;
 }
 
 /** @param {string} reference */
 function dockerPull(reference) {
   return spawnSync('docker', ['pull', '--quiet', reference], { stdio: 'ignore' }).status === 0;
+}
+
+/**
+ * Whether the registry has the image, asked without pulling it: for the
+ * service containers and the builds, which pull it themselves.
+ * @param {string} reference
+ */
+function manifestExists(reference) {
+  return spawnSync('docker', ['manifest', 'inspect', reference], { stdio: 'ignore' }).status === 0;
 }
 
 // The answers of a registry that limits anonymous pulls per address: Docker
@@ -156,10 +210,17 @@ export function runTool(
 
 const isCli = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
 if (isCli) {
-  const name = process.argv[2];
-  if (!name) {
-    console.error('Usage: node scripts/tool-image.mjs <name>');
+  const [first, second] = process.argv.slice(2);
+  if (first === '--mirrored' && second) {
+    console.log(pullableImage(toolImage(second), { pull: manifestExists }));
+  } else if (first === '--build-contexts' && second) {
+    for (const context of buildContexts(readFileSync(second, 'utf8'))) console.log(context);
+  } else if (first && !first.startsWith('--')) {
+    console.log(toolImage(first));
+  } else {
+    console.error(
+      'Usage: node scripts/tool-image.mjs [--mirrored] <name> | --build-contexts <Dockerfile>',
+    );
     process.exit(2);
   }
-  console.log(toolImage(name));
 }
