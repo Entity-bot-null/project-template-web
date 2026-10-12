@@ -20,7 +20,7 @@ services:
       # Local development only. Published on loopback only.
       POSTGRES_PASSWORD: app
     ports:
-      - '127.0.0.1:${DB_PORT:-5432}:5432'
+      - '127.0.0.1:${DB_PORT:-5442}:5432'
     volumes:
       - db_data:/var/lib/postgresql
     healthcheck:

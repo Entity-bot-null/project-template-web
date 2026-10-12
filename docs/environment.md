@@ -107,8 +107,9 @@ production, no credential in a committed file.
 ## Local, staging and production
 
 - **Local:** `cp apps/api/.env.example apps/api/.env`, fill `JWT_ACCESS_SECRET`; the database comes
-  from `docker-compose.yml` (`pnpm db:up`). If port 5432 is taken, set `DB_PORT` in a root `.env`
-  and the same port in `DATABASE_URL`.
+  from `docker-compose.yml` (`pnpm db:up`) on port 5442, not 5432, so it does not collide with a
+  PostgreSQL installed on the machine. If 5442 is taken, set `DB_PORT` in a root `.env` and the same
+  port in `DATABASE_URL`.
 - **Staging and production** are separate GitHub environments (`staging`, `production`) and separate
   infrastructure: separate databases, separate secrets, never shared. Production should require a
   reviewer in the environment's protection rules. Staging mirrors production settings

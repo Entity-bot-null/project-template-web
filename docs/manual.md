@@ -54,7 +54,7 @@ optional local observability backend about 3.7 GB and the DAST scanner about 3.7
 ### 1.2 Windows notes
 
 - If `pnpm db:up` fails with "port is already allocated" or "bind failed", Windows often reserves
-  port 5432: use another port ([2.4](#24-create-the-environment-files)).
+  the database's port (5442): use another port ([2.4](#24-create-the-environment-files)).
 - Git Bash rewrites paths that start with `/` when it passes them to `docker`. Prefix such commands
   with `MSYS_NO_PATHCONV=1` (shown where needed).
 - Docker Desktop must be running before any command that uses Docker.
@@ -118,8 +118,10 @@ The root `.env` is read by Docker Compose. Create it when you need one of its se
 cp .env.example .env
 ```
 
-- **Port 5432 taken:** `DB_PORT=5442` in the root `.env`, and the same port in `DATABASE_URL` of
-  `apps/api/.env` (`postgresql://app:app@localhost:5442/app`).
+- **Port 5442 taken:** the database uses 5442 rather than PostgreSQL's 5432, so it does not collide
+  with a PostgreSQL installed on the machine. If 5442 is taken too: `DB_PORT=5443` in the root
+  `.env`, and the same port in `DATABASE_URL` of `apps/api/.env`
+  (`postgresql://app:app@localhost:5443/app`).
 - **The production-like stack** ([2.7](#27-check-that-every-gate-passes)): `JWT_ACCESS_SECRET` in the
   root `.env` too (another `openssl rand -hex 32`).
 - **Local Redis** ([11.1](#111-redis)): `REDIS_PASSWORD` in the root `.env`
@@ -449,7 +451,7 @@ Anything named `VITE_*` is compiled into the public bundle: never a secret.
 
 ### 6.4 Compose variables (root `.env`)
 
-`DB_PORT` (5432), `JWT_ACCESS_SECRET` (the stack's API), `WEB_PORT` (8080), `REDIS_PASSWORD`
+`DB_PORT` (5442), `JWT_ACCESS_SECRET` (the stack's API), `WEB_PORT` (8080), `REDIS_PASSWORD`
 (required by the `redis` profile only), `REDIS_PORT` (6379), `OTLP_HTTP_PORT` (4318),
 `GRAFANA_PORT` (3001), `PROMETHEUS_PORT` (9090), `APP_RELEASE` (the stack images' release, default
 `local`), and the stack's
@@ -554,7 +556,7 @@ Every command the template ships.
 
 | Command                                                                             | What it starts                                                                                                                                                                    |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5432}`                                                                                                                                 |
+| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5442}`                                                                                                                                 |
 | `docker compose --profile redis up -d`                                              | `redis`: Redis 8 with a password, `127.0.0.1:${REDIS_PORT:-6379}`, data in the volume `redis_data`                                                                                |
 | `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki and Grafana with the dashboards and rules of `observability/`; OTLP on 4318, Grafana on http://localhost:3001, Prometheus on 9090 |
 | `docker compose --profile stack up --build`                                         | `migrate` (runs once), `api`, `web`: the production images at http://localhost:8080                                                                                               |
@@ -804,7 +806,7 @@ Rehearse a restore on your machine (it takes a few minutes; Windows: prefix with
 docker compose exec -T db pg_dump -U app -d app --format=custom --no-owner --no-privileges --file=/tmp/app.dump
 docker compose exec -T db createdb -U app app_restore_check
 docker compose exec -T db pg_restore -U app -d app_restore_check --no-owner --no-privileges --exit-on-error /tmp/app.dump
-DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api exec prisma migrate status
+DATABASE_URL=postgresql://app:app@localhost:5442/app_restore_check pnpm --filter api exec prisma migrate status
 docker compose exec -T db dropdb -U app app_restore_check
 docker compose exec -T db rm /tmp/app.dump
 ```
@@ -831,9 +833,9 @@ first:
 | Message                                                            | Fix                                                                                                                                     |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `ERR_PNPM_UNSUPPORTED_ENGINE`                                      | Node.js 24.15+ ([1.1](#11-install-the-tools))                                                                                           |
-| `port is already allocated` on `pnpm db:up`                        | `DB_PORT=5442` in the root `.env` and in `DATABASE_URL`                                                                                 |
+| `port is already allocated` on `pnpm db:up`                        | `DB_PORT=5443` in the root `.env` and in `DATABASE_URL`                                                                                 |
 | `Environment variable JWT_ACCESS_SECRET is invalid`                | `openssl rand -hex 32` into `apps/api/.env`                                                                                             |
-| `Cannot reach PostgreSQL at localhost:5432` (integration tests)    | `pnpm db:up`                                                                                                                            |
+| `Cannot reach PostgreSQL at localhost:5442` (integration tests)    | `pnpm db:up`                                                                                                                            |
 | `Executable doesn't exist ... playwright install`                  | `pnpm exec playwright install chromium`                                                                                                 |
 | `pre-push: Direct pushes to "main" are not allowed`                | push a branch and open a pull request                                                                                                   |
 | `Could not start Docker` from `pnpm sast` or `pnpm lint:workflows` | start Docker                                                                                                                            |
@@ -847,7 +849,7 @@ first:
 | ---- | ------------------------------------------ | ---------------------------------------------- |
 | 3000 | API (development)                          | `pnpm dev`                                     |
 | 5173 | web app (development)                      | `pnpm dev`                                     |
-| 5432 | PostgreSQL (`DB_PORT`)                     | `pnpm db:up`                                   |
+| 5442 | PostgreSQL (`DB_PORT`)                     | `pnpm db:up`                                   |
 | 3100 | API (end-to-end tests)                     | `pnpm test:e2e`                                |
 | 4173 | web app (end-to-end tests, `vite preview`) | `pnpm test:e2e`, `pnpm --filter web preview`   |
 | 8080 | production-like stack (`WEB_PORT`)         | `docker compose --profile stack up`            |

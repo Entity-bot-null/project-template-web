@@ -58,7 +58,7 @@ DAST otros 3.7 GB.
 ### 1.2 Notas para Windows
 
 - Si `pnpm db:up` falla con "port is already allocated" o "bind failed", Windows suele reservar el
-  puerto 5432: usa otro ([2.4](#24-crea-los-ficheros-de-entorno)).
+  puerto de la base de datos (5442): usa otro ([2.4](#24-crea-los-ficheros-de-entorno)).
 - Git Bash reescribe las rutas que empiezan por `/` cuando se las pasa a `docker`. Antepón
   `MSYS_NO_PATHCONV=1` a esos comandos (se indica donde hace falta).
 - Docker Desktop tiene que estar arrancado antes de cualquier comando que use Docker.
@@ -122,8 +122,10 @@ Docker Compose lee el `.env` de la raíz. Créalo cuando necesites alguno de sus
 cp .env.example .env
 ```
 
-- **Puerto 5432 ocupado:** `DB_PORT=5442` en el `.env` de la raíz, y el mismo puerto en
-  `DATABASE_URL` de `apps/api/.env` (`postgresql://app:app@localhost:5442/app`).
+- **Puerto 5442 ocupado:** la base de datos usa el 5442 y no el 5432 de PostgreSQL, para no chocar
+  con un PostgreSQL instalado en la máquina. Si el 5442 también está ocupado: `DB_PORT=5443` en el
+  `.env` de la raíz, y el mismo puerto en `DATABASE_URL` de `apps/api/.env`
+  (`postgresql://app:app@localhost:5443/app`).
 - **El stack tipo producción** ([2.7](#27-comprueba-que-pasan-todos-los-gates)): `JWT_ACCESS_SECRET`
   también en el `.env` de la raíz (otro `openssl rand -hex 32`).
 - **Redis local** ([11.1](#111-redis)): `REDIS_PASSWORD` en el `.env` de la raíz (la salida de
@@ -467,7 +469,7 @@ Todo lo que se llame `VITE_*` se compila en el bundle público: nunca un secreto
 
 ### 6.4 Variables de Compose (`.env` de la raíz)
 
-`DB_PORT` (5432), `JWT_ACCESS_SECRET` (la API del stack), `WEB_PORT` (8080), `REDIS_PASSWORD`
+`DB_PORT` (5442), `JWT_ACCESS_SECRET` (la API del stack), `WEB_PORT` (8080), `REDIS_PASSWORD`
 (solo la exige el perfil `redis`), `REDIS_PORT` (6379), `OTLP_HTTP_PORT` (4318), `GRAFANA_PORT`
 (3001), `PROMETHEUS_PORT` (9090), `APP_RELEASE` (la release de las imágenes del stack, por defecto `local`) y las
 integraciones opcionales del stack: `STACK_REDIS_URL`, `STACK_RATE_LIMIT_STORE`,
@@ -572,7 +574,7 @@ Todos los comandos que trae la plantilla.
 
 | Comando                                                                             | Qué arranca                                                                                                                                                                             |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5432}`                                                                                                                                       |
+| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5442}`                                                                                                                                       |
 | `docker compose --profile redis up -d`                                              | `redis`: Redis 8 con contraseña, `127.0.0.1:${REDIS_PORT:-6379}`, datos en el volumen `redis_data`                                                                                      |
 | `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki y Grafana con los dashboards y las reglas de `observability/`; OTLP en el 4318, Grafana en http://localhost:3001, Prometheus en el 9090 |
 | `docker compose --profile stack up --build`                                         | `migrate` (se ejecuta una vez), `api`, `web`: las imágenes de producción en http://localhost:8080                                                                                       |
@@ -829,7 +831,7 @@ Ensaya un restore en tu máquina (tarda unos minutos; en Windows, antepón `MSYS
 docker compose exec -T db pg_dump -U app -d app --format=custom --no-owner --no-privileges --file=/tmp/app.dump
 docker compose exec -T db createdb -U app app_restore_check
 docker compose exec -T db pg_restore -U app -d app_restore_check --no-owner --no-privileges --exit-on-error /tmp/app.dump
-DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api exec prisma migrate status
+DATABASE_URL=postgresql://app:app@localhost:5442/app_restore_check pnpm --filter api exec prisma migrate status
 docker compose exec -T db dropdb -U app app_restore_check
 docker compose exec -T db rm /tmp/app.dump
 ```
@@ -856,9 +858,9 @@ que suelen aparecer:
 | Mensaje                                                            | Arreglo                                                                                                                                                     |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ERR_PNPM_UNSUPPORTED_ENGINE`                                      | Node.js 24.15+ ([1.1](#11-instala-las-herramientas))                                                                                                        |
-| `port is already allocated` en `pnpm db:up`                        | `DB_PORT=5442` en el `.env` de la raíz y en `DATABASE_URL`                                                                                                  |
+| `port is already allocated` en `pnpm db:up`                        | `DB_PORT=5443` en el `.env` de la raíz y en `DATABASE_URL`                                                                                                  |
 | `Environment variable JWT_ACCESS_SECRET is invalid`                | `openssl rand -hex 32` en `apps/api/.env`                                                                                                                   |
-| `Cannot reach PostgreSQL at localhost:5432` (tests de integración) | `pnpm db:up`                                                                                                                                                |
+| `Cannot reach PostgreSQL at localhost:5442` (tests de integración) | `pnpm db:up`                                                                                                                                                |
 | `Executable doesn't exist ... playwright install`                  | `pnpm exec playwright install chromium`                                                                                                                     |
 | `pre-push: Direct pushes to "main" are not allowed`                | haz push de una rama y abre un pull request                                                                                                                 |
 | `Could not start Docker` en `pnpm sast` o `pnpm lint:workflows`    | arranca Docker                                                                                                                                              |
@@ -872,7 +874,7 @@ que suelen aparecer:
 | ------ | -------------------------------------- | ---------------------------------------------- |
 | 3000   | API (desarrollo)                       | `pnpm dev`                                     |
 | 5173   | web (desarrollo)                       | `pnpm dev`                                     |
-| 5432   | PostgreSQL (`DB_PORT`)                 | `pnpm db:up`                                   |
+| 5442   | PostgreSQL (`DB_PORT`)                 | `pnpm db:up`                                   |
 | 3100   | API (tests end-to-end)                 | `pnpm test:e2e`                                |
 | 4173   | web (tests end-to-end, `vite preview`) | `pnpm test:e2e`, `pnpm --filter web preview`   |
 | 8080   | stack tipo producción (`WEB_PORT`)     | `docker compose --profile stack up`            |
