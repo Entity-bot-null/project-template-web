@@ -6,6 +6,7 @@
 //
 //   node scripts/dev.mjs
 import { spawn } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
@@ -33,6 +34,20 @@ export function apiReadyWatcher(onReady) {
 }
 
 /**
+ * How to start pnpm without a shell: the pnpm that runs `pnpm dev`, which it
+ * names in npm_execpath. A JavaScript entry point runs with this Node.js (no
+ * .cmd shim, so Windows works too); a native binary runs as it is. Without
+ * npm_execpath (this script started by hand), `pnpm` from the PATH.
+ * @param {string | undefined} execPath npm_execpath, resolved
+ * @param {string[]} args
+ * @returns {[command: string, args: string[]]}
+ */
+export function pnpmCommand(execPath, args) {
+  if (!execPath) return ['pnpm', args];
+  return /\.[cm]?js$/.test(execPath) ? [process.execPath, [execPath, ...args]] : [execPath, args];
+}
+
+/**
  * Whether `url` answers within `timeoutMs` (any HTTP status will do).
  * @param {string} url
  */
@@ -54,11 +69,22 @@ if (isCli) {
   // Piped, the servers would drop their colors: keep them when this output
   // is a terminal, as it would be without this script.
   const colors = process.stdout.isTTY && !process.env.NO_COLOR ? { FORCE_COLOR: '1' } : {};
-  // One fixed command line, through the shell so pnpm resolves on Windows too.
-  const servers = spawn('pnpm --parallel --filter api --filter web dev', {
-    shell: true,
+  const execPath = process.env.npm_execpath && realpathSync(process.env.npm_execpath);
+  const [command, args] = pnpmCommand(execPath, [
+    '--parallel',
+    '--filter',
+    'api',
+    '--filter',
+    'web',
+    'dev',
+  ]);
+  const servers = spawn(command, args, {
     stdio: ['inherit', 'pipe', 'pipe'],
     env: { ...process.env, ...colors },
+  });
+  servers.on('error', (error) => {
+    console.error(`Could not start pnpm (${error.message}): run this through \`pnpm dev\`.`);
+    process.exitCode = 1;
   });
 
   // One box at a time, after the web server answers (at most 30 s: a web

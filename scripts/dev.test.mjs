@@ -1,7 +1,7 @@
 // Tests of the `pnpm dev` runner (scripts/dev.mjs). Run: pnpm test:scripts
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { apiReadyWatcher } from './dev.mjs';
+import { apiReadyWatcher, pnpmCommand } from './dev.mjs';
 
 const READY =
   'apps/api dev: [Nest] 158233  - 12/10/2026, 16:44:24     LOG [NestApplication] Nest application successfully started';
@@ -46,5 +46,25 @@ describe('apiReadyWatcher', () => {
     watch(`${READY}\napps/api dev: File change detected. Starting incremental compilation...\n`);
     watch(`${READY}\n`);
     assert.equal(calls(), 2);
+  });
+});
+
+describe('pnpmCommand', () => {
+  const ARGS = ['--parallel', 'dev'];
+
+  test('a JavaScript entry point runs with this Node.js, never through a shell', () => {
+    for (const entry of ['/opt/pnpm/bin/pnpm.mjs', 'C:\\pnpm\\bin\\pnpm.cjs', '/x/pnpm.js']) {
+      assert.deepEqual(pnpmCommand(entry, ARGS), [process.execPath, [entry, ...ARGS]]);
+    }
+  });
+
+  test('a native binary runs as it is', () => {
+    assert.deepEqual(pnpmCommand('/usr/local/bin/pnpm', ARGS), ['/usr/local/bin/pnpm', ARGS]);
+    assert.deepEqual(pnpmCommand('C:\\pnpm\\pnpm.exe', ARGS), ['C:\\pnpm\\pnpm.exe', ARGS]);
+  });
+
+  test('without npm_execpath, pnpm from the PATH', () => {
+    assert.deepEqual(pnpmCommand(undefined, ARGS), ['pnpm', ARGS]);
+    assert.deepEqual(pnpmCommand('', ARGS), ['pnpm', ARGS]);
   });
 });
