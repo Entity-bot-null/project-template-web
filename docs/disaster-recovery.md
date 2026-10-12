@@ -216,13 +216,13 @@ docker compose exec -T db createdb -U app app_restore_check
 docker compose exec -T db pg_restore -U app -d app_restore_check --no-owner --no-privileges --exit-on-error /tmp/app.dump
 
 # 3. Integrity: no pending migration, the schema itself ("No difference detected."), then counts
-DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api exec prisma migrate status
-DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+DATABASE_URL=postgresql://app:app@localhost:5442/app_restore_check pnpm --filter api exec prisma migrate status
+DATABASE_URL=postgresql://app:app@localhost:5442/app_restore_check pnpm --filter api exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 docker compose exec -T db psql -U app -d app_restore_check -c "SELECT count(*) FROM users" -c "SELECT max(created_at) FROM sessions"
 
 # 4. The API on the restored copy (after pnpm build; a variable set on the command line wins
 #    over apps/api/.env), then the API side of the smoke test from another terminal
-DATABASE_URL=postgresql://app:app@localhost:5432/app_restore_check pnpm --filter api start
+DATABASE_URL=postgresql://app:app@localhost:5442/app_restore_check pnpm --filter api start
 pnpm smoke --api http://127.0.0.1:3000
 
 # 5. Clean up
@@ -230,4 +230,4 @@ docker compose exec -T db dropdb -U app app_restore_check
 docker compose exec -T db rm /tmp/app.dump
 ```
 
-Use the port of `DB_PORT` if it is not 5432.
+Use the port of `DB_PORT` if it is not 5442.
