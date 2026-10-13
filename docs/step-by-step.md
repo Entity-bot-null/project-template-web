@@ -450,7 +450,7 @@ request, CI, review, merge. The first ones usually are:
    [how-to.md](how-to.md) (add a table, an API module, an endpoint, a screen, a role, an
    environment variable).
 3. **How accounts are created.** The template has sign-in, sessions, roles, password recovery and
-   change, and an optional public sign-up confirmed by email (`SIGN_UP_ENABLED`, off by default),
+   change, change of email, and an optional public sign-up confirmed by email (`SIGN_UP_ENABLED`, off by default),
    but no invitations: adjust it to what 0.1 decided. Administrators, and every account while
    sign-up is off, are created with the `create-user` command
    ([phase 8](#84-create-the-first-administrator)).

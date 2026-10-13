@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { expect, type Page, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { type Account, createAccount } from './support/accounts.js';
+import { expect, test } from './support/fixtures.js';
 import { deleteMessagesTo, waitForMessage, withoutMailpit } from './support/mailpit.js';
 
 // "Create an account" in a real browser, with the real messages (Mailpit):
@@ -49,7 +50,7 @@ test.describe('with email', () => {
     // No account yet.
     await page.goto('/sign-in');
     await page.getByLabel('Email').fill(email);
-    await page.getByLabel('Password').fill(PASSWORD);
+    await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.getByRole('alert')).toHaveText('Invalid email or password.');
 

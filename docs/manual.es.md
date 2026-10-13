@@ -888,6 +888,13 @@ activa en local; en producción está apagado salvo que lo actives (las cuentas 
 con `user:create`). Pruébalo: `pnpm dev`, "Create an account" con cualquier dirección, y abre el
 enlace desde Mailpit. El diseño y sus límites: [security.md](security.md#sign-up).
 
+**Cambio de correo.** Con el correo encendido, la página Account ofrece también "Change your
+email": una dirección nueva y la contraseña actual. Llega un enlace a la dirección nueva y nada
+cambia hasta abrirlo; entonces se cierran todas las sesiones (inicia sesión con la dirección nueva)
+y la dirección anterior recibe un aviso con un enlace que deshace el cambio durante 7 días, pidiendo
+una contraseña nueva. Pruébalo en local con dos direcciones cualesquiera y Mailpit. El diseño:
+[security.md](security.md#change-of-email).
+
 ## 12. Operar en producción
 
 | Antes y durante la operación               | Dónde                                                         |

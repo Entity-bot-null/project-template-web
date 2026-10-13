@@ -1,5 +1,6 @@
-import { type Browser, expect, type Page, test } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
 import { type Account, createAccount } from './support/accounts.js';
+import { expect, test } from './support/fixtures.js';
 import { deleteMessagesTo, waitForMessage, withoutMailpit } from './support/mailpit.js';
 
 // Password recovery and change in a real browser, with the real messages
@@ -21,12 +22,17 @@ test.afterEach(async () => {
 async function signIn(page: Page, email: string, password: string) {
   await page.goto('/sign-in');
   await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
+  await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
 
-async function signedInPage(browser: Browser, user: Account) {
-  const page = await (await browser.newContext()).newPage();
+/** Another browser of the same person: same client address as the test's own. */
+async function signedInPage(
+  browser: Browser,
+  extraHTTPHeaders: Record<string, string> | undefined,
+  user: Account,
+) {
+  const page = await (await browser.newContext({ extraHTTPHeaders })).newPage();
   await signIn(page, user.email, user.password);
   await expect(page.getByRole('heading', { name: `Welcome, ${user.name}` })).toBeVisible();
   return page;
@@ -77,16 +83,18 @@ test.describe('with email', () => {
 
   test('changes the password while signed in: this browser carries on, the other is signed out', async ({
     browser,
+    extraHTTPHeaders,
   }) => {
     const grace = account('Grace Hopper');
-    const here = await signedInPage(browser, grace);
-    const elsewhere = await signedInPage(browser, grace);
+    const here = await signedInPage(browser, extraHTTPHeaders, grace);
+    const elsewhere = await signedInPage(browser, extraHTTPHeaders, grace);
 
     await here.getByRole('link', { name: 'Account' }).click();
-    await here.getByLabel('Current password', { exact: true }).fill(grace.password);
-    await here.getByLabel('New password', { exact: true }).fill(NEW_PASSWORD);
-    await here.getByRole('button', { name: 'Change password' }).click();
-    await expect(here.getByRole('status')).toContainText('Your password was changed.');
+    const form = here.getByRole('form', { name: 'Change your password' });
+    await form.getByLabel('Current password', { exact: true }).fill(grace.password);
+    await form.getByLabel('New password', { exact: true }).fill(NEW_PASSWORD);
+    await form.getByRole('button', { name: 'Change password' }).click();
+    await expect(form.getByRole('status')).toContainText('Your password was changed.');
 
     // This browser: still signed in, after a reload too (its new session).
     await here.reload();

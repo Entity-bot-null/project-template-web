@@ -171,6 +171,35 @@ fails otherwise); off, accounts are created by an operator (`user:create`). When
 - **Cleanup:** sign-ups whose link expired a day ago, or whose message never went out, are
   deleted by the hourly sweep.
 
+### Change of email
+
+The Account page changes the address in three steps, built so that a session (and even the
+password) in someone else's hands cannot take the account for good:
+
+- **Asking** (`POST /api/account/email`, signed in): requires the current password (403
+  otherwise; 5 attempts per 15 minutes per IP). A link valid for 24 hours goes to the **new**
+  address; nothing changes until it is opened. If the new address already has an account, its
+  owner gets a notice instead and the person asking is answered the same (202, the lookup after
+  the answer): no enumeration. Limited per address like every link.
+- **Confirming** (`POST /api/auth/email-changes/confirm`, from the new mailbox, signed in or
+  not): the token works once and only while the account is as it was when it was sent (same
+  address and `security_version`: a password change in between voids it). In one transaction
+  under the account's row lock: the address changes, `security_version` increases (every access
+  token ends at once), every session ends (sign in again with the new address), the other
+  reset and change links of the account are dropped, and the **previous** address gets a notice
+  with a link to undo the change. An address taken meanwhile answers 409.
+- **Undoing** (`POST /api/auth/email-changes/revert`, from the previous mailbox, within **7
+  days**): the previous address comes back **with a new password chosen there** (whoever changed
+  the address knew the old one), `security_version` increases, every session ends, and every
+  other link of the account is dropped, other undo links included. The undo link is **not bound
+  to the account's later state** and is never replaced by a newer one: whoever took the account
+  can change the address again or change the password, and the owner's link still works. A
+  refused password keeps the link usable; an address taken meanwhile answers 409.
+- **Links and tokens** as for password recovery: 256 bits, minted when the message is sent, only
+  their SHA-256 stored (with the target address), after `#`, removed from the address bar and
+  history, and opening a link changes nothing (the page's button does). The notice to the
+  previous address shows the new one masked (`a•••@example.com`).
+
 ### Web client
 
 - **401 handling** (`web/src/auth/middleware.ts`): a 401 to a request that carried a token
@@ -737,7 +766,10 @@ Accepted on purpose, each with its way out:
   (one message a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day, shared by password recovery and
   sign-up), and so whoever asks for that many messages for an address keeps further ones from it
   until the window passes: its owner's reset link waits too. Bounded per IP, not across many. Way
-  out: a higher daily limit, a challenge on the public forms, or an operator-sent link. **No breached-password
+  out: a higher daily limit, a challenge on the public forms, or an operator-sent link.
+- **An undo link outlives the change it undoes for 7 days**, by design (no later change can void
+  it): the person who controls the previous mailbox in that window can take the address back.
+  After the window, or if that mailbox is lost too, recovery is an operator's job. **No breached-password
   service:** the policy refuses the most used passwords from a local list, so a password leaked
   elsewhere but not common passes. Way out: a k-anonymity range check (OPCIONAL; it sends a hash
   prefix to a third party).

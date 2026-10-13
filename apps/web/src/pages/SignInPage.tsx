@@ -5,6 +5,8 @@ import { useAuth } from '../auth';
 import { useCapabilities } from '../auth/capabilities';
 import { emailError, passwordError } from '../auth/validation';
 import { Alert } from '../components/Alert';
+import { PasswordField } from '../components/PasswordField';
+import { TextField } from '../components/TextField';
 
 interface FieldErrors {
   email: string | null;
@@ -63,46 +65,22 @@ export function SignInPage() {
           </Alert>
         )}
         {failure !== null && <Alert>{failure}</Alert>}
-        <div className="field">
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            name="email"
-            autoComplete="username"
-            value={email}
-            aria-invalid={errors.email !== null}
-            aria-describedby={errors.email === null ? undefined : 'email-error'}
-            onChange={(event) => {
-              setEmail(event.target.value);
-            }}
-          />
-          {errors.email !== null && (
-            <span id="email-error" className="field-error">
-              {errors.email}
-            </span>
-          )}
-        </div>
-        <div className="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            name="password"
-            autoComplete="current-password"
-            value={password}
-            aria-invalid={errors.password !== null}
-            aria-describedby={errors.password === null ? undefined : 'password-error'}
-            onChange={(event) => {
-              setPassword(event.target.value);
-            }}
-          />
-          {errors.password !== null && (
-            <span id="password-error" className="field-error">
-              {errors.password}
-            </span>
-          )}
-        </div>
+        <TextField
+          label="Email"
+          type="email"
+          name="email"
+          autoComplete="username"
+          value={email}
+          onChange={setEmail}
+          error={errors.email}
+        />
+        <PasswordField
+          label="Password"
+          autoComplete="current-password"
+          value={password}
+          onChange={setPassword}
+          error={errors.password}
+        />
         <button type="submit" disabled={submitting}>
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>

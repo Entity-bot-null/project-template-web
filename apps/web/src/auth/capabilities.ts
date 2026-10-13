@@ -6,6 +6,7 @@ import { call } from '../api/errors';
 export interface Capabilities {
   passwordReset: boolean;
   signUp: boolean;
+  emailChange: boolean;
 }
 
 let pending: Promise<Capabilities | null> | undefined;

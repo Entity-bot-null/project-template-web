@@ -464,7 +464,7 @@ request, CI, revisión, merge. Los primeros suelen ser:
    [how-to.md](how-to.md) (añadir una tabla, un módulo de la API, un endpoint, una pantalla, un
    rol, una variable de entorno).
 3. **Cómo se crean las cuentas.** La plantilla tiene inicio de sesión, sesiones, roles,
-   recuperación y cambio de contraseña, y un registro público opcional confirmado por correo
+   recuperación y cambio de contraseña, cambio de correo, y un registro público opcional confirmado por correo
    (`SIGN_UP_ENABLED`, apagado por defecto), pero no invitaciones: ajústalo a lo que se decidió en
    0.1. Los administradores, y todas las cuentas mientras el registro esté apagado, se crean con el
    comando `create-user` ([fase 8](#84-crea-el-primer-administrador)).
