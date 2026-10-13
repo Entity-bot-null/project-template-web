@@ -1,6 +1,6 @@
 {
   "name": "project-template",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "description": "Full-stack TypeScript project template: NestJS API and React SPA with quality, security and delivery gates wired in from day 0.",
   "type": "module",
