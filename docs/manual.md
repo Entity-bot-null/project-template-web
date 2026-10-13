@@ -864,6 +864,12 @@ opened; then every session is signed out (sign in with the new address), and the
 gets a notice with a link that undoes the change for 7 days, asking for a new password. Try it
 locally with any two addresses and Mailpit. The design: [security.md](security.md#change-of-email).
 
+**Invitations.** With email on, administrators see "Invitations" in the top menu: an address and
+a role (member or admin) send a link valid for 7 days; the person opens it, chooses their name and
+password, and is signed in with that role. Pending invitations can be sent again or revoked. Try
+it locally: sign in as `admin@example.com`, invite any address, and open the link from Mailpit. The
+design: [security.md](security.md#invitations).
+
 ## 12. Running in production
 
 | Before and while running               | Where                                                         |

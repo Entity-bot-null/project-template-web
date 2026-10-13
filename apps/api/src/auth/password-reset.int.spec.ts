@@ -220,6 +220,7 @@ describe.skipIf(skipWithoutMailpit)('password reset (PostgreSQL + Mailpit)', () 
       passwordReset: true,
       signUp: false,
       emailChange: true,
+      invitations: true,
     });
     await t.app.close();
     t = await app({ smtpUrl: undefined });
@@ -228,6 +229,7 @@ describe.skipIf(skipWithoutMailpit)('password reset (PostgreSQL + Mailpit)', () 
       passwordReset: false,
       signUp: false,
       emailChange: false,
+      invitations: false,
     });
     await request(t.server)
       .post('/api/auth/password-resets')

@@ -36,6 +36,14 @@ export const routes = createRoutesFromElements(
     </Route>
     {/* Signed in or not: a person may open an emailed link in any state. */}
     <Route
+      path="accept-invitation"
+      lazy={() =>
+        import('./pages/AcceptInvitationPage').then(({ AcceptInvitationPage }) => ({
+          Component: AcceptInvitationPage,
+        }))
+      }
+    />
+    <Route
       path="confirm-email-change"
       lazy={() =>
         import('./pages/ConfirmEmailChangePage').then(({ ConfirmEmailChangePage }) => ({
@@ -78,6 +86,14 @@ export const routes = createRoutesFromElements(
         />
         <Route element={<RequireRole role="admin" />}>
           <Route path="admin/users" element={<AdminUsersPage />} />
+          <Route
+            path="admin/invitations"
+            lazy={() =>
+              import('./pages/AdminInvitationsPage').then(({ AdminInvitationsPage }) => ({
+                Component: AdminInvitationsPage,
+              }))
+            }
+          />
         </Route>
       </Route>
     </Route>

@@ -46,7 +46,7 @@ pnpm test:integration   API against PostgreSQL (pnpm db:up first); the Redis ada
                         they write to addresses of their own and delete only those
 pnpm test:e2e           browser suite (pnpm db:up and pnpm build first; browser once:
                         pnpm exec playwright install chromium); the email flows (password
-                        recovery and change, sign-up, change of email) against Mailpit the same way as the outbox specs,
+                        recovery and change, sign-up, change of email, invitations) against Mailpit the same way as the outbox specs,
                         skipped locally without one, required in CI
 pnpm test:scripts       the repository scripts' own tests (scripts/*.test.mjs, node --test)
 pnpm --filter api test:watch / pnpm --filter web test:watch
@@ -121,7 +121,7 @@ their own stricter numbers with glob keys, for example
 `pnpm perf:check` (after `pnpm build`; in `pnpm verify` and CI) compares the gzip size of the
 built web assets with `apps/web/performance-budget.json`. The template's budget is its measured
 build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
-Vitals chunks 5 kB, the lazy account pages 9 kB, all JavaScript 152 kB, CSS 5 kB). The initial
+Vitals chunks 5 kB, the lazy account and admin pages 12 kB, all JavaScript 155 kB, CSS 5 kB). The initial
 JavaScript is what `index.html` loads before the app starts: its entry script and every chunk it
 preloads, so code the bundler splits into a shared chunk still counts, whatever its name. Each
 project should set its own from its targets (device class, network, Core Web Vitals goals) and

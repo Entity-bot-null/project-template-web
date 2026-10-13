@@ -180,11 +180,23 @@ export class AccountTokenSweep implements OnModuleInit, OnModuleDestroy {
           ],
         },
       });
+      // Invitations likewise (their messages are valid for a day in the queue).
+      const invitations = await this.prisma.invitation.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: before } },
+            { expiresAt: null, createdAt: { lt: new Date(now - 2 * DAY_MS) } },
+          ],
+        },
+      });
       if (count > 0) this.logger.log(`Swept ${String(count)} used or expired account tokens`);
       if (signUps.count > 0) {
         this.logger.log(`Swept ${String(signUps.count)} expired sign-ups`);
       }
-      return count + signUps.count;
+      if (invitations.count > 0) {
+        this.logger.log(`Swept ${String(invitations.count)} expired invitations`);
+      }
+      return count + signUps.count + invitations.count;
     } catch (error) {
       this.logger.warn(
         `Account token sweep failed: ${error instanceof Error ? error.message : String(error)}`,

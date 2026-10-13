@@ -7,6 +7,7 @@ export interface Capabilities {
   passwordReset: boolean;
   signUp: boolean;
   emailChange: boolean;
+  invitations: boolean;
 }
 
 let pending: Promise<Capabilities | null> | undefined;

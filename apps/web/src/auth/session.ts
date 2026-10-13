@@ -231,8 +231,23 @@ export function confirmSignUp(token: string, password: string): Promise<ApiResul
   );
 }
 
+/**
+ * Accepts an invitation with its link's token, choosing a name and a
+ * password: the API creates the account (with the invitation's role) and
+ * answers with its session, which starts here like a sign-in's.
+ */
+export function acceptInvitation(
+  token: string,
+  name: string,
+  password: string,
+): Promise<ApiResult<AuthSession>> {
+  return startSession(() =>
+    call(api.POST('/api/auth/invitations/accept', { body: { token, name, password } })),
+  );
+}
+
 // A request under /api/auth that answers with a new session and sets the
-// refresh cookie (sign-in, sign-up confirmation). Tracked so a sign-out retry
+// refresh cookie (sign-in, sign-up confirmation, invitation). Tracked so a sign-out retry
 // waits for it (retrySignOut).
 async function startSession(
   send: () => Promise<ApiResult<AuthSession>>,
