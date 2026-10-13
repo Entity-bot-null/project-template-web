@@ -53,6 +53,9 @@ describe('mintAccountToken', () => {
       NOW,
     );
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // The account's row first, like every flow that uses a token: no deadlock.
+    const [lock] = tx.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray];
+    expect(lock.join('?')).toContain('FROM "users" WHERE "id" = ?::uuid FOR UPDATE');
     expect(Buffer.from(token, 'base64url')).toHaveLength(32);
     expect(tx.accountToken.deleteMany).toHaveBeenCalledWith({
       where: { userId: 'u1', purpose: 'password_reset', usedAt: null },
@@ -159,15 +162,33 @@ describe('consumeAccountToken', () => {
 });
 
 describe('tokenOwner', () => {
-  it('names the account a token claims to be for, by its hash', async () => {
+  const stored = (overrides: Record<string, unknown> = {}) => ({
+    userId: 'u1',
+    purpose: 'password_reset',
+    usedAt: null,
+    expiresAt: new Date(NOW + 60_000),
+    ...overrides,
+  });
+
+  it('names the account of a token that can still work, by its hash', async () => {
     const { tx, client } = txWith();
-    await expect(tokenOwner(client, 'the-token')).resolves.toBe('u1');
+    tx.accountToken.findUnique.mockResolvedValueOnce(stored());
+    await expect(tokenOwner(client, 'the-token', 'password_reset', NOW)).resolves.toBe('u1');
     expect(tx.accountToken.findUnique).toHaveBeenCalledWith({
       where: { tokenHash: hashAccountToken('the-token') },
-      select: { userId: true },
+      select: { userId: true, purpose: true, usedAt: true, expiresAt: true },
     });
-    tx.accountToken.findUnique.mockResolvedValueOnce(null as never);
-    await expect(tokenOwner(client, 'unknown')).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['unknown', null],
+    ['of another purpose', stored({ purpose: 'email_change' })],
+    ['used', stored({ usedAt: new Date(NOW - 1) })],
+    ['expired', stored({ expiresAt: new Date(NOW) })],
+  ])('names nobody for a token %s', async (_case, found) => {
+    const { tx, client } = txWith();
+    tx.accountToken.findUnique.mockResolvedValueOnce(found as never);
+    await expect(tokenOwner(client, 'the-token', 'password_reset', NOW)).resolves.toBeUndefined();
   });
 });
 

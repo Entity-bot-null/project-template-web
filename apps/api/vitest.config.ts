@@ -26,7 +26,9 @@ export default defineConfig({
         // Wiring: routes, decorators, module graphs (*.int.spec.ts).
         'src/**/*.controller.ts',
         'src/**/*.module.ts',
-        // Process entry points: exercised by the integration and E2E suites.
+        // Process entry points: exercised by the integration and E2E suites
+        // (the mail CLI by hand, docs/manual.md#115-email; what it calls, the
+        // outbox and MailStore, by mail-outbox.int.spec.ts).
         'src/main.ts',
         'src/server.ts',
         'src/openapi/export.ts',

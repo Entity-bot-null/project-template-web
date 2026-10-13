@@ -8,6 +8,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { errorSummary } from '../common/logging/error-summary.js';
 import { MailOutboxService } from '../infrastructure/mail/mail-outbox.service.js';
 import type { SignUpConfirmationPayload } from '../infrastructure/mail/templates/sign-up-confirmation.template.js';
 import { Prisma } from '../prisma/generated/client.js';
@@ -72,9 +73,7 @@ export class SignUpService {
     if (problem !== undefined) throw new BadRequestException(`password: ${problem}`);
     const work: Promise<void> = this.register(address, name, password)
       .catch((error: unknown) => {
-        this.logger.error(
-          `Could not record a sign-up: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        this.logger.error(`Could not record a sign-up: ${errorSummary(error)}`);
       })
       .finally(() => {
         this.pending.delete(work);
@@ -109,8 +108,15 @@ export class SignUpService {
     if (signUp?.expiresAt == null || signUp.expiresAt.getTime() <= now) {
       throw new NotFoundException(INVALID_SIGN_UP_LINK);
     }
+    // The attempt is spent before the password is checked: requests sent in
+    // parallel each spend one, and none is checked past the limit.
+    const attempts = await this.reserveAttempt(signUp.id, tokenHash);
+    if (attempts === undefined) throw new NotFoundException(INVALID_SIGN_UP_LINK);
     if (!(await checkPassword(signUp.passwordHash, password))) {
-      await this.countFailure(signUp.id, tokenHash);
+      if (attempts >= SIGN_UP_MAX_FAILED_ATTEMPTS) {
+        await this.prisma.signUp.deleteMany({ where: { id: signUp.id, tokenHash } });
+        this.logger.warn(`Sign-up ${signUp.id} dropped after ${String(attempts)} wrong passwords`);
+      }
       throw new UnauthorizedException(WRONG_SIGN_UP_PASSWORD);
     }
 
@@ -189,17 +195,15 @@ export class SignUpService {
     if (queued) this.mail.notifyQueued();
   }
 
-  // Atomic: concurrent wrong passwords each count, and the one that reaches
-  // the limit drops the sign-up (its link stops working).
-  private async countFailure(id: string, tokenHash: string): Promise<void> {
+  // Atomic, in one statement: the attempt's number, or undefined once the
+  // limit is spent (or the sign-up is gone, replaced or confirmed). A wrong
+  // password on the last attempt drops the sign-up; a right one confirms it.
+  private async reserveAttempt(id: string, tokenHash: string): Promise<number | undefined> {
     const rows = await this.prisma.$queryRaw<{ failedAttempts: number }[]>`
       UPDATE "sign_ups" SET "failed_attempts" = "failed_attempts" + 1
       WHERE "id" = ${id}::uuid AND "token_hash" = ${tokenHash}
+        AND "failed_attempts" < ${SIGN_UP_MAX_FAILED_ATTEMPTS}
       RETURNING "failed_attempts" AS "failedAttempts"`;
-    const attempts = rows[0]?.failedAttempts ?? 0;
-    if (attempts >= SIGN_UP_MAX_FAILED_ATTEMPTS) {
-      await this.prisma.signUp.deleteMany({ where: { id, tokenHash } });
-      this.logger.warn(`Sign-up ${id} dropped after ${String(attempts)} wrong passwords`);
-    }
+    return rows[0]?.failedAttempts;
   }
 }

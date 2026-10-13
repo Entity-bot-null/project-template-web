@@ -14,7 +14,19 @@ export function deriveRecipientKey(secret: string): Buffer {
   return Buffer.from(hkdfSync('sha256', secret, 'mail-recipient-hash', 'mail recipient v1', 32));
 }
 
-/** The same address (whatever its case or surrounding spaces) always gives the same hash. */
+/**
+ * The mailbox an address delivers to, for the per-address limits: normalized
+ * (case, spaces), without a +tag (ada+1@ and ada+2@ reach ada@'s mailbox, and
+ * would otherwise each get their own share of messages).
+ */
+export function mailboxOf(address: string): string {
+  const normalized = normalizeEmail(address);
+  const at = normalized.lastIndexOf('@');
+  const plus = normalized.indexOf('+');
+  return plus > 0 && plus < at ? `${normalized.slice(0, plus)}${normalized.slice(at)}` : normalized;
+}
+
+/** One mailbox (whatever the case, spaces or +tag of its address) always gives the same hash. */
 export function recipientHash(key: Buffer, address: string): string {
-  return createHmac('sha256', key).update(normalizeEmail(address)).digest('hex');
+  return createHmac('sha256', key).update(mailboxOf(address)).digest('hex');
 }

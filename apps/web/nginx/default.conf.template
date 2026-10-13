@@ -82,6 +82,27 @@ server {
         proxy_set_header Forwarded "";
         # The API keeps this id, so nginx and API log lines correlate.
         proxy_set_header X-Request-Id $request_id;
+
+        # nginx's own errors on the API's paths (the API down or too slow, a
+        # body over the size limit) answer like the API: its JSON envelope
+        # and the security headers, never nginx's HTML page. The API's own
+        # error answers pass through untouched (proxy_intercept_errors off).
+        error_page 502 504 @api_unreachable;
+        error_page 413 @api_too_large;
+    }
+
+    location @api_unreachable {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+        default_type application/json;
+        return 502 '{"data":null,"message":"The API could not be reached"}';
+    }
+
+    location @api_too_large {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+        default_type application/json;
+        return 413 '{"data":null,"message":"The request body is too large"}';
     }
 
     # Hashed build output: immutable, cached for a year. ^~ keeps the regex

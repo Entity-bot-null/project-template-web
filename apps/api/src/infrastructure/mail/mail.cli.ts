@@ -40,7 +40,7 @@ const { positionals, values } = parseArgs({
 
 const options = mailOptionsFromEnv();
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: env.DATABASE_URL }) });
-const store = new MailStore(prisma as unknown as PrismaService);
+const store = new MailStore(prisma as unknown as PrismaService, MAIL_TEMPLATE_REGISTRY);
 const kinds = Object.keys(MAIL_TEMPLATE_REGISTRY) as MailKind[];
 
 function fail(message: string): never {

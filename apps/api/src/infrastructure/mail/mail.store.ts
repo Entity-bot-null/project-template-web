@@ -1,12 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type { MailKind, Prisma } from '../../prisma/generated/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   MAIL_FAILED_ADDRESS_RETENTION_DAYS,
   MAIL_LEASE_MS,
   MAIL_RETENTION_DAYS,
+  MAIL_TEMPLATES,
 } from './mail.constants.js';
 import type { ClaimedMessage } from './mail.types.js';
+import type { MailTemplates } from './templates/registry.js';
 
 const DAY_MS = 86_400_000;
 
@@ -27,7 +29,17 @@ type Claim = Pick<ClaimedMessage, 'id' | 'attempts'>;
 // whose message another worker took over can no longer finish it.
 @Injectable()
 export class MailStore {
-  constructor(private readonly prisma: PrismaService) {}
+  /** The kinds nobody can request (security notices): claimed before the others. */
+  private readonly urgentKinds: MailKind[];
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(MAIL_TEMPLATES) private readonly templates: MailTemplates,
+  ) {
+    this.urgentKinds = (Object.keys(templates) as MailKind[]).filter(
+      (kind) => !templates[kind].limited,
+    );
+  }
 
   /**
    * Takes the next due message, or one whose worker's lease ran out, and
@@ -48,7 +60,9 @@ export class MailStore {
         SELECT "id" FROM "mail_messages"
         WHERE ("status" = 'pending' AND "next_attempt_at" <= now())
            OR ("status" = 'sending' AND "locked_until" < now())
-        ORDER BY "next_attempt_at", "id"
+        -- Security notices first: a flood of messages anyone can ask for
+        -- never delays a "your password was changed".
+        ORDER BY ("kind"::text = ANY(${this.urgentKinds}::text[])) DESC, "next_attempt_at", "id"
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
@@ -116,7 +130,16 @@ export class MailStore {
    * MAIL_RETENTION_DAYS; a failed message's address is cleared after
    * MAIL_FAILED_ADDRESS_RETENTION_DAYS, when retrying it no longer makes sense.
    */
-  async sweep(now: number = Date.now()): Promise<{ deleted: number; cleared: number }> {
+  async sweep(
+    now: number = Date.now(),
+  ): Promise<{ deleted: number; cleared: number; expired: number }> {
+    // Pending messages a day past their validity: no worker sent them (email
+    // was turned off since, say). Dropped, and their address cleared, like
+    // the ones a worker finds expired.
+    const { count: expired } = await this.prisma.mailMessage.updateMany({
+      where: { status: 'pending', expiresAt: { lt: new Date(now - DAY_MS) } },
+      data: { status: 'expired', recipient: null },
+    });
     const { count: deleted } = await this.prisma.mailMessage.deleteMany({
       where: {
         status: { in: ['sent', 'expired', 'failed'] },
@@ -131,25 +154,42 @@ export class MailStore {
       },
       data: { recipient: null },
     });
-    return { deleted, cleared };
+    return { deleted, cleared, expired };
   }
 
   /**
    * Puts failed messages back in the queue, with their attempts counted from
-   * zero: one by id, or every failed one (of a kind). Only those that still
-   * have their address (retention clears it after a week).
+   * zero and a new validity (their kind's), else one that failed through an
+   * outage longer than that would be dropped unsent at once: one by id, or
+   * every failed one (of a kind). Only those that still have their address
+   * (retention clears it after a week). A link's own validity starts when it
+   * is sent, so a late message never carries a long-lived token.
    */
-  async retryFailed(filter: { id?: string; kind?: MailKind }): Promise<number> {
-    const { count } = await this.prisma.mailMessage.updateMany({
-      where: {
-        status: 'failed',
-        recipient: { not: null },
-        ...(filter.id === undefined ? {} : { id: filter.id }),
-        ...(filter.kind === undefined ? {} : { kind: filter.kind }),
-      },
-      data: { status: 'pending', attempts: 0, nextAttemptAt: new Date(), lastError: null },
-    });
-    return count;
+  async retryFailed(
+    filter: { id?: string; kind?: MailKind },
+    now: number = Date.now(),
+  ): Promise<number> {
+    let queued = 0;
+    for (const kind of Object.keys(this.templates) as MailKind[]) {
+      if (filter.kind !== undefined && filter.kind !== kind) continue;
+      const { count } = await this.prisma.mailMessage.updateMany({
+        where: {
+          status: 'failed',
+          recipient: { not: null },
+          kind,
+          ...(filter.id === undefined ? {} : { id: filter.id }),
+        },
+        data: {
+          status: 'pending',
+          attempts: 0,
+          nextAttemptAt: new Date(now),
+          expiresAt: new Date(now + this.templates[kind].ttlMs),
+          lastError: null,
+        },
+      });
+      queued += count;
+    }
+    return queued;
   }
 
   private async finish(claim: Claim, data: Prisma.MailMessageUpdateManyMutationInput) {

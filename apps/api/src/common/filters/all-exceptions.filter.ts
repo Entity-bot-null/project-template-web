@@ -100,7 +100,13 @@ export function normalizeException(exception: unknown): ErrorOutcome {
     };
   }
   if (isExposedClientError(exception)) {
-    return { status: exception.status, message: exception.message };
+    // The JSON parser's own text (positions, expected tokens) says nothing
+    // useful to a client: one plain message instead.
+    const malformed = (exception as { type?: unknown }).type === 'entity.parse.failed';
+    return {
+      status: exception.status,
+      message: malformed ? 'The request body is not valid JSON' : exception.message,
+    };
   }
   return { status: HttpStatus.INTERNAL_SERVER_ERROR, message: 'An unexpected error occurred' };
 }

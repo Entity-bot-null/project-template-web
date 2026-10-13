@@ -36,7 +36,13 @@ interface Setup {
   /** The account that owns the new address, null: none. */
   addressOwner?: { id: string } | null;
   /** What the token's hash finds before the transaction. */
-  tokenRow?: { userId: string; purpose: string; targetEmail: string | null } | null;
+  tokenRow?: {
+    userId: string;
+    purpose: string;
+    targetEmail: string | null;
+    usedAt: Date | null;
+    expiresAt: Date;
+  } | null;
   /** What the locked SELECT of the token finds. */
   lockedRows?: unknown[];
 }
@@ -45,7 +51,13 @@ async function setup({
   mailEnabled = true,
   user,
   addressOwner = null,
-  tokenRow = { userId: 'u1', purpose: 'email_change', targetEmail: 'new@example.test' },
+  tokenRow = {
+    userId: 'u1',
+    purpose: 'email_change',
+    targetEmail: 'new@example.test',
+    usedAt: null,
+    expiresAt: new Date(NOW + 60_000),
+  },
   lockedRows,
 }: Setup = {}) {
   const passwordHash = await hashPassword(CURRENT);
@@ -66,6 +78,7 @@ async function setup({
                 email: ACCOUNT.email,
                 targetEmail: tokenRow?.targetEmail ?? null,
                 expiresAt: new Date(NOW + 60_000),
+                createdAt: new Date(NOW - 60_000),
               },
             ]),
       );
@@ -208,12 +221,19 @@ describe('EmailChangeService.confirm', () => {
     expect(hash).toBe(hashAccountToken(TOKEN));
   });
 
+  const link = {
+    userId: 'u1',
+    purpose: 'email_change',
+    targetEmail: 'new@example.test',
+    usedAt: null,
+    expiresAt: new Date(NOW + 60_000),
+  };
+
   it.each([
     ['unknown', null],
-    [
-      'of another purpose',
-      { userId: 'u1', purpose: 'email_revert', targetEmail: 'old@example.test' },
-    ],
+    ['of another purpose', { ...link, purpose: 'email_revert' }],
+    ['already used', { ...link, usedAt: new Date(NOW - 1) }],
+    ['expired', { ...link, expiresAt: new Date(NOW - 1) }],
   ])('answers 404 for a token %s, before any transaction', async (_case, tokenRow) => {
     const { service, prisma } = await setup({ tokenRow });
     await expect(service.confirm(TOKEN, NOW)).rejects.toThrow(
@@ -255,7 +275,13 @@ describe('EmailChangeService.confirm', () => {
 });
 
 describe('EmailChangeService.revert', () => {
-  const revertRow = { userId: 'u1', purpose: 'email_revert', targetEmail: 'ada@example.test' };
+  const revertRow = {
+    userId: 'u1',
+    purpose: 'email_revert',
+    targetEmail: 'ada@example.test',
+    usedAt: null,
+    expiresAt: new Date(NOW + 60_000),
+  };
   // The account as whoever took it left it: another address, a new password.
   const taken = { ...ACCOUNT, email: 'thief@example.test', securityVersion: 7 };
 
@@ -271,6 +297,7 @@ describe('EmailChangeService.revert', () => {
           email: 'new@example.test',
           targetEmail: 'ada@example.test',
           expiresAt: new Date(NOW + 60_000),
+          createdAt: new Date(NOW - 3_600_000),
         },
       ],
     });
@@ -289,9 +316,14 @@ describe('EmailChangeService.revert', () => {
     expect(data.email).toBe('ada@example.test');
     expect(data.securityVersion).toEqual({ increment: 1 });
     await expect(checkPassword(data.passwordHash, GOOD)).resolves.toBe(true);
-    // Every other link of the account, other undo links included.
+    // Every other link of the account, except undo links minted before
+    // this one: the earliest owner wins.
     expect(tx.accountToken.deleteMany).toHaveBeenCalledWith({
-      where: { userId: 'u1', usedAt: null },
+      where: {
+        userId: 'u1',
+        usedAt: null,
+        NOT: { purpose: 'email_revert', createdAt: { lt: new Date(NOW - 3_600_000) } },
+      },
     });
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'password_changed',

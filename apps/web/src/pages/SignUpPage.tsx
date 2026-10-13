@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../api/client';
-import { call, describeFailure } from '../api/errors';
+import { call, describeFailure, failedField } from '../api/errors';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
 import { emailError } from '../auth/validation';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 import { PasswordField } from '../components/PasswordField';
 import { TextField } from '../components/TextField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 interface FieldErrors {
   name: string | null;
@@ -21,6 +23,7 @@ const NO_ERRORS: FieldErrors = { name: null, email: null, password: null };
 // (its owner gets a message saying so). The account exists once the emailed
 // link is confirmed with this password.
 export function SignUpPage() {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,11 +53,16 @@ export function SignUpPage() {
       return;
     }
     const { status } = result.failure;
-    if (status === 400) {
+    const field = failedField(result.failure);
+    if (field === 'password') {
       setErrors({
         ...NO_ERRORS,
         password: 'Choose another password: this one is among the most used, or too easy to guess.',
       });
+    } else if (field === 'email') {
+      setErrors({ ...NO_ERRORS, email: 'Enter a valid email.' });
+    } else if (field === 'name') {
+      setErrors({ ...NO_ERRORS, name: 'Enter your name (up to 100 characters).' });
     } else if (status === 403) {
       setFailure('Sign-up is closed here. Ask your administrator for an account.');
     } else {
@@ -65,7 +73,7 @@ export function SignUpPage() {
   if (sentTo !== null) {
     return (
       <main className="auth-page stack">
-        <h1>Check your email</h1>
+        <FocusHeading>Check your email</FocusHeading>
         <Alert tone="info">
           A message is on its way to {sentTo}. Open its link and enter the password you just chose
           to finish creating your account; the link works for 24 hours.
@@ -95,11 +103,12 @@ export function SignUpPage() {
     <main className="auth-page">
       <h1>Create an account</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit();
+          void submit().then(focusInvalid);
         }}
       >
         {failure !== null && <Alert>{failure}</Alert>}

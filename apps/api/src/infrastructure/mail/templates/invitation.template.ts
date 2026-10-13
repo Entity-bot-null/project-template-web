@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { hashAccountToken, newAccountToken } from '../../../auth/account-tokens.js';
-import { INVITATION_TTL_MS } from '../../../auth/auth.constants.js';
+import { INVITATION_MESSAGE_TTL_MS, INVITATION_TTL_MS } from '../../../auth/auth.constants.js';
 import { renderMail } from './layout.js';
 import type { MailTemplate } from './registry.js';
 
@@ -14,7 +14,7 @@ export type InvitationPayload = z.infer<typeof InvitationPayloadSchema>;
 // account meanwhile, sends nothing. Limited per address like every link.
 export const invitationTemplate: MailTemplate = {
   limited: true,
-  ttlMs: 24 * 60 * 60_000,
+  ttlMs: INVITATION_MESSAGE_TTL_MS,
   async compose({ tx, message, product, appOrigin }) {
     const payload = InvitationPayloadSchema.safeParse(message.payload);
     if (!payload.success) return null;

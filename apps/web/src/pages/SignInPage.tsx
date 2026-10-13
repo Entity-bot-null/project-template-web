@@ -7,6 +7,7 @@ import { emailError, passwordError } from '../auth/validation';
 import { Alert } from '../components/Alert';
 import { PasswordField } from '../components/PasswordField';
 import { TextField } from '../components/TextField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 interface FieldErrors {
   email: string | null;
@@ -16,6 +17,7 @@ interface FieldErrors {
 // On success the session store switches to authenticated and GuestOnly
 // sends the user on (back where they came from, or home).
 export function SignInPage() {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const auth = useAuth();
   // The links show only where they work (email configured, sign-up open).
   const capabilities = useCapabilities();
@@ -49,11 +51,12 @@ export function SignInPage() {
     <main className="auth-page">
       <h1>Sign in</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit();
+          void submit().then(focusInvalid);
         }}
       >
         {auth.status === 'anonymous' && auth.signedOut === 'failed' && (
