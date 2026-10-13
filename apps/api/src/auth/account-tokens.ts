@@ -29,9 +29,17 @@ export interface MintInput {
   purpose: AccountTokenPurpose;
   /** The account's securityVersion now: a later credential change makes the token stale. */
   securityVersion: number;
-  /** The address the link goes to: a later change of email makes the token stale. */
+  /** The account's address now: a later change of email makes the token stale. */
   email: string;
+  /** email_change: the new address; email_revert: the address to put back. */
+  targetEmail?: string;
   ttlMs: number;
+  /**
+   * Delete the account's earlier unused tokens of the purpose (default): at
+   * most one link of a kind works, the latest. False for email_revert: a
+   * later change of email must not void the link that undoes an earlier one.
+   */
+  replaceEarlier?: boolean;
 }
 
 /**
@@ -43,9 +51,11 @@ export async function mintAccountToken(
   input: MintInput,
   now = Date.now(),
 ): Promise<string> {
-  await tx.accountToken.deleteMany({
-    where: { userId: input.userId, purpose: input.purpose, usedAt: null },
-  });
+  if (input.replaceEarlier !== false) {
+    await tx.accountToken.deleteMany({
+      where: { userId: input.userId, purpose: input.purpose, usedAt: null },
+    });
+  }
   const token = newAccountToken();
   await tx.accountToken.create({
     data: {
@@ -54,6 +64,7 @@ export async function mintAccountToken(
       tokenHash: hashAccountToken(token),
       securityVersion: input.securityVersion,
       email: input.email,
+      targetEmail: input.targetEmail ?? null,
       expiresAt: new Date(now + input.ttlMs),
       createdAt: new Date(now),
     },
@@ -64,6 +75,8 @@ export async function mintAccountToken(
 export interface UsableToken {
   id: string;
   userId: string;
+  /** email_change: the new address; email_revert: the address to put back. */
+  targetEmail: string | null;
 }
 
 /**
@@ -80,23 +93,35 @@ export async function consumeAccountToken(
   purpose: AccountTokenPurpose,
   account: { id: string; email: string; securityVersion: number },
   now = Date.now(),
+  /**
+   * The account must still be as it was when the token was minted (same
+   * securityVersion and email): true by default. False for email_revert,
+   * which undoes a change whatever happened to the account after it.
+   */
+  boundToState = true,
 ): Promise<UsableToken | undefined> {
   const rows = await tx.$queryRaw<
-    { id: string; userId: string; securityVersion: number; email: string; expiresAt: Date }[]
+    {
+      id: string;
+      userId: string;
+      securityVersion: number;
+      email: string;
+      targetEmail: string | null;
+      expiresAt: Date;
+    }[]
   >`
     SELECT "id", "user_id" AS "userId", "security_version" AS "securityVersion", "email",
-           "expires_at" AS "expiresAt"
+           "target_email" AS "targetEmail", "expires_at" AS "expiresAt"
     FROM "account_tokens"
     WHERE "token_hash" = ${hashAccountToken(token)}
       AND "purpose" = ${purpose}::"AccountTokenPurpose"
       AND "used_at" IS NULL
     FOR UPDATE`;
   const row = rows[0];
+  if (row?.userId !== account.id || row.expiresAt.getTime() <= now) return undefined;
   if (
-    row?.userId !== account.id ||
-    row.expiresAt.getTime() <= now ||
-    row.securityVersion !== account.securityVersion ||
-    row.email !== account.email
+    boundToState &&
+    (row.securityVersion !== account.securityVersion || row.email !== account.email)
   ) {
     return undefined;
   }
@@ -104,7 +129,7 @@ export async function consumeAccountToken(
     where: { id: row.id, usedAt: null },
     data: { usedAt: new Date(now) },
   });
-  return count === 1 ? { id: row.id, userId: row.userId } : undefined;
+  return count === 1 ? { id: row.id, userId: row.userId, targetEmail: row.targetEmail } : undefined;
 }
 
 /** Whose account a token claims to be for (unchecked): the account to lock before consuming it. */

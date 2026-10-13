@@ -1,5 +1,5 @@
 {
-  "$comment": "Gzip size budgets for the built web assets, checked by `pnpm perf:check` after `pnpm build`. Set from the template's measured build rounded up: the initial JavaScript (every visit: the entry index.html loads and the chunks it preloads, whatever the bundler names them) 106.9 kB, the error tracking chunk (fetched only when WEB_SENTRY_DSN is set) 31 kB, the Web Vitals chunks (fetched after the first render, the library only for sampled page loads) 4.2 kB, the account pages (password recovery and change, sign-up and its confirmation, fetched when opened, with the helpers only they use) 6.7 kB, CSS 0.6 kB. The total keeps a new lazy chunk from hiding outside the named ones; it grew from 145 to 150 kB with the account pages. Each project sets its own from its performance targets (docs/testing.md#performance-budget).",
+  "$comment": "Gzip size budgets for the built web assets, checked by `pnpm perf:check` after `pnpm build`. Set from the template's measured build rounded up: the initial JavaScript (every visit: the entry index.html loads and the chunks it preloads, whatever the bundler names them) 107.2 kB, the error tracking chunk (fetched only when WEB_SENTRY_DSN is set) 31 kB, the Web Vitals chunks (fetched after the first render, the library only for sampled page loads) 4.2 kB, the account pages (password recovery and change, sign-up and its confirmation, change of email and its undo, fetched when opened, with the helpers only they use) 8.5 kB, CSS 0.6 kB. The total keeps a new lazy chunk from hiding outside the named ones; it grew from 145 to 152 kB with the account pages. Each project sets its own from its performance targets (docs/testing.md#performance-budget).",
   "budgets": [
     {
       "name": "JavaScript, initial",
@@ -18,13 +18,13 @@
     },
     {
       "name": "JavaScript, account pages (lazy, when opened)",
-      "pattern": "^(ForgotPasswordPage|ResetPasswordPage|AccountPage|SignUpPage|ConfirmSignUpPage|PasswordField|password-rules|useLinkToken)-[^.]+\\.js$",
-      "maxGzipKb": 7
+      "pattern": "^(ForgotPasswordPage|ResetPasswordPage|AccountPage|SignUpPage|ConfirmSignUpPage|ConfirmEmailChangePage|RevertEmailChangePage|PasswordField|password-rules|useLinkToken)-[^.]+\\.js$",
+      "maxGzipKb": 9
     },
     {
       "name": "JavaScript, total",
       "pattern": "\\.js$",
-      "maxGzipKb": 150
+      "maxGzipKb": 152
     },
     {
       "name": "CSS",

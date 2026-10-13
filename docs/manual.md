@@ -858,6 +858,12 @@ locally; in production it is off unless you set it (accounts are then created wi
 `user:create`). Try it: `pnpm dev`, "Create an account" with any address, and open the link from
 Mailpit. The design and its limits: [security.md](security.md#sign-up).
 
+**Change of email.** With email on, the Account page also offers "Change your email": a new
+address and the current password. A link goes to the new address, and nothing changes until it is
+opened; then every session is signed out (sign in with the new address), and the previous address
+gets a notice with a link that undoes the change for 7 days, asking for a new password. Try it
+locally with any two addresses and Mailpit. The design: [security.md](security.md#change-of-email).
+
 ## 12. Running in production
 
 | Before and while running               | Where                                                         |

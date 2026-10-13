@@ -62,6 +62,15 @@ describe('SignInPage', () => {
     });
   });
 
+  it('lets the person check the password they typed (show/hide)', async () => {
+    stubFetch({ [CAPABILITIES]: offers(false) });
+    renderRoute('/sign-in');
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Password'), 'member-password');
+    await user.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text');
+  });
+
   it('shows one message for wrong credentials', async () => {
     stubFetch({ [SIGN_IN]: () => failure(401, 'Invalid email or password') });
     renderRoute('/sign-in');

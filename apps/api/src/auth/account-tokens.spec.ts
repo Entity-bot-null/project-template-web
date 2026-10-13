@@ -20,6 +20,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   userId: 'u1',
   securityVersion: 2,
   email: 'ada@example.test',
+  targetEmail: null,
   expiresAt: new Date(NOW + 60_000),
   ...overrides,
 });
@@ -65,6 +66,7 @@ describe('mintAccountToken', () => {
       tokenHash: hashAccountToken(token),
       securityVersion: 2,
       email: 'ada@example.test',
+      targetEmail: null,
       expiresAt: new Date(NOW + 30 * 60_000),
       createdAt: new Date(NOW),
     });
@@ -74,12 +76,37 @@ describe('mintAccountToken', () => {
   });
 });
 
+describe('mintAccountToken for a change of email', () => {
+  it('records the target address, and keeps earlier revert links when asked to', async () => {
+    const { tx, client } = txWith();
+    await mintAccountToken(
+      client,
+      {
+        userId: 'u1',
+        purpose: 'email_revert',
+        securityVersion: 3,
+        email: 'new@example.test',
+        targetEmail: 'ada@example.test',
+        ttlMs: 7 * 86_400_000,
+        replaceEarlier: false,
+      },
+      NOW,
+    );
+    // A later change must not void the link that undoes an earlier one.
+    expect(tx.accountToken.deleteMany).not.toHaveBeenCalled();
+    const [[{ data }]] = tx.accountToken.create.mock.calls as unknown as [
+      [{ data: Record<string, unknown> }],
+    ];
+    expect(data).toMatchObject({ purpose: 'email_revert', targetEmail: 'ada@example.test' });
+  });
+});
+
 describe('consumeAccountToken', () => {
   it('takes a working token for good, locking its row', async () => {
     const { tx, client } = txWith();
     await expect(
       consumeAccountToken(client, 'the-token', 'password_reset', ACCOUNT, NOW),
-    ).resolves.toEqual({ id: 't1', userId: 'u1' });
+    ).resolves.toEqual({ id: 't1', userId: 'u1', targetEmail: null });
     const [sql, ...values] = tx.$queryRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       ...unknown[],
@@ -105,6 +132,22 @@ describe('consumeAccountToken', () => {
       consumeAccountToken(client, 'the-token', 'password_reset', ACCOUNT, NOW),
     ).resolves.toBeUndefined();
     expect(tx.accountToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('takes a revert token whatever happened to the account since, never an expired one', async () => {
+    const changed = { ...ACCOUNT, email: 'thief@example.test', securityVersion: 9 };
+    const { client } = txWith([row({ targetEmail: 'ada@example.test' })]);
+    await expect(
+      consumeAccountToken(client, 'the-token', 'email_revert', changed, NOW, false),
+    ).resolves.toEqual({ id: 't1', userId: 'u1', targetEmail: 'ada@example.test' });
+    const expired = txWith([row({ expiresAt: new Date(NOW) })]);
+    await expect(
+      consumeAccountToken(expired.client, 'the-token', 'email_revert', changed, NOW, false),
+    ).resolves.toBeUndefined();
+    const other = txWith([row({ userId: 'u2' })]);
+    await expect(
+      consumeAccountToken(other.client, 'the-token', 'email_revert', changed, NOW, false),
+    ).resolves.toBeUndefined();
   });
 
   it('refuses a token another request consumed in between', async () => {

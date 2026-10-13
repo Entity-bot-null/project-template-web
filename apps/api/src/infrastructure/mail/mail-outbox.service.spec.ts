@@ -29,6 +29,9 @@ const registry = (limited: boolean): MailTemplates => ({
   password_changed: template(limited),
   sign_up_confirmation: template(limited),
   sign_up_existing: template(limited),
+  email_change_confirmation: template(limited),
+  email_change_existing: template(limited),
+  email_changed: template(limited),
 });
 
 function txWith({ minute = 0, day = 0, created = 1 } = {}) {

@@ -87,6 +87,15 @@ enum MailKind {
   // Someone signed up with an address that already has an account: a notice
   // to its owner instead of a link (anyone can cause one: limited).
   sign_up_existing
+  // A link to confirm a new address, sent to it (an account holder with
+  // their password can cause one: limited).
+  email_change_confirmation
+  // Someone tried to move an account to an address that has one: a notice to
+  // its owner instead of a link (limited).
+  email_change_existing
+  // The address of an account was changed: a notice to the previous address,
+  // with a link to undo it (a security notice, never held back).
+  email_changed
 }
 
 enum MailStatus {
@@ -155,6 +164,12 @@ model MailMessage {
 // What a one-time token is for.
 enum AccountTokenPurpose {
   password_reset
+  // Moves the account to targetEmail: sent to that new address.
+  email_change
+  // Puts targetEmail (the previous address) back, with a new password: sent
+  // to that previous address after a change. Not bound to the account's
+  // later state, so whoever took the account cannot void it.
+  email_revert
 }
 
 // One-time tokens sent in emailed links (docs/security.md#one-time-tokens).
@@ -170,8 +185,10 @@ model AccountToken {
   purpose         AccountTokenPurpose
   tokenHash       String              @unique @map("token_hash")
   securityVersion Int                 @map("security_version")
-  // The address the link was sent to.
+  // The account's address when the token was minted.
   email           String
+  // email_change: the new address; email_revert: the address to put back.
+  targetEmail     String?             @map("target_email")
   expiresAt       DateTime            @map("expires_at") @db.Timestamptz(3)
   usedAt          DateTime?           @map("used_at") @db.Timestamptz(3)
   createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)

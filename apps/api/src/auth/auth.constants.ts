@@ -34,6 +34,11 @@ export const SIGN_UP_TTL_MS = 24 * 60 * 60_000;
 /** Wrong passwords given with one sign-up's link before the sign-up is dropped. */
 export const SIGN_UP_MAX_FAILED_ATTEMPTS = 5;
 
+/** The link that confirms a new address works this long after it is sent. */
+export const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60_000;
+/** The link that undoes a change of address, sent to the previous one, works this long. */
+export const EMAIL_REVERT_TTL_MS = 7 * 24 * 60 * 60_000;
+
 // Per client IP: credential stuffing protection. Counted on top of the global
 // limit (RATE_LIMIT_MAX), not instead of it: both apply, and whichever runs
 // out first blocks (@RouteRateLimit, common/guards/rate-limit.guard.ts).
@@ -54,6 +59,11 @@ export const SIGN_UP_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
 // Confirming a sign-up checks the password chosen with it: limited like a
 // sign-in, besides the attempts each sign-up allows.
 export const SIGN_UP_CONFIRM_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 60 };
+// Asking to change the address checks the current password: limited like a
+// sign-in. Confirming or undoing a change takes a 256-bit token (undoing also
+// hashes a new password): this bounds the work a client can cause.
+export const EMAIL_CHANGE_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
+export const EMAIL_CHANGE_LINK_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 60 };
 
 // In production the refresh cookie carries the __Host- prefix: browsers then
 // accept it only when Secure, without Domain and on Path=/, so a site on a
