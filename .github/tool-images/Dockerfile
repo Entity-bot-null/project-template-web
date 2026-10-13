@@ -8,9 +8,10 @@
 #
 # Where an image is published outside Docker Hub with the same digest, it is
 # pulled from there: Docker Hub limits anonymous pulls per address, and CI
-# runners share theirs. The two left on Docker Hub (actionlint, Semgrep), and
-# the ECR Public ones (ECR Public limits anonymous pulls too), are pulled in CI
-# through a mirror of Docker Hub, by digest (scripts/tool-image.mjs).
+# runners share theirs. The ones left on Docker Hub (actionlint, Semgrep,
+# Mailpit), and the ECR Public ones (ECR Public limits anonymous pulls too),
+# are pulled in CI through a mirror of Docker Hub, by digest
+# (scripts/tool-image.mjs).
 
 # Workflow linting: actionlint (syntax, expressions, shellcheck) and zizmor
 # (security: permissions, injection, pinning, credential persistence).
@@ -44,6 +45,11 @@ FROM public.ecr.aws/docker/library/postgres:18-alpine@sha256:77f585114c32fbca283
 # Redis of the integration job (the Redis-backed adapters); keep the major
 # version equal to docker-compose.yml.
 FROM public.ecr.aws/docker/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 AS redis
+
+# Mail catcher of the integration job: the outbox specs send real SMTP to it
+# and read the messages back through its API. Keep the version equal to
+# docker-compose.yml.
+FROM axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48 AS mailpit
 
 # Dynamic application security testing (.github/workflows/dast.yml).
 FROM ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef AS zap

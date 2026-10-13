@@ -39,7 +39,10 @@ pnpm test               unit + component, every app (fast, no services)
 pnpm test:coverage      the same with coverage thresholds
 pnpm test:integration   API against PostgreSQL (pnpm db:up first); the Redis adapter specs too
                         when a Redis is up (docker compose --profile redis up -d, REDIS_URL in
-                        apps/api/.env, or REDIS_TEST_URL), skipped when no Redis URL is set, required in CI
+                        apps/api/.env, or REDIS_TEST_URL), skipped when no Redis URL is set, required in CI;
+                        the email outbox specs against Mailpit the same way (pnpm services:up,
+                        MAIL_SMTP_URL in apps/api/.env, or MAIL_TEST_SMTP_URL + MAILPIT_TEST_URL):
+                        they write to addresses of their own and delete only those
 pnpm test:e2e           browser suite (pnpm db:up and pnpm build first; browser once:
                         pnpm exec playwright install chromium)
 pnpm test:scripts       the repository scripts' own tests (scripts/*.test.mjs, node --test)

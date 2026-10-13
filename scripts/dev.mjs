@@ -82,6 +82,26 @@ export async function answers(url, signal, timeoutMs = 30_000) {
   return false;
 }
 
+/**
+ * What the API's readiness probe says about email (ok, degraded, disabled);
+ * undefined when it cannot tell (the box is printed without it).
+ * @param {string} apiUrl the API's base URL, .../api
+ * @param {AbortSignal} signal
+ * @returns {Promise<import('./dev-banner.mjs').MailStatus | undefined>}
+ */
+export async function readMailStatus(apiUrl, signal) {
+  try {
+    const response = await fetch(`${apiUrl}/health/ready`, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)]),
+    });
+    const body = /** @type {{ data?: { checks?: { mail?: unknown } } }} */ (await response.json());
+    const mail = body.data?.checks?.mail;
+    return mail === 'ok' || mail === 'degraded' || mail === 'disabled' ? mail : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const isCli = import.meta.url === pathToFileURL(process.argv[1] ?? '').href;
 if (isCli) {
   // Piped, the servers would drop their colors: keep them when this output
@@ -113,8 +133,10 @@ if (isCli) {
   let shown = Promise.resolve();
   const showBanner = () => {
     shown = shown.then(async () => {
-      await answers(currentSettings().web, stopped.signal);
-      if (!stopped.signal.aborted) process.stdout.write(`\n${currentBanner()}\n\n`);
+      const settings = currentSettings();
+      await answers(settings.web, stopped.signal);
+      const mailStatus = await readMailStatus(settings.api, stopped.signal);
+      if (!stopped.signal.aborted) process.stdout.write(`\n${currentBanner(mailStatus)}\n\n`);
     });
   };
   const watch = apiReadyWatcher(showBanner);

@@ -32,6 +32,7 @@ export default defineConfig({
         'src/openapi/export.ts',
         'src/seed/run.ts',
         'src/users/create-user.cli.ts',
+        'src/infrastructure/mail/mail.cli.ts',
       ],
       reporter: ['text-summary', 'html', 'lcov', 'json-summary'],
       // Ratchet: the unit coverage measured when the template was built,

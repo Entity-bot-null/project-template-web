@@ -8,6 +8,7 @@ import { env } from './env/env.js';
 import { HealthModule } from './health/health.module.js';
 import { CacheModule } from './infrastructure/cache/cache.module.js';
 import { CoordinationModule } from './infrastructure/coordination/coordination.module.js';
+import { MailModule } from './infrastructure/mail/mail.module.js';
 import { RateLimitModule } from './infrastructure/rate-limit/rate-limit.module.js';
 import {
   RATE_LIMIT_STORE,
@@ -40,6 +41,11 @@ import { UsersModule } from './users/users.module.js';
         }),
     }),
     PrismaModule,
+    // Email (docs/architecture.md#email); off without MAIL_SMTP_URL. After
+    // PrismaModule on purpose: global modules are destroyed in the reverse
+    // order of these imports, so the mail worker stops (finishing the message
+    // it is sending) before the database pool closes.
+    MailModule,
     AuthModule,
     UsersModule,
     HealthModule,

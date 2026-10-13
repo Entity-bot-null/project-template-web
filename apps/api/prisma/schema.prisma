@@ -32,7 +32,8 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  sessions Session[]
+  sessions     Session[]
+  mailMessages MailMessage[]
 
   @@map("users")
 }
@@ -64,4 +65,75 @@ model Session {
   // then, so a token replayed at any point of its life still reads as reuse.
   @@index([expiresAt])
   @@map("sessions")
+}
+
+// What a message is about: the worker renders it at send time from its kind
+// and the rows it points at (src/infrastructure/mail/templates). Adding a kind
+// is an expand step (ALTER TYPE ... ADD VALUE).
+enum MailKind {
+  // An operator's delivery check (pnpm --filter api mail:test).
+  test
+}
+
+enum MailStatus {
+  // Waiting for its next attempt (nextAttemptAt).
+  pending
+  // Claimed by a worker until lockedUntil; past it, another worker takes it over.
+  sending
+  // The SMTP server accepted it.
+  sent
+  // A permanent error, or out of attempts: kept for inspection and retry.
+  failed
+  // Not sent before expiresAt, or no longer relevant: dropped, never sent late.
+  expired
+}
+
+// The transactional outbox (docs/architecture.md#email): a business change
+// and the message it calls for are written in one transaction, and a worker
+// of the API delivers it afterwards, with retries. A row holds no body and no
+// secret: the worker renders the message when it sends it, and a link's token
+// is minted then, so only its hash is ever stored. The address is kept until
+// the message is sent or dropped, then only its keyed hash. CHECK constraints
+// in the migration enforce the states: a lease on every claimed row, sentAt
+// exactly on sent rows, no address left on sent or expired rows.
+model MailMessage {
+  id            String     @id @default(uuid(7)) @db.Uuid
+  kind          MailKind
+  status        MailStatus @default(pending)
+  // The address while it may still be needed (pending, sending, failed);
+  // cleared once the message is sent or dropped.
+  recipient     String?
+  // HMAC-SHA256 of the normalized address (mail.recipient.ts): per-address
+  // limits and lookups without keeping the address.
+  recipientHash String     @map("recipient_hash")
+  // The account the message is about, when there is one.
+  userId        String?    @map("user_id") @db.Uuid
+  // Ids the template needs (never a secret, a token, an address or a body).
+  payload       Json       @default("{}")
+  // Set by callers that could enqueue the same message twice: the second
+  // enqueue is a no-op.
+  dedupeKey     String?    @unique @map("dedupe_key")
+  attempts      Int        @default(0)
+  nextAttemptAt DateTime   @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  lockedUntil   DateTime?  @map("locked_until") @db.Timestamptz(3)
+  // Category of the last failure (smtp_4xx_451, connection, ...): never the
+  // server's text, which can quote the address.
+  lastError     String?    @map("last_error")
+  expiresAt     DateTime   @map("expires_at") @db.Timestamptz(3)
+  sentAt        DateTime?  @map("sent_at") @db.Timestamptz(3)
+  // The request that enqueued it, to follow one message through the logs.
+  requestId     String?    @map("request_id")
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The worker's claim: due pending rows, and sending rows whose lease ended.
+  @@index([status, nextAttemptAt])
+  // Per-address limits count an address's recent messages.
+  @@index([recipientHash, createdAt])
+  // The retention sweep deletes old finished rows.
+  @@index([createdAt])
+  @@index([userId])
+  @@map("mail_messages")
 }

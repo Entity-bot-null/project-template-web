@@ -160,3 +160,35 @@ groups:
           description: 'p99 event loop delay: {{ $value | humanizeDuration }}, for more than 15 minutes (CPU starvation or blocking work).'
           runbook_url: docs/incident-response.md#7-memory-or-cpu-pressure
           dashboard_uid: app-api
+
+      # Email (docs/architecture.md#email): the oldest message in the outbox
+      # has waited more than 15 minutes. Every instance reports the one shared
+      # queue, so max, not sum. A backlog that lasts means deliveries keep
+      # failing (SMTP down, credentials refused) or no worker runs: password
+      # resets and confirmations arrive late, or not at all.
+      - alert: ApiMailBacklog
+        expr: |
+          max by (job, deployment_environment_name) (app_mail_outbox_oldest_age_seconds) > 900
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Email waits in the outbox ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: 'The oldest message waiting to be sent is {{ $value | humanizeDuration }} old, for more than 10 minutes. Links in password resets and confirmations expire before they arrive.'
+          runbook_url: docs/incident-response.md#16-email-not-delivered
+          dashboard_uid: app-api
+
+      # Messages given up on: refused for good, or out of attempts. Each is a
+      # person who did not get a message; `mail status` lists them by id.
+      - alert: ApiMailDeliveryFailed
+        expr: |
+          sum by (job, deployment_environment_name, mail_kind) (
+            increase(app_mail_deliveries_total{outcome="failed"}[30m])
+          ) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.mail_kind }} email was given up on ({{ $labels.job }}, {{ $labels.deployment_environment_name }})'
+          description: '{{ $value | humanize }} message(s) failed for good in the last 30 minutes (refused by the SMTP server, or out of attempts).'
+          runbook_url: docs/incident-response.md#16-email-not-delivered
+          dashboard_uid: app-api

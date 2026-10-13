@@ -262,9 +262,12 @@ pnpm dev
 | cierra la sesión, inicia sesión como `member@example.com` / `member-password` | la app como Member, sin las pantallas de administración |
 | http://localhost:3000/api/docs                                                | la documentación de la API (Swagger)                    |
 | http://127.0.0.1:3000/api/health/ready                                        | una respuesta JSON con `"status":"ok"`                  |
+| http://localhost:8035                                                         | Mailpit, adonde llegan los correos de la app            |
 
 La terminal muestra la primera línea de la API:
-`Starting release unversioned in development: … error tracking off, Redis off`.
+`Starting release unversioned in development: … error tracking off, Redis off, email on`, y un
+recuadro con estas direcciones bajo los logs. `pnpm --filter api mail test --to tu@example.test`
+encola un mensaje de prueba: aparece en Mailpit en unos segundos.
 
 Para con `Ctrl+C`. Mañana basta con `pnpm dev`.
 
@@ -693,6 +696,15 @@ dos URL con `?sslmode=require&uselibpqcompat=true` (las salidas de Terraform ya 
 la API rechaza el certificado (un error de certificado como
 `self-signed certificate in certificate chain`,
 [deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)).
+
+**Correo** (opcional; sin él la app funciona, y las funciones que necesitan correo no están
+disponibles): en `api.env`,
+`MAIL_SMTP_URL=smtps://<usuario>:<contraseña, codificada con %>@<host del proveedor>:465` y
+`MAIL_FROM="Acme <no-reply@acme.com>"` de tu proveedor de correo (Amazon SES, Postmark, Resend,
+Brevo...), y en el proveedor, SPF, DKIM y DMARC para `acme.com` ([manual](manual.es.md#115-correo)).
+Tras el primer despliegue (fase 8),
+`docker compose --env-file server.env --env-file release.env run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <tú>`
+debe imprimir `Delivered`.
 
 **Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
 puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).

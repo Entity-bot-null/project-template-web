@@ -274,7 +274,7 @@ describe('Without Redis (integration)', () => {
     const res = await request(t.server).get('/api/health/ready').expect(200);
     expect(envelopeOf(res).data).toEqual({
       status: 'degraded',
-      checks: { database: 'ok', redis: 'unavailable' },
+      checks: { database: 'ok', redis: 'unavailable', mail: 'disabled' },
     });
     await request(t.server).get('/api/health/live').expect(200);
   });
@@ -299,7 +299,7 @@ describe('Without Redis (integration)', () => {
     const res = await request(t.server).get('/api/health/ready').expect(200);
     expect(envelopeOf(res).data).toEqual({
       status: 'ok',
-      checks: { database: 'ok', redis: 'disabled' },
+      checks: { database: 'ok', redis: 'disabled', mail: 'disabled' },
     });
   });
 });

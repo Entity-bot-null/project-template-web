@@ -99,6 +99,7 @@ describe('pullableImage', () => {
       'ubuntu',
       'postgres',
       'redis',
+      'mailpit',
     ];
     for (const name of names) {
       const image = toolImage(name);

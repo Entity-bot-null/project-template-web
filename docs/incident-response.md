@@ -440,6 +440,53 @@ time`) on the routes that call a provider; 5xx lines ending `dependency: <name>)
 - **Document:** the page, the metric, the cause, the release, and a budget or test that would have
   caught it.
 
+### 16. Email not delivered
+
+- **Alerts:** `ApiMailBacklog` (messages wait more than 15 minutes), `ApiMailDeliveryFailed`
+  (`mail_kind` label: messages given up on).
+- **Symptoms:** users do not receive password resets or confirmations; readiness
+  `checks.mail: "degraded"` (200, the instance still serves); in the log
+  `Could not send <kind> message <id> (attempt n): <category>; retrying in <s> s`,
+  `Gave up on <kind> message <id>: <category>`, or `Mail worker paused: <reason>` (the database);
+  `app_mail_outbox_oldest_age_seconds` rising, `app_mail_deliveries_total{outcome="retry"}` rising
+  without `outcome="sent"`. A refused configuration also reaches the error tracker as
+  `SMTP refused the configuration (<category>)` (`dependency: smtp`).
+- **Impact:** degraded, not down: nothing is lost, the outbox keeps every message
+  (docs/architecture.md#email) and retries with backoff, but links arrive late, and a message
+  that waits longer than its kind's validity (30 minutes for a password reset) is dropped unsent
+  (`expired`): the person asks again once email works. Sign-in and every other feature work.
+- **First checks:** `pnpm --filter api mail status` (in a deployment:
+  `docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js status`): counts
+  by status and kind, the age of the oldest waiting message, the latest failures and their
+  category. The category says where to look: `connection`, `timeout`, `dns` (the server or the
+  network), `auth`, `smtp_5xx_535` (credentials refused: rotated, expired, wrong
+  `MAIL_SMTP_URL`), `tls` (the server does not offer STARTTLS, which production requires),
+  `smtp_4xx_*` (the provider defers: rate limits, a sending quota), `smtp_5xx_*` (the provider
+  refuses this message: a bad address, the sender's domain not verified, a suppression list).
+  The provider's status page and its own logs for the same minutes.
+- **Signals:** `app_mail_outbox_waiting`, `app_mail_outbox_oldest_age_seconds`,
+  `app_mail_deliveries_total` by `outcome`, `app_mail_delivery_duration_seconds` (a slow server),
+  `app_mail_suppressed_total` (per-address limits: one address asked repeatedly).
+- **Immediate actions:** none needed for a transient outage: every instance retries on its own
+  (30 s, then doubling to an hour, with jitter). If no message moves at all, check that an API
+  instance runs: the workers live in the API.
+- **Mitigation:** credentials: rotate them at the provider and update `MAIL_SMTP_URL`
+  (percent-encode the password; docs/environment.md), then redeploy; waiting messages go out with
+  their next attempt. A sender refused for domain authentication: fix SPF, DKIM and DMARC at the
+  DNS. A provider down for long: switch `MAIL_SMTP_URL` to a second provider. Messages given up
+  on (`failed`): once the cause is fixed, `mail retry --failed` (or `--id <id>`, `--kind <kind>`)
+  queues them again; their address is kept for 7 days, after which they cannot be retried.
+- **Roll back when:** a deployment changed `MAIL_SMTP_URL`, `MAIL_FROM` or `APP_ORIGIN`.
+- **Recovered when:** `Sent <kind> message <id>` lines again; readiness `checks.mail: "ok"`;
+  `app_mail_outbox_oldest_age_seconds` back under a minute; `mail status` shows nothing waiting
+  for long.
+- **Validate after:** `pnpm --filter api mail test --to <your address>` delivers; no new
+  `failed` messages. Delivery is at least once: a worker that died after the server accepted a
+  message and before recording it sends it again when its lease ends (2 minutes), so a few people
+  may get a duplicate (with the same `Message-ID`); nothing to do about it.
+- **Document:** duration, the category, how many messages were delayed, dropped (`expired`) or
+  retried by hand, and what would have told you sooner.
+
 ## After the incident
 
 Within a few working days, a blameless postmortem for every SEV1 and SEV2, and for any incident

@@ -618,6 +618,8 @@ export interface operations {
                                 database: "ok";
                                 /** @enum {string} */
                                 redis: "ok" | "unavailable" | "disabled";
+                                /** @enum {string} */
+                                mail: "ok" | "degraded" | "disabled";
                             };
                         };
                         message: string;
