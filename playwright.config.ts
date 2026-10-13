@@ -28,7 +28,8 @@ export default defineConfig({
     {
       command: 'pnpm --filter api e2e:server',
       url: `http://127.0.0.1:${API_PORT}/api/health/ready`,
-      env: { PORT: String(API_PORT) },
+      // APP_ORIGIN: where links in messages point (the web server below).
+      env: { PORT: String(API_PORT), APP_ORIGIN: WEB_URL },
       timeout: 120_000,
       reuseExistingServer: false,
     },

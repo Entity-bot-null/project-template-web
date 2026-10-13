@@ -1,6 +1,8 @@
 import type { MailKind, Prisma } from '../../../prisma/generated/client.js';
 import type { ClaimedMessage, MailOptions } from '../mail.types.js';
 import type { RenderedMail } from './layout.js';
+import { passwordChangedTemplate } from './password-changed.template.js';
+import { passwordResetTemplate } from './password-reset.template.js';
 import { testTemplate } from './test.template.js';
 
 export interface ComposeContext {
@@ -26,6 +28,8 @@ export type MailTemplates = Readonly<Record<MailKind, MailTemplate>>;
 
 export const MAIL_TEMPLATE_REGISTRY: MailTemplates = {
   test: testTemplate,
+  password_reset: passwordResetTemplate,
+  password_changed: passwordChangedTemplate,
 };
 
 /** What messages call the product: the sender's display name, else the public host. */

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AccountModule } from './account/account.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { FetchMetadataGuard } from './common/guards/fetch-metadata.guard.js';
 import { RateLimitGuard, rateLimitOptions } from './common/guards/rate-limit.guard.js';
@@ -47,6 +48,7 @@ import { UsersModule } from './users/users.module.js';
     // it is sending) before the database pool closes.
     MailModule,
     AuthModule,
+    AccountModule,
     UsersModule,
     HealthModule,
     TelemetryModule,

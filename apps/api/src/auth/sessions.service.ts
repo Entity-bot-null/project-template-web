@@ -23,6 +23,11 @@ export interface IssuedSession {
   expiresAt: Date;
 }
 
+/** A new session, with the account's securityVersion read under its lock: the access token carries it. */
+export interface StartedSession extends IssuedSession {
+  securityVersion: number;
+}
+
 // Refresh tokens are 32 random bytes. The client holds the token, the
 // database only its SHA-256: a leaked table cannot be replayed, and since the
 // token has full entropy a plain hash is enough (no secret, exact lookup).
@@ -59,7 +64,7 @@ type Tx = Prisma.TransactionClient;
 const SESSION_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted };
 
 type RotateOutcome =
-  | { user: AuthUser; session: IssuedSession }
+  | { user: AuthUser; securityVersion: number; session: IssuedSession }
   | { error: 'invalid' | 'race' }
   | { error: 'reuse'; userId: string };
 
@@ -94,13 +99,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   // caller checked the password against: if it changed since (a password
   // change and revokeAll ran in between), no session is created, so a sign-in
   // with the old password can never outlive the revocation.
-  async create(userId: string, verifiedPasswordHash: string): Promise<IssuedSession> {
+  async create(userId: string, verifiedPasswordHash: string): Promise<StartedSession> {
     const token = newToken();
-    const expiresAt = await this.prisma.$transaction(async (tx) => {
+    const { expiresAt, securityVersion } = await this.prisma.$transaction(async (tx) => {
       await lockUser(tx, userId);
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { passwordHash: true },
+        select: { passwordHash: true, securityVersion: true },
       });
       if (user?.passwordHash !== verifiedPasswordHash) {
         throw new UnauthorizedException('Invalid email or password');
@@ -117,15 +122,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           expiresAt: sessionExpiresAt,
         },
       });
-      return sessionExpiresAt;
+      return { expiresAt: sessionExpiresAt, securityVersion: user.securityVersion };
     }, SESSION_TRANSACTION);
-    return { token, expiresAt };
+    return { token, expiresAt, securityVersion };
   }
 
   // Single use: a valid token is revoked as rotated and replaced by a successor
   // in the same family. A token rotated within the leeway is a client race;
   // one rotated earlier means someone else holds a copy, and its family ends.
-  async rotate(token: string): Promise<{ user: AuthUser; session: IssuedSession }> {
+  async rotate(
+    token: string,
+  ): Promise<{ user: AuthUser; securityVersion: number; session: IssuedSession }> {
     const tokenHash = hashRefreshToken(token);
     const outcome = await this.prisma.$transaction(async (tx): Promise<RotateOutcome> => {
       const found = await tx.session.findUnique({ where: { tokenHash }, select: { userId: true } });
@@ -134,7 +141,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Re-read under the lock: logout or another rotation may have changed it.
       const current = await tx.session.findUnique({
         where: { tokenHash },
-        include: { user: { select: { id: true, email: true, name: true, role: true } } },
+        include: {
+          user: {
+            select: { id: true, email: true, name: true, role: true, securityVersion: true },
+          },
+        },
       });
       if (!current) return { error: 'invalid' };
 
@@ -166,7 +177,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           expiresAt,
         },
       });
-      return { user: current.user, session: { token: next, expiresAt } };
+      const { securityVersion, ...user } = current.user;
+      return { user, securityVersion, session: { token: next, expiresAt } };
     }, SESSION_TRANSACTION);
 
     if ('error' in outcome) {
@@ -237,9 +249,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-// Serializes every session change of one user (see the class comment).
-async function lockUser(tx: Tx, userId: string): Promise<void> {
+// Serializes every session change of one user (see the class comment), and
+// every account change (a new password, a reset): they lock the same row.
+// Exported for those, which revoke sessions in their own transaction.
+export async function lockUser(tx: Tx, userId: string): Promise<void> {
   await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
+}
+
+/** Ends every session of a user, inside a transaction that holds the user's lock. */
+export async function revokeSessionsLocked(
+  tx: Tx,
+  userId: string,
+  now = Date.now(),
+): Promise<void> {
+  await tx.session.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date(now) },
+  });
 }
 
 async function revokeFamily(tx: Tx, familyId: string, now: number): Promise<void> {

@@ -37,6 +37,15 @@ describe('smtpSettings', () => {
     expect(smtpSettings('smtp://smtp.acme.test', true)).toMatchObject({ requireTLS: true });
   });
 
+  it('lets a server on this machine (loopback) skip TLS in production, and no other', () => {
+    for (const url of ['smtp://localhost:1035', 'smtp://127.0.0.1:25', 'smtp://[::1]:25']) {
+      expect(smtpSettings(url, true), url).toMatchObject({ requireTLS: false });
+    }
+    for (const url of ['smtp://127.0.0.2:25', 'smtp://mail.localhost:25', 'smtp://10.0.0.5:25']) {
+      expect(smtpSettings(url, true), url).toMatchObject({ requireTLS: true });
+    }
+  });
+
   it('uses TLS from the first byte on smtps:// (465 by default)', () => {
     expect(smtpSettings('smtps://smtp.acme.test', true)).toMatchObject({
       port: 465,

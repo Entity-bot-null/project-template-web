@@ -811,7 +811,8 @@ cd /srv/app
 read -rs PASSWORD
 ```
 
-Escribe la contraseña (12 caracteres o más; no se muestra nada), pulsa Enter y después:
+Escribe la contraseña (15 caracteres o más, unas cuantas palabras funcionan bien; no se muestra
+nada), pulsa Enter y después:
 
 ```
 printf '%s' "$PASSWORD" | docker compose --env-file server.env --env-file release.env \

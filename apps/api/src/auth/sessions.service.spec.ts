@@ -51,7 +51,7 @@ function fakePrisma(rows: Row[], storedPasswordHash = PASSWORD_HASH) {
   const session = {
     findUnique: vi.fn(({ where }: { where: Where }) => {
       const row = rows.find((candidate) => matches(candidate, where));
-      return Promise.resolve(row ? { ...row, user: USER } : null);
+      return Promise.resolve(row ? { ...row, user: { ...USER, securityVersion: 4 } } : null);
     }),
     update: vi.fn(({ where, data }: { where: Where; data: Partial<Row> }) => {
       const row = rows.find((candidate) => matches(candidate, where));
@@ -72,7 +72,9 @@ function fakePrisma(rows: Row[], storedPasswordHash = PASSWORD_HASH) {
     deleteMany: vi.fn(),
   };
   const user = {
-    findUnique: vi.fn(() => Promise.resolve({ passwordHash: storedPasswordHash })),
+    findUnique: vi.fn(() =>
+      Promise.resolve({ passwordHash: storedPasswordHash, securityVersion: 4 }),
+    ),
   };
   // The user row lock (SELECT ... FOR UPDATE).
   const $queryRaw = vi.fn().mockResolvedValue([]);
@@ -111,6 +113,8 @@ describe('SessionsService', () => {
     expect($queryRaw).toHaveBeenCalled();
 
     expect(issued.token).toMatch(/^[\w-]{43}$/);
+    // The access token is minted with the version read under the lock.
+    expect(issued.securityVersion).toBe(4);
     expect(rows[0]?.tokenHash).toBe(hashRefreshToken(issued.token));
     expect(rows[0]?.tokenHash).not.toContain(issued.token);
     expect(rows[0]?.familyId).toMatch(/^[0-9a-f-]{36}$/);
@@ -133,9 +137,11 @@ describe('SessionsService', () => {
   it('rotates a valid token within its family, under the user lock', async () => {
     const rows = [rowFor('old')];
     const { prisma, $queryRaw } = fakePrisma(rows);
-    const { user, session } = await new SessionsService(prisma).rotate('old');
+    const { user, securityVersion, session } = await new SessionsService(prisma).rotate('old');
 
+    // The public user, and the version apart: it never reaches a response body.
     expect(user).toEqual(USER);
+    expect(securityVersion).toBe(4);
     expect(session.token).not.toBe('old');
     expect(rows[0]).toMatchObject({ rotated: true, revokedAt: expect.any(Date) as Date });
     expect(rows[1]).toMatchObject({

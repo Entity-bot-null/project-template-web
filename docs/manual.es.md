@@ -204,8 +204,8 @@ Para el último, el `.env` de la raíz necesita `JWT_ACCESS_SECRET`. En otra ter
 - El idioma de la interfaz, el sistema de diseño (`apps/web/src/index.css` es provisional), el
   nombre del producto.
 - Roles: [how-to.md](how-to.md#add-a-role).
-- El ciclo de vida de cuentas que necesite el producto: registro, verificación, recuperación de
-  contraseña, MFA o SSO (docs/security.md#authentication-and-tokens).
+- El ciclo de vida de cuentas que necesite el producto además de recuperar y cambiar la
+  contraseña: registro, verificación, MFA o SSO (docs/security.md#authentication-and-tokens).
 - Sustituye o amplía el módulo de ejemplo `users` con tu dominio; conserva `auth`, `health`,
   `common`, `observability`, `infrastructure` y `lifecycle`.
 - Los umbrales de cobertura y el presupuesto de rendimiento son mínimos; ajústalos de forma
@@ -853,8 +853,8 @@ APP_ORIGIN=https://<tu dominio>
 ```
 
 o `smtp://...:587`: producción exige STARTTLS en ese caso y rechaza un servidor sin TLS (Mailpit
-entre ellos). `APP_ORIGIN` es adonde apuntan los enlaces de los mensajes: nunca el Host de una
-petición. Antes del primer mensaje, autentica el dominio remitente en el proveedor (SPF, DKIM,
+entre ellos), salvo uno en la propia máquina (`localhost`, `127.0.0.1`, `[::1]`). `APP_ORIGIN` es
+adonde apuntan los enlaces de los mensajes: nunca el Host de una petición. Antes del primer mensaje, autentica el dominio remitente en el proveedor (SPF, DKIM,
 DMARC): sin ellos los mensajes acaban en spam o se rechazan. Después, con la imagen de la API:
 
 ```
@@ -867,6 +867,16 @@ mensajes se nombran por id; `--to <dirección>` encuentra los mensajes de una di
 `ApiMailDeliveryFailed`, y el runbook: [incident-response.md](incident-response.md#16-email-not-delivered).
 Para rotar las credenciales SMTP, crea las nuevas en el proveedor, actualiza `MAIL_SMTP_URL`,
 redespliega y después revoca las antiguas; los mensajes que esperaban salen en su siguiente intento.
+
+**Recuperar y cambiar la contraseña.** Con el correo encendido, la página de inicio de sesión
+ofrece "Forgot your password?": la persona escribe su dirección, recibe un enlace válido 30
+minutos y una sola vez, y elige una contraseña nueva (15 caracteres o más; las reglas:
+[security.md](security.md#passwords)). Con la sesión iniciada, la página Account (menú superior) la
+cambia pidiendo la actual. En ambos casos se cierran al instante las demás sesiones de la cuenta y
+el titular recibe un aviso de que su contraseña cambió. Pruébalo en local: `pnpm dev`, cierra
+sesión, "Forgot your password?" con `member@example.com`, y abre el enlace desde Mailpit
+(http://localhost:8035). Sin correo el enlace no aparece y las rutas de recuperación responden 503;
+cambiarla con la sesión iniciada sigue funcionando.
 
 ## 12. Operar en producción
 

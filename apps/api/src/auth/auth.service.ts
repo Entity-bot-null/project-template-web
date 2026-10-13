@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ACCESS_TOKEN_TTL_SEC, normalizeEmail } from './auth.constants.js';
 import type { AccessTokenPayload, AuthSession, AuthUser } from './dto/auth.schemas.js';
-import { dummyPasswordHash, verifyPassword } from './password.js';
+import { checkPassword, dummyPasswordHash } from './password.js';
 import { type IssuedSession, SessionsService } from './sessions.service.js';
 
 export interface SignInResult {
@@ -39,28 +39,30 @@ export class AuthService implements OnModuleInit {
       where: { email: normalizeEmail(email) },
       select: { id: true, email: true, name: true, role: true, passwordHash: true },
     });
-    const valid = await verifyPassword(user?.passwordHash ?? (await dummyPasswordHash()), password);
+    const valid = await checkPassword(user?.passwordHash ?? (await dummyPasswordHash()), password);
     if (!user || !valid) throw new UnauthorizedException('Invalid email or password');
     const { passwordHash, ...authUser } = user;
     if (previousToken !== undefined) await this.sessions.retire(previousToken, 'sign-in');
     const refresh = await this.sessions.create(authUser.id, passwordHash);
-    return { session: await this.sessionFor(authUser), refresh };
+    return { session: await this.sessionFor(authUser, refresh.securityVersion), refresh };
   }
 
   async refresh(token: string): Promise<SignInResult> {
-    const { user, session } = await this.sessions.rotate(token);
-    return { session: await this.sessionFor(user), refresh: session };
+    const { user, securityVersion, session } = await this.sessions.rotate(token);
+    return { session: await this.sessionFor(user, securityVersion), refresh: session };
   }
 
   logout(token: string): Promise<void> {
     return this.sessions.retire(token, 'logout');
   }
 
-  // The access token carries only the id and the role, read fresh from the
-  // database at sign-in and at every refresh: a role change applies at the
-  // next refresh, at most ACCESS_TOKEN_TTL_SEC later.
-  private async sessionFor(user: AuthUser): Promise<AuthSession> {
-    const payload: AccessTokenPayload = { sub: user.id, role: user.role };
+  // The access token carries the id, the role and the securityVersion, read
+  // fresh from the database at sign-in and at every refresh: a role change
+  // applies at the next refresh, at most ACCESS_TOKEN_TTL_SEC later; a new
+  // password at once (the guard compares the securityVersion). Also used by
+  // the account flows that start a session (a password change).
+  async sessionFor(user: AuthUser, securityVersion: number): Promise<AuthSession> {
+    const payload: AccessTokenPayload = { sub: user.id, role: user.role, sv: securityVersion };
     return {
       accessToken: await this.jwt.signAsync(payload),
       expiresIn: ACCESS_TOKEN_TTL_SEC,

@@ -4,31 +4,29 @@
 // the BUILT API on it in production mode. Run `pnpm build` first.
 import { execSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { parseEnv } from 'node:util';
 import pg from 'pg';
+import { API_DIR, e2eDatabaseUrl, e2eMailpit } from './e2e-env.mjs';
 
-const API_DIR = new URL('../', import.meta.url);
-const ENV_FILE = new URL('../.env', import.meta.url);
-const SUFFIX = '_e2e';
+/** @type {URL} */
+let url;
+try {
+  url = e2eDatabaseUrl();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+const database = decodeURIComponent(url.pathname.slice(1));
 
-// DATABASE_URL (CI) or the local .env. No default: guessing a server could
-// point the suite at an unrelated database.
-function baseDatabaseUrl() {
-  if (process.env.DATABASE_URL !== undefined) return process.env.DATABASE_URL;
-  if (existsSync(ENV_FILE)) {
-    const fromFile = parseEnv(readFileSync(ENV_FILE, 'utf8')).DATABASE_URL;
-    if (fromFile !== undefined) return fromFile;
-  }
+// Email goes to Mailpit, as in development (e2e-env.mjs). Without one it is
+// off and the specs that need it skip, except in CI, where that would hide a
+// broken feature.
+const mailpit = e2eMailpit();
+if (mailpit === undefined && process.env.CI === 'true') {
   console.error(
-    'DATABASE_URL is not set: copy apps/api/.env.example to apps/api/.env (or set DATABASE_URL).',
+    'No Mailpit for the end-to-end suite: set MAIL_TEST_SMTP_URL and MAILPIT_TEST_URL.',
   );
   process.exit(1);
 }
-
-const url = new URL(baseDatabaseUrl());
-if (!url.pathname.endsWith(SUFFIX)) url.pathname = `${url.pathname}${SUFFIX}`;
-const database = decodeURIComponent(url.pathname.slice(1));
 
 // Create the database when missing.
 const adminUrl = new URL(url);
@@ -41,18 +39,19 @@ if (exists.rowCount === 0) await admin.query(`CREATE DATABASE "${database.replac
 await admin.end();
 
 // The seed and the API both validate their environment, and CI has no .env:
-// everything they need is set here. The signing secret is throwaway, one per run.
-// Email is off, as in CI, whatever apps/api/.env says (the API loads it outside
-// tests, and its development values, an http APP_ORIGIN among them, are not
-// valid in production): an empty value is unset, and the file never overrides
-// a variable that is set.
+// everything they need is set here, whatever apps/api/.env says (the API loads
+// it outside tests; the file never overrides a variable that is set, and an
+// empty value is unset). The signing secret is throwaway, one per run. Links
+// in messages point to the web app the suite opens (APP_ORIGIN, from
+// playwright.config.ts): http on loopback, which production accepts there
+// only, like Mailpit's SMTP without TLS (docs/security.md#email).
 const runEnv = {
   ...process.env,
   DATABASE_URL: url.toString(),
   JWT_ACCESS_SECRET: randomBytes(32).toString('hex'),
-  MAIL_SMTP_URL: '',
-  MAIL_FROM: '',
-  APP_ORIGIN: '',
+  MAIL_SMTP_URL: mailpit?.smtpUrl ?? '',
+  MAIL_FROM: mailpit === undefined ? '' : 'App <no-reply@example.test>',
+  APP_ORIGIN: process.env.APP_ORIGIN ?? '',
 };
 execSync('pnpm exec prisma migrate deploy', { cwd: API_DIR, env: runEnv, stdio: 'inherit' });
 

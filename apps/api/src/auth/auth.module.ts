@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { env } from '../env/env.js';
 import { ACCESS_TOKEN_ALGORITHM, ACCESS_TOKEN_TTL_SEC } from './auth.constants.js';
+import { AccountTokenSweep } from './account-tokens.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { PasswordResetService } from './password-reset.service.js';
 import { SessionsService } from './sessions.service.js';
 
 @Module({
@@ -16,9 +18,9 @@ import { SessionsService } from './sessions.service.js';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, SessionsService],
+  providers: [AuthService, SessionsService, PasswordResetService, AccountTokenSweep],
   // @Auth() instantiates JwtAuthGuard in the importing module, so what must
   // be exported is the JwtModule (the one JwtService with the pinned options).
-  exports: [JwtModule, SessionsService],
+  exports: [JwtModule, SessionsService, AuthService],
 })
 export class AuthModule {}

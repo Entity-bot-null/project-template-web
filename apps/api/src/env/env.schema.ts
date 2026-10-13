@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isLoopbackHost } from '../common/utils/loopback.js';
 
 /** Nest log levels, most to least severe. */
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'log', 'debug', 'verbose'] as const;
@@ -237,7 +238,8 @@ export const EnvSchema = z
     // features that need it are unavailable, nothing is queued). Locally,
     // Mailpit: smtp://localhost:1035. In production the connection must be
     // encrypted: smtps://, or smtp:// with STARTTLS required (a server
-    // without it, like Mailpit, is refused).
+    // without it, like Mailpit, is refused), except to a loopback host
+    // (localhost, 127.0.0.1, [::1]): that traffic never leaves the machine.
     MAIL_SMTP_URL: optional(smtpUrl),
     // The From of every message; required with MAIL_SMTP_URL.
     MAIL_FROM: optional(mailFrom),
@@ -302,11 +304,19 @@ export const EnvSchema = z
           path: ['APP_ORIGIN'],
           message: 'required with MAIL_SMTP_URL: the origin links in messages point to',
         });
-      } else if (values.NODE_ENV === 'production' && !values.APP_ORIGIN.startsWith('https:')) {
+      } else if (
+        values.NODE_ENV === 'production' &&
+        !values.APP_ORIGIN.startsWith('https:') &&
+        // The production build run on one machine (the end-to-end suite):
+        // links to a loopback origin open on that machine only, and browsers
+        // treat it as a secure context.
+        !isLoopbackHost(new URL(values.APP_ORIGIN).hostname)
+      ) {
         ctx.addIssue({
           code: 'custom',
           path: ['APP_ORIGIN'],
-          message: 'must be https in production: links in messages carry one-time tokens',
+          message:
+            'must be https in production (http only on loopback): links in messages carry one-time tokens',
         });
       }
     } else if (values.MAIL_FROM !== undefined) {

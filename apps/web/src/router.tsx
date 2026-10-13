@@ -1,6 +1,7 @@
 import { createRoutesFromElements, Route } from 'react-router';
 import { GuestOnly, RequireAuth, RequireRole } from './auth';
 import { AppLayout } from './components/AppLayout';
+import { LoadingScreen } from './components/LoadingScreen';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { HomePage } from './pages/HomePage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -11,15 +12,40 @@ import { SignInPage } from './pages/SignInPage';
 // under the guard it needs; the matching API routes need @Auth() as well, and
 // its pattern goes in the API's Web Vitals pages (WEB_VITALS_ROUTES, in
 // apps/api/src/telemetry/web-vitals.schemas.ts: webVitalsReporter.spec.ts
-// fails until it is there).
+// fails until it is there). Screens few visits need are loaded when opened
+// (lazy): the bundle every visit downloads stays within its budget
+// (docs/testing.md#performance-budget).
 export const routes = createRoutesFromElements(
-  <Route errorElement={<RouteErrorPage />}>
+  <Route errorElement={<RouteErrorPage />} hydrateFallbackElement={<LoadingScreen />}>
     <Route element={<GuestOnly />}>
       <Route path="sign-in" element={<SignInPage />} />
+      <Route
+        path="forgot-password"
+        lazy={() =>
+          import('./pages/ForgotPasswordPage').then(({ ForgotPasswordPage }) => ({
+            Component: ForgotPasswordPage,
+          }))
+        }
+      />
     </Route>
+    {/* Signed in or not: a person may open a reset link in any state. */}
+    <Route
+      path="reset-password"
+      lazy={() =>
+        import('./pages/ResetPasswordPage').then(({ ResetPasswordPage }) => ({
+          Component: ResetPasswordPage,
+        }))
+      }
+    />
     <Route element={<RequireAuth />}>
       <Route element={<AppLayout />}>
         <Route index element={<HomePage />} />
+        <Route
+          path="account"
+          lazy={() =>
+            import('./pages/AccountPage').then(({ AccountPage }) => ({ Component: AccountPage }))
+          }
+        />
         <Route element={<RequireRole role="admin" />}>
           <Route path="admin/users" element={<AdminUsersPage />} />
         </Route>

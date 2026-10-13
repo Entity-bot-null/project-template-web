@@ -24,9 +24,12 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 
 ## Authentication and tokens
 
-- **Access token:** JWT, HS256, 15 minutes, claims `{ sub, role }` only, held **in memory** by the
-  web app (`web/src/auth/session.ts`), never in `localStorage`/`sessionStorage`. Verified offline
-  (signature, expiry, claims shape), with the algorithm pinned.
+- **Access token:** JWT, HS256, 15 minutes, claims `{ sub, role, sv }` only, held **in memory** by
+  the web app (`web/src/auth/session.ts`), never in `localStorage`/`sessionStorage`. Verified
+  offline (signature, expiry, claims shape), with the algorithm pinned, then `sv` against the
+  account's `security_version` (one primary-key lookup per request): a password change or reset
+  increments it, so every access token issued before is refused at once, not when it expires
+  (ADR [0004](adr/0004-security-version-in-access-tokens.md)).
 - **Refresh token:** 32 random bytes in an **httpOnly** cookie, `SameSite=Strict` (configurable).
   The database keeps only its SHA-256. In production the cookie is `__Host-refresh_token`: the
   prefix makes browsers accept it only `Secure`, without `Domain` and on `Path=/`, so a site on a
@@ -69,10 +72,70 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   database failover does not sign anyone out.
 - **`has_session` cookie:** readable, no secret; tells the app whether a boot refresh is worth
   trying.
-- **Not included (REQUIERE CONFIGURACIÓN per product):** sign-up, email verification, password
-  reset, MFA, SSO, account lockout per user, session listing. When adding passwords set by users,
-  follow OWASP ASVS / NIST SP 800-63B: minimum 12 to 15 characters, no composition rules, check
-  against breached-password lists, keep `PASSWORD_MAX_LENGTH`.
+- **Not included (REQUIERE CONFIGURACIÓN per product):** sign-up, email verification, MFA, SSO,
+  account lockout per user, session listing, account deletion.
+
+### Passwords
+
+The policy of every password a person sets (`auth/password-policy.ts`; `user:create`, password
+reset and change), following NIST SP 800-63B-4 and the password requirements of OWASP ASVS 5.0
+(chapter V6). The template is designed against them; it is not certified, and a project that
+needs a compliance claim verifies it itself.
+
+- **Length:** 15 to 200 characters, counted as code points (an emoji is one), never truncated. A request
+  carries at most 400 UTF-16 units of password (200 characters outside the basic plane): a
+  longer field is refused before any hashing. No composition
+  rules (no "one digit, one symbol"), no periodic expiry; spaces and any Unicode are allowed.
+- **Normalized** to NFKC before hashing and comparing, so the same passphrase typed on another
+  keyboard or device matches. Hashes made before normalization still verify (the raw form is
+  tried when it differs), so no existing password stops working.
+- **Refused:** the 16,050 passwords of 15 characters or more that are most used (SecLists, MIT,
+  checked locally: a password never leaves the API, `scripts/build-common-passwords.mjs` pins the
+  source by commit and SHA-256); repeated characters, sequences (`abcdef...`) and repeated blocks;
+  the account's email address, its local part or a word of the name (4 characters or more). The
+  web app checks the same rules for quick feedback, except the list, which only the API holds.
+- **Argon2id** (19 MiB, 2 passes, parallelism 1: OWASP's minimum configuration), unchanged. Sign-in hashes once whether the
+  account exists or not (a dummy hash), so timing does not reveal accounts.
+- **Show/hide:** every password field has a button to show what was typed (a real button,
+  keyboard-reachable, `aria-pressed`), so a long passphrase can be checked before submitting.
+
+### Password recovery and change
+
+- **Asking for a link** (`POST /api/auth/password-resets`, `auth/password-reset.service.ts`):
+  answers 204 at once, the same for any address, before looking it up; the lookup and the queueing
+  run after the answer, so neither the body, the status nor the timing tells whether an account
+  exists. Limits: 5 requests per 15 minutes per IP, and per address one message a minute and
+  `MAIL_DAILY_LIMIT_PER_ADDRESS` a day (shared by every instance, [Email](#email)); an address
+  differing only in letter case or spaces is the same address. 503 when email is off, and
+  `GET /api/auth/capabilities` tells the web app not to offer it.
+- **The token** (`auth/account-tokens.ts`): 256 random bits, minted when the message is sent; the
+  database keeps only its SHA-256, with its purpose, account, the address it was sent to and the
+  account's `security_version`. Valid for 30 minutes and once; a new link replaces the earlier
+  unused ones; a credential change ends every outstanding one. Expired and used tokens are swept
+  after a day.
+- **The link** is `APP_ORIGIN/reset-password#token=...` (never built from a request's Host). The
+  token travels after `#`, which browsers never send to a server or in a `Referer`; the page reads
+  it, removes it from the address bar and the history at once (`replace`), keeps it in memory only
+  (never browser storage) and drops it once used. Opening the link changes nothing: only the
+  form's submit spends it, so a mail scanner or a preview that fetches it does no harm. The web
+  server sends `Referrer-Policy: no-referrer` and a CSP without third parties on every page.
+- **Using it** (`POST /api/auth/password-resets/confirm`): the new password is checked first (a
+  refused one keeps the link working); then one transaction, under the account's row lock, locks
+  the token row (`FOR UPDATE`), requires it unused, unexpired, for the same account, address and
+  `security_version`, marks it used, replaces the hash, increments `security_version`, ends every
+  refresh session and other reset link, and queues a notice to the owner. Two simultaneous uses:
+  one 204, the other 404. Any failure rolls all of it back. An unusable link answers one 404
+  ("invalid or expired"), whatever the reason.
+- **Changing it while signed in** (`POST /api/account/password`, the Account page): requires the
+  current password (403 otherwise, 5 attempts per 15 minutes per IP), applies the same policy, and
+  in one transaction under the row lock refuses a change if the password changed meanwhile (409),
+  increments `security_version`, ends every session and reset link, and queues the notice. The
+  browser that asked carries on in a new session the answer brings (new cookie); every other
+  device is signed out at once.
+- **The notice** ("your password was changed", never held back by the per-address limits) says
+  when and how, and links to password recovery in case it was not the owner. It carries no token.
+- **Logs** name the account by id, never its address; tokens, passwords and links are never logged
+  (the logger also redacts credential shapes).
 
 ### Web client
 
@@ -139,10 +202,11 @@ Two layers, both required:
    [authorization.md](authorization.md).
 
 Role changes apply at the next refresh. `SessionsService.revokeAll(userId)` ends every refresh
-session at once, but an access token already issued stays valid until it expires (at most 15
-minutes): access tokens are verified offline, without a database lookup. If that window is too
-long for a project, shorten `ACCESS_TOKEN_TTL_SEC` or have `JwtAuthGuard` check a per-user token
-version (OPCIONAL, one query per request).
+session at once; an access token already issued stays valid until it expires (at most 15
+minutes) unless the account's `security_version` changes: a password change or reset increments
+it, and `JwtAuthGuard` then refuses every older access token at once. Increment it in the same
+transaction for any other change that must end access at once (a role removed, an account
+disabled).
 
 ### Route protection
 
@@ -186,7 +250,8 @@ API decides what is **allowed**. Never rely on a hidden link or a client guard a
 API: helmet defaults (CSP, HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
 CORP/COOP, no `X-Powered-By`) and `Cache-Control: no-store` on every response (they carry tokens
 and personal data). Web image: CSP, `X-Content-Type-Options`, `X-Frame-Options: DENY`,
-`Referrer-Policy`, `Permissions-Policy`, COOP (`apps/web/nginx/security-headers.conf`); hashed
+`Referrer-Policy: no-referrer` (pages are opened from one-time links), `Permissions-Policy`, COOP
+(`apps/web/nginx/security-headers.conf`); hashed
 assets cached for a year, never an error response. The CSP's `connect-src` gains exactly one origin
 when browser error tracking is configured: Sentry's ingest host, derived from `WEB_SENTRY_DSN` by
 the web server (nothing else can widen it at runtime).
@@ -384,18 +449,18 @@ OPTIONAL infrastructure ([architecture.md](architecture.md#email), ADR
 [0003](adr/0003-transactional-email-outbox.md)). Development uses Mailpit, which accepts anyone's
 mail without authentication: it is published on 127.0.0.1 only and is never part of a deployment.
 
-| Concern                | How                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified.                                                                                                                                        |
-| Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                        |
-| Links                  | Built from `APP_ORIGIN` only (required with email, https in production), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                         |
-| What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits. |
-| Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address.                                                                                                                                 |
-| Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                |
-| Abuse                  | Messages anyone can request are limited per address (one a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day), counted in PostgreSQL so every instance shares them, on top of the routes' per-IP limits. Callers answer the same whatever was queued: no account enumeration through email. Security notices are never held back.          |
-| Automatic replies      | `Auto-Submitted: auto-generated` and `X-Auto-Response-Suppress: All` on every message (RFC 3834).                                                                                                                                                                                                                                     |
-| Sender authentication  | REQUIERE CONFIGURACIÓN: SPF, DKIM and DMARC for the sending domain at the provider, before the first message; without them messages are spoofable and land in spam.                                                                                                                                                                   |
-| Retention              | Finished outbox rows (metadata: kind, status, attempts, timestamps, error category, keyed hash) are deleted after 30 days; a failed message's address is cleared after 7.                                                                                                                                                             |
+| Concern                | How                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified. The one exception is a server on the machine itself (`localhost`, `127.0.0.1`, `[::1]`: a local relay, the end-to-end suite's Mailpit): that traffic never crosses a network. |
+| Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                                                               |
+| Links                  | Built from `APP_ORIGIN` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                        |
+| What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits.                                        |
+| Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address.                                                                                                                                                                        |
+| Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                                                       |
+| Abuse                  | Messages anyone can request are limited per address (one a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day), counted in PostgreSQL so every instance shares them, on top of the routes' per-IP limits. Callers answer the same whatever was queued: no account enumeration through email. Security notices are never held back.                                                 |
+| Automatic replies      | `Auto-Submitted: auto-generated` and `X-Auto-Response-Suppress: All` on every message (RFC 3834).                                                                                                                                                                                                                                                                            |
+| Sender authentication  | REQUIERE CONFIGURACIÓN: SPF, DKIM and DMARC for the sending domain at the provider, before the first message; without them messages are spoofable and land in spam.                                                                                                                                                                                                          |
+| Retention              | Finished outbox rows (metadata: kind, status, attempts, timestamps, error category, keyed hash) are deleted after 30 days; a failed message's address is cleared after 7.                                                                                                                                                                                                    |
 
 ## Dependency vulnerabilities
 
@@ -621,15 +686,22 @@ comes from a run of `deploy.yml` on `main` (`scripts/recorded-images.mjs`). A si
 
 Accepted on purpose, each with its way out:
 
-- **Access tokens outlive a revocation** by up to 15 minutes (offline verification). Way out:
-  shorter TTL or a per-user token version check (see [Authorization](#authorization)).
+- **Access tokens outlive a session revocation** by up to 15 minutes, except a password change or
+  reset, which ends them at once (`security_version`). Way out: increment it for the other changes
+  that need that (see [Authorization](#authorization)), or a shorter TTL.
 - **Rate limits are per IP**, and per instance with the default memory store (and while a Redis
   store is unreachable). A distributed credential-stuffing attack (many addresses) is not
   stopped. Way out: `RATE_LIMIT_STORE=redis`, per-account limits, CAPTCHA or MFA.
 - **Redaction recognizes credential shapes, not all personal data**: an email or a name written
   into a log message stays readable. Way out: log ids (review rule).
-- **No MFA, no account lockout, no breached-password check**: the account lifecycle is product
-  work (see Authentication).
+- **No MFA, no account lockout**: product work (see Authentication). **No breached-password
+  service:** the policy refuses the most used passwords from a local list, so a password leaked
+  elsewhere but not common passes. Way out: a k-anonymity range check (OPCIONAL; it sends a hash
+  prefix to a third party).
+- **A password change in one tab while another tab renews its session** at that very instant can
+  leave the older cookie in the browser: that session ended on the server, so the browser asks to
+  sign in again (with the new password). The change does not take the cross-tab lock, which an
+  expired access token's renewal would wait on forever (`web/src/auth/session.ts`).
 - **A refresh response lost on the network** (the server rotated the token, the connection
   dropped before the answer arrived) looks like theft once 30 seconds have passed: the family
   ends and the user signs in again. That is the price of reuse detection (RFC 9700 accepts it);

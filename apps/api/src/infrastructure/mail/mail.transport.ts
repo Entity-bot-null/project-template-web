@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { isLoopbackHost } from '../../common/utils/loopback.js';
 import {
   SMTP_CONNECTION_TIMEOUT_MS,
   SMTP_GREETING_TIMEOUT_MS,
@@ -23,9 +24,10 @@ export function smtpSettings(smtpUrl: string, production: boolean) {
     host: url.hostname.replace(/^\[(.*)\]$/, '$1'),
     port: url.port === '' ? (secure ? 465 : 587) : Number(url.port),
     // smtps: TLS from the first byte. smtp: STARTTLS when the server offers it,
-    // and in production only then: an unencrypted server is refused.
+    // and in production only then: an unencrypted server is refused, unless
+    // it is on this machine (a loopback host), where nothing crosses a network.
     secure,
-    requireTLS: production && !secure,
+    requireTLS: production && !secure && !isLoopbackHost(url.hostname),
     ...(url.username === ''
       ? {}
       : {

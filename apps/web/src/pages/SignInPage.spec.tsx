@@ -1,15 +1,20 @@
-import { screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resetCapabilitiesForTests } from '../auth/capabilities';
 import { clearSession, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
 import { failure, ok, session, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const SIGN_IN = 'POST /api/auth/sign-in';
+const CAPABILITIES = 'GET /api/auth/capabilities';
+const routeOf = (request: Request) => `${request.method} ${new URL(request.url).pathname}`;
+const offers = (passwordReset: boolean) => () => ok({ passwordReset });
 
 beforeEach(() => {
   resetForTests();
+  resetCapabilitiesForTests();
   clearSession();
 });
 afterEach(() => {
@@ -25,17 +30,19 @@ async function submit(email: string, password: string) {
 
 describe('SignInPage', () => {
   it('checks the fields before calling the API', async () => {
-    const { fetchMock } = stubFetch({});
+    const { calls } = stubFetch({ [CAPABILITIES]: offers(false) });
     renderRoute('/sign-in');
     await submit('not-an-email', '');
     expect(screen.getByText('Enter a valid email.')).toBeInTheDocument();
     expect(screen.getByText('Enter your password.')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
-    expect(fetchMock).not.toHaveBeenCalled();
+    // What the deployment offers, asked as the page opens; no sign-in.
+    expect(calls.map(routeOf)).toEqual([CAPABILITIES]);
   });
 
   it('signs in and continues where the guard stopped the user', async () => {
     const { calls } = stubFetch({
+      [CAPABILITIES]: offers(false),
       [SIGN_IN]: () => session('token-1', member),
       'GET /api/users': () => ok({ items: [], total: 0 }),
     });
@@ -46,7 +53,7 @@ describe('SignInPage', () => {
     await screen.findByRole('heading', { name: `Welcome, ${member.name}` });
     // A member is then turned away from the admin area by its own guard.
     expect(router.state.location.pathname).toBe('/');
-    await expect(calls[0]?.json()).resolves.toEqual({
+    await expect(calls.find((call) => routeOf(call) === SIGN_IN)?.json()).resolves.toEqual({
       email: member.email,
       password: 'member-password',
     });
@@ -82,6 +89,52 @@ describe('SignInPage', () => {
     renderRoute('/sign-in');
     await submit(member.email, 'whatever');
     expect(await screen.findByRole('alert')).toHaveTextContent('Wait 42 seconds');
+  });
+});
+
+describe('the way back into an account', () => {
+  it('links to password recovery where the deployment offers it', async () => {
+    stubFetch({ [CAPABILITIES]: offers(true) });
+    renderRoute('/sign-in');
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('link', { name: 'Forgot your password?' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Forgot your password?' }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no link where email is off, or while that cannot be known', async () => {
+    const { calls } = stubFetch({ [CAPABILITIES]: offers(false) });
+    renderRoute('/sign-in');
+    await expect.poll(() => calls.length).toBe(1);
+    expect(screen.queryByRole('link', { name: 'Forgot your password?' })).toBeNull();
+  });
+
+  it('asks again on the next visit after a failed answer, never caching it', async () => {
+    let attempts = 0;
+    stubFetch({
+      [CAPABILITIES]: () => (attempts++ === 0 ? failure(503, 'unavailable') : offers(true)()),
+    });
+    const router = renderRoute('/sign-in');
+    await expect.poll(() => attempts).toBe(1);
+    expect(screen.queryByRole('link', { name: 'Forgot your password?' })).toBeNull();
+    // Visit again until the failure has settled: a page that opens while the
+    // first answer is still on its way shares it, one that opens after asks
+    // again.
+    await expect
+      .poll(async () => {
+        await act(() => router.navigate('/no/such/page'));
+        await act(() => router.navigate('/sign-in'));
+        return attempts;
+      })
+      .toBe(2);
+    expect(await screen.findByRole('link', { name: 'Forgot your password?' })).toBeInTheDocument();
+    // Remembered once it worked: no third request.
+    await act(() => router.navigate('/no/such/page'));
+    await act(() => router.navigate('/sign-in'));
+    await screen.findByRole('link', { name: 'Forgot your password?' });
+    expect(attempts).toBe(2);
   });
 });
 
