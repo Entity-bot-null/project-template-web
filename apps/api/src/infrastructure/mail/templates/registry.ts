@@ -4,6 +4,7 @@ import type { RenderedMail } from './layout.js';
 import { emailChangeConfirmationTemplate } from './email-change-confirmation.template.js';
 import { emailChangeExistingTemplate } from './email-change-existing.template.js';
 import { emailChangedTemplate } from './email-changed.template.js';
+import { invitationTemplate } from './invitation.template.js';
 import { passwordChangedTemplate } from './password-changed.template.js';
 import { passwordResetTemplate } from './password-reset.template.js';
 import { signUpConfirmationTemplate } from './sign-up-confirmation.template.js';
@@ -40,6 +41,7 @@ export const MAIL_TEMPLATE_REGISTRY: MailTemplates = {
   email_change_confirmation: emailChangeConfirmationTemplate,
   email_change_existing: emailChangeExistingTemplate,
   email_changed: emailChangedTemplate,
+  invitation: invitationTemplate,
 };
 
 /** What messages call the product: the sender's display name, else the public host. */

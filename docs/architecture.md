@@ -67,7 +67,8 @@ src/
   lifecycle/         shutdown sequence (drain, close, flush)
   auth/              sign-in, refresh rotation, logout, JWT guard, roles guard, @Auth(),
                      password policy, one-time tokens, password recovery
-  account/           the signed-in user's own account (password change)
+  account/           the signed-in user's own account (password, change of email)
+  invitations/       administrators invite people to create an account
   users/             example resource: me, admin list, owner-or-admin read
   health/            liveness and readiness probes
   prisma/            PrismaService (generated client in prisma/generated, ignored by git)
@@ -284,6 +285,9 @@ templates/password-*.ts      the reset link (token minted at send time) and the 
 templates/sign-up-*.ts       the confirmation link, and the notice to an address that has an account
 templates/email-change*.ts   the link to the new address, the notice to an address that has an account
 templates/email-changed.ts   the notice to the previous address, with the undo link (7 days)
+invitations/                 administrators invite (/api/admin/invitations), people accept
+                             (/api/auth/invitations/accept); the invitations table
+templates/invitation.ts      the invitation link (7 days)
 ```
 
 - **`users.security_version`** (ADR [0004](adr/0004-security-version-in-access-tokens.md)):
@@ -296,8 +300,8 @@ templates/email-changed.ts   the notice to the previous address, with the undo l
   confirmed (with the password chosen); only then is the `users` row created, in the transaction
   that deletes the sign-up. Nothing else in the API ever sees an unconfirmed address.
 - **Email off:** `GET /api/auth/capabilities` answers
-  `{ passwordReset: false, signUp: false, emailChange: false }` and the web app hides what needs
-  email; the reset routes answer 503 (sign-up cannot be on without
+  `{ passwordReset: false, signUp: false, emailChange: false, invitations: false }` and the web
+  app hides what needs email; the reset routes answer 503 (sign-up cannot be on without
   email: the boot refuses it). Changing the password while signed in works either
   way (the notice is then not sent).
 

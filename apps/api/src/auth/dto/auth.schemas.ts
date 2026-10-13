@@ -49,6 +49,8 @@ export const AuthCapabilitiesSchema = z.object({
   signUp: z.boolean(),
   /** Email is configured: the Account page can change the address (confirmed by a link). */
   emailChange: z.boolean(),
+  /** Email is configured: administrators can invite people to create an account. */
+  invitations: z.boolean(),
 });
 export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 
@@ -107,3 +109,12 @@ export type EmailChangeConfirmDto = z.infer<typeof EmailChangeConfirmSchema>;
 // address knew the old one): the policy is checked by the service.
 export const EmailRevertSchema = z.object({ token: ONE_TIME_TOKEN, password: newPassword });
 export type EmailRevertDto = z.infer<typeof EmailRevertSchema>;
+
+// Accepting an invitation: the person chooses their name and password (the
+// policy is checked by the service, which knows the address).
+export const InvitationAcceptSchema = z.object({
+  token: ONE_TIME_TOKEN,
+  name: z.string().trim().min(1, 'Name is required').max(100),
+  password: newPassword,
+});
+export type InvitationAcceptDto = z.infer<typeof InvitationAcceptSchema>;

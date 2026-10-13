@@ -20,8 +20,10 @@ export const WEB_VITALS_ROUTES = [
   '/confirm-sign-up',
   '/confirm-email-change',
   '/revert-email-change',
+  '/accept-invitation',
   '/account',
   '/admin/users',
+  '/admin/invitations',
   '/*',
 ] as const;
 

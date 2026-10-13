@@ -38,6 +38,8 @@ export const SIGN_UP_MAX_FAILED_ATTEMPTS = 5;
 export const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60_000;
 /** The link that undoes a change of address, sent to the previous one, works this long. */
 export const EMAIL_REVERT_TTL_MS = 7 * 24 * 60 * 60_000;
+/** An invitation's link works this long after it is sent. */
+export const INVITATION_TTL_MS = 7 * 24 * 60 * 60_000;
 
 // Per client IP: credential stuffing protection. Counted on top of the global
 // limit (RATE_LIMIT_MAX), not instead of it: both apply, and whichever runs
@@ -64,6 +66,11 @@ export const SIGN_UP_CONFIRM_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 
 // hashes a new password): this bounds the work a client can cause.
 export const EMAIL_CHANGE_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
 export const EMAIL_CHANGE_LINK_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 60 };
+// Inviting (administrators): each invitation sends a message; each address
+// also gets at most one a minute and a few a day.
+export const INVITATION_RATE_LIMIT: RouteLimit = { limit: 30, ttlSec: 15 * 60 };
+// Accepting an invitation hashes the chosen password: this bounds the work.
+export const INVITATION_ACCEPT_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 60 };
 
 // In production the refresh cookie carries the __Host- prefix: browsers then
 // accept it only when Secure, without Domain and on Path=/, so a site on a

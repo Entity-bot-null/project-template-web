@@ -12,7 +12,12 @@ export function AppLayout() {
           <NavLink to="/" end>
             Home
           </NavLink>
-          {auth.user.role === 'admin' && <NavLink to="/admin/users">Users</NavLink>}
+          {auth.user.role === 'admin' && (
+            <>
+              <NavLink to="/admin/users">Users</NavLink>
+              <NavLink to="/admin/invitations">Invitations</NavLink>
+            </>
+          )}
           <NavLink to="/account">Account</NavLink>
         </nav>
         <div className="layout-account">

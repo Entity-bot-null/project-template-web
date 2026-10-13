@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import {
+  acceptInvitation,
   changePassword,
   confirmSignUp,
   getState,
@@ -16,10 +17,19 @@ export type Auth = AuthState & {
   retrySignOut: typeof retrySignOut;
   changePassword: typeof changePassword;
   confirmSignUp: typeof confirmSignUp;
+  acceptInvitation: typeof acceptInvitation;
 };
 
 /** Reactive view of the session store: status, user and the actions. */
 export function useAuth(): Auth {
   const state = useSyncExternalStore(subscribe, getState, getState);
-  return { ...state, signIn, signOut, retrySignOut, changePassword, confirmSignUp };
+  return {
+    ...state,
+    signIn,
+    signOut,
+    retrySignOut,
+    changePassword,
+    confirmSignUp,
+    acceptInvitation,
+  };
 }
