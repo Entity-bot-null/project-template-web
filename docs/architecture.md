@@ -281,7 +281,8 @@ account/                     the signed-in user's own account: POST /api/account
 templates/password-*.ts      the reset link (token minted at send time) and the changed notice
 ```
 
-- **`users.security_version`:** incremented by every credential change, in the same transaction;
+- **`users.security_version`** (ADR [0004](adr/0004-security-version-in-access-tokens.md)):
+  incremented by every credential change, in the same transaction;
   access tokens carry it (`sv`) and `JwtAuthGuard` compares it on every request, so the change
   ends them at once. One-time tokens record it too: a token minted before a change no longer works.
 - **Lock order:** the account's row (`lockUser`), then the token's row: the same order as every

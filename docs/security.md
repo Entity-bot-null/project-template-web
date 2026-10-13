@@ -28,7 +28,8 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   the web app (`web/src/auth/session.ts`), never in `localStorage`/`sessionStorage`. Verified
   offline (signature, expiry, claims shape), with the algorithm pinned, then `sv` against the
   account's `security_version` (one primary-key lookup per request): a password change or reset
-  increments it, so every access token issued before is refused at once, not when it expires.
+  increments it, so every access token issued before is refused at once, not when it expires
+  (ADR [0004](adr/0004-security-version-in-access-tokens.md)).
 - **Refresh token:** 32 random bytes in an **httpOnly** cookie, `SameSite=Strict` (configurable).
   The database keeps only its SHA-256. In production the cookie is `__Host-refresh_token`: the
   prefix makes browsers accept it only `Secure`, without `Domain` and on `Path=/`, so a site on a
