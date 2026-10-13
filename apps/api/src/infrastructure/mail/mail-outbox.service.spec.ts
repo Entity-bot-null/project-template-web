@@ -4,7 +4,7 @@ import type { Prisma } from '../../prisma/generated/client.js';
 import { MailOutboxService } from './mail-outbox.service.js';
 import { deriveRecipientKey, recipientHash } from './mail.recipient.js';
 import type { MailOptions } from './mail.types.js';
-import type { MailTemplate } from './templates/registry.js';
+import type { MailTemplate, MailTemplates } from './templates/registry.js';
 
 const options: MailOptions = {
   smtpUrl: 'smtp://localhost:1035',
@@ -20,6 +20,13 @@ const template = (limited: boolean): MailTemplate => ({
   limited,
   ttlMs: 30 * 60_000,
   compose: () => Promise.resolve(null),
+});
+
+/** Every kind with the same template; the specs queue `test` messages. */
+const registry = (limited: boolean): MailTemplates => ({
+  test: template(limited),
+  password_reset: template(limited),
+  password_changed: template(limited),
 });
 
 function txWith({ minute = 0, day = 0, created = 1 } = {}) {
@@ -47,20 +54,11 @@ afterEach(() => {
 });
 
 describe('MailOutboxService', () => {
-  const limited = new MailOutboxService(options, {
-    test: template(true),
-  });
-  const unlimited = new MailOutboxService(options, {
-    test: template(false),
-  });
+  const limited = new MailOutboxService(options, registry(true));
+  const unlimited = new MailOutboxService(options, registry(false));
 
   it('queues nothing when email is off: no row, no token to deliver later', async () => {
-    const off = new MailOutboxService(
-      { ...options, smtpUrl: undefined },
-      {
-        test: template(true),
-      },
-    );
+    const off = new MailOutboxService({ ...options, smtpUrl: undefined }, registry(true));
     const { tx, client } = txWith();
     expect(off.enabled).toBe(false);
     await expect(off.enqueue(client, { kind: 'test', to: 'ada@example.test' })).resolves.toBe(
@@ -143,9 +141,7 @@ describe('MailOutboxService', () => {
   });
 
   it('wakes the worker of this process after a commit, and does nothing without one', () => {
-    const outbox = new MailOutboxService(options, {
-      test: template(false),
-    });
+    const outbox = new MailOutboxService(options, registry(false));
     outbox.notifyQueued();
     const listener = vi.fn();
     outbox.onQueued(listener);

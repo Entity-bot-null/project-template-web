@@ -278,8 +278,27 @@ describe('EnvSchema', () => {
 
     it('requires an https public origin in production: links carry one-time tokens', () => {
       const productionMail = { ...production, ...mail, NODE_ENV: 'production' };
-      expect(issuePaths(productionMail)).toEqual(['APP_ORIGIN']);
+      for (const origin of [
+        'http://app.acme.test',
+        'http://127.0.0.2:4173',
+        'http://a.localhost',
+      ]) {
+        expect(issuePaths({ ...productionMail, APP_ORIGIN: origin }), origin).toEqual([
+          'APP_ORIGIN',
+        ]);
+      }
       expect(issuePaths({ ...productionMail, APP_ORIGIN: 'https://app.acme.test' })).toEqual([]);
+    });
+
+    it('lets the production build run on one machine use an http loopback origin', () => {
+      const productionMail = { ...production, ...mail, NODE_ENV: 'production' };
+      for (const origin of [
+        'http://localhost:4173',
+        'http://127.0.0.1:4173',
+        'http://[::1]:4173',
+      ]) {
+        expect(issuePaths({ ...productionMail, APP_ORIGIN: origin }), origin).toEqual([]);
+      }
     });
 
     it('accepts only smtp:// or smtps:// with a host and nothing after it', () => {

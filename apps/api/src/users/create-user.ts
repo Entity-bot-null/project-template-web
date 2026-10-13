@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { normalizeEmail, PASSWORD_MAX_LENGTH } from '../auth/auth.constants.js';
+import { normalizeEmail, PASSWORD_MAX_INPUT_LENGTH } from '../auth/auth.constants.js';
 import { hashPassword } from '../auth/password.js';
+import { passwordProblem } from '../auth/password-policy.js';
 import { ROLES } from '../common/types/request-user.js';
 import type { PrismaClient } from '../prisma/generated/client.js';
 
@@ -11,14 +12,21 @@ import type { PrismaClient } from '../prisma/generated/client.js';
 // from the command line or the environment, where it would end up in shell
 // history and process listings.
 
-export const PASSWORD_MIN_LENGTH = 12;
-
-export const NewUserSchema = z.object({
-  email: z.string().trim().max(254).pipe(z.email()).transform(normalizeEmail),
-  name: z.string().trim().min(1).max(100),
-  role: z.enum(ROLES),
-  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
-});
+// The password follows the same policy as every password a person chooses
+// (auth/password-policy.ts): 15 characters at least, not a common one, not
+// the account's email or name.
+export const NewUserSchema = z
+  .object({
+    email: z.string().trim().max(254).pipe(z.email()).transform(normalizeEmail),
+    name: z.string().trim().min(1).max(100),
+    role: z.enum(ROLES),
+    password: z.string().max(PASSWORD_MAX_INPUT_LENGTH),
+  })
+  .superRefine(({ email, name, password }, ctx) => {
+    const problem = passwordProblem(password, { email, name });
+    if (problem !== undefined)
+      ctx.addIssue({ code: 'custom', path: ['password'], message: problem });
+  });
 
 export interface CreatedUser {
   id: string;

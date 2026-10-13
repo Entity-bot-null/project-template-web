@@ -244,6 +244,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: tool-images
+    env:
+      # Password recovery sends real messages; the specs read their links from
+      # this throwaway Mailpit (a missing one fails the suite in CI).
+      MAIL_TEST_SMTP_URL: smtp://localhost:1025
+      MAILPIT_TEST_URL: http://localhost:8025
     services:
       postgres:
         # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
@@ -256,6 +261,19 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      mailpit:
+        # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
+        image: ${{ needs.tool-images.outputs.mailpit }} # zizmor: ignore[unpinned-images]
+        env:
+          MP_SMTP_DISABLE_RDNS: 'true'
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd "/mailpit readyz"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20

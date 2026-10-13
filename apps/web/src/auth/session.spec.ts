@@ -12,6 +12,7 @@ import {
 } from '../test/http';
 import {
   boot,
+  changePassword,
   clearSession,
   getAccessToken,
   getState,
@@ -636,5 +637,63 @@ describe('sign-in answered with something that is not a session', () => {
     expect(result.ok).toBe(false);
     expect(getState().status).toBe('anonymous');
     expect(getAccessToken()).toBeNull();
+  });
+});
+
+describe('changePassword', () => {
+  const CHANGE = 'POST /api/account/password';
+
+  it('waits for a rotation in flight, then stores the session the change answers with', async () => {
+    const rotation = deferred<Response>();
+    const { calls } = stubFetch({
+      [REFRESH]: () => rotation.promise,
+      [CHANGE]: () => session('token-3'),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const renewed = refresh();
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await Promise.resolve();
+    // Its cookie would otherwise land on top of the new session's.
+    expect(calls.map(routeOf)).toEqual([REFRESH]);
+
+    rotation.resolve(session('token-2').clone());
+    await renewed;
+    const result = await changed;
+    expect(result.ok).toBe(true);
+    expect(calls.map(routeOf)).toEqual([REFRESH, CHANGE]);
+    expect(calls[1]?.headers.get('Authorization')).toBe('Bearer token-2');
+    expect(getAccessToken()).toBe('token-3');
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
+  });
+
+  it('does not let a refresh started meanwhile put the ended session back', async () => {
+    const change = deferred<Response>();
+    const late = deferred<Response>();
+    const { calls } = stubFetch({ [CHANGE]: () => change.promise, [REFRESH]: () => late.promise });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    const renewed = refresh();
+    change.resolve(session('token-new'));
+    await changed;
+    late.resolve(session('token-old'));
+    await renewed;
+    expect(getAccessToken()).toBe('token-new');
+  });
+
+  it('keeps the session on a refusal, and never stores an answer that is not a session', async () => {
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    stubFetch({ [CHANGE]: () => failure(403, 'The current password is wrong') });
+    const refused = await changePassword('wrong', 'violet harbour lantern 7');
+    expect(refused).toEqual({
+      ok: false,
+      failure: { status: 403, message: 'The current password is wrong' },
+    });
+
+    stubFetch({ [CHANGE]: () => ok({ unexpected: true }) });
+    const odd = await changePassword('old password', 'violet harbour lantern 7');
+    expect(odd.ok ? null : odd.failure.status).toBe(502);
+    expect(getAccessToken()).toBe('token-1');
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
   });
 });

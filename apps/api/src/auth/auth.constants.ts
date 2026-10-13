@@ -15,14 +15,32 @@ export const REFRESH_FAMILY_MAX_AGE_SEC = 90 * 24 * 60 * 60;
 /** Stale sessions are swept at boot and on this interval. */
 export const SESSION_SWEEP_INTERVAL_SEC = 60 * 60;
 
-/** argon2 has no practical input limit; this bounds the work per request. */
+/** argon2 has no practical input limit; this bounds the work per request. In characters (code points). */
 export const PASSWORD_MAX_LENGTH = 200;
+/**
+ * The same bound as a request carries it, in UTF-16 units (a JSON string's
+ * length): two per character at most, so a password of PASSWORD_MAX_LENGTH
+ * characters always fits, whatever its characters.
+ */
+export const PASSWORD_MAX_INPUT_LENGTH = PASSWORD_MAX_LENGTH * 2;
+
+/** A password reset link works this long after the message is sent. */
+export const PASSWORD_RESET_TTL_MS = 30 * 60_000;
 
 // Per client IP: credential stuffing protection. Counted on top of the global
 // limit (RATE_LIMIT_MAX), not instead of it: both apply, and whichever runs
 // out first blocks (@RouteRateLimit, common/guards/rate-limit.guard.ts).
 export const SIGN_IN_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 60 };
 export const REFRESH_RATE_LIMIT: RouteLimit = { limit: 30, ttlSec: 60 };
+// Asking for a reset link, per IP; each address also gets at most one
+// message a minute and MAIL_DAILY_LIMIT_PER_ADDRESS a day (the outbox).
+export const PASSWORD_RESET_REQUEST_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
+// Using a reset link: a token is 256 random bits, nothing to guess; this
+// bounds the hashing work a client can cause.
+export const PASSWORD_RESET_CONFIRM_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 60 };
+// Changing the password while signed in: each attempt checks the current
+// password, so it is limited like a sign-in.
+export const PASSWORD_CHANGE_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
 
 // In production the refresh cookie carries the __Host- prefix: browsers then
 // accept it only when Secure, without Domain and on Path=/, so a site on a

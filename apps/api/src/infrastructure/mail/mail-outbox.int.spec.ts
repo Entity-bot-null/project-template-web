@@ -276,7 +276,7 @@ describe.skipIf(skipWithoutMailpit)('mail outbox (PostgreSQL + Mailpit)', () => 
   });
 
   describe('per-address limits', () => {
-    const limited = { test: { ...testTemplate, limited: true } };
+    const limited = { ...MAIL_TEMPLATE_REGISTRY, test: { ...testTemplate, limited: true } };
 
     it('holds back a second message within a minute, across instances and concurrent requests', async () => {
       const a = await instance({}, limited);

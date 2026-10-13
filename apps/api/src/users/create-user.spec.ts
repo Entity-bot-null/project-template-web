@@ -44,6 +44,12 @@ describe('createUser', () => {
 
   it.each([
     ['a short password', { password: 'short' }, 'password'],
+    ['one of the most used passwords', { password: 'correcthorsebatterystaple' }, 'password'],
+    [
+      'a password with the email in it',
+      { password: 'the owner of this long passphrase' },
+      'password',
+    ],
     ['an invalid email', { email: 'not-an-email' }, 'email'],
     ['an unknown role', { role: 'root' }, 'role'],
     ['an empty name', { name: '   ' }, 'name'],

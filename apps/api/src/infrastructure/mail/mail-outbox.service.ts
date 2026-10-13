@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { normalizeEmail } from '../../auth/auth.constants.js';
 import type { MailKind, Prisma } from '../../prisma/generated/client.js';
 import { recordMailSuppressed } from '../../observability/metrics.js';
+import { currentRequestId } from '../../observability/request-context.js';
 import { MAIL_OPTIONS, MAIL_PER_ADDRESS_PER_MINUTE, MAIL_TEMPLATES } from './mail.constants.js';
 import { recipientHash } from './mail.recipient.js';
 import type { MailOptions } from './mail.types.js';
@@ -17,7 +18,7 @@ export interface EnqueueInput {
   payload?: Record<string, string>;
   /** Makes a second enqueue of the same message a no-op (a retried request). */
   dedupeKey?: string;
-  /** The request's id, to follow the message through the logs. */
+  /** The request's id, to follow the message through the logs (default: the current request's). */
   requestId?: string;
 }
 
@@ -104,7 +105,7 @@ export class MailOutboxService {
           payload: input.payload ?? {},
           dedupeKey: input.dedupeKey ?? null,
           expiresAt: new Date(now + template.ttlMs),
-          requestId: input.requestId ?? null,
+          requestId: input.requestId ?? currentRequestId() ?? null,
         },
       ],
       skipDuplicates: true,

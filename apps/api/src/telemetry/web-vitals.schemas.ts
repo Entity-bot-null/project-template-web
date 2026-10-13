@@ -11,7 +11,15 @@ import { z } from 'zod';
  * reaches the metrics. apps/web/src/monitoring/webVitalsReporter.spec.ts fails
  * when a route of the app is missing here: add it, then run `pnpm contract`.
  */
-export const WEB_VITALS_ROUTES = ['/', '/sign-in', '/admin/users', '/*'] as const;
+export const WEB_VITALS_ROUTES = [
+  '/',
+  '/sign-in',
+  '/forgot-password',
+  '/reset-password',
+  '/account',
+  '/admin/users',
+  '/*',
+] as const;
 
 /** Navigation types as the web-vitals library names them. */
 export const NAVIGATION_TYPES = [

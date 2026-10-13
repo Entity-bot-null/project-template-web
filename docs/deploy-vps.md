@@ -314,7 +314,7 @@ password read from standard input so it never appears in the shell history or th
 
 ```
 cd /srv/app
-read -rs PASSWORD          # type the password (12 characters or more), then Enter
+read -rs PASSWORD          # type the password (15 characters or more), then Enter
 printf '%s' "$PASSWORD" | docker compose --env-file server.env --env-file release.env \
   run --rm -T api node dist/users/create-user.cli.js \
   --email owner@your-company.com --name "Owner" --role admin

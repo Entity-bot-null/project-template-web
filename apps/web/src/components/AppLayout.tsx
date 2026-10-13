@@ -13,6 +13,7 @@ export function AppLayout() {
             Home
           </NavLink>
           {auth.user.role === 'admin' && <NavLink to="/admin/users">Users</NavLink>}
+          <NavLink to="/account">Account</NavLink>
         </nav>
         <div className="layout-account">
           <span>{auth.user.email}</span>

@@ -13,7 +13,11 @@ const USER = {
   name: 'User',
   role: 'member' as const,
 };
-const REFRESH = { token: 'refresh-token', expiresAt: new Date('2030-01-01T00:00:00Z') };
+const REFRESH = {
+  token: 'refresh-token',
+  expiresAt: new Date('2030-01-01T00:00:00Z'),
+  securityVersion: 3,
+};
 const jwt = new JwtService({ secret: 'spec-only-secret-not-for-real-use-'.padEnd(64, '0') });
 
 let passwordHash: string;
@@ -25,7 +29,7 @@ function setup(found: (typeof USER & { passwordHash: string }) | null) {
   const findUnique = vi.fn().mockResolvedValue(found);
   const sessions = {
     create: vi.fn().mockResolvedValue(REFRESH),
-    rotate: vi.fn().mockResolvedValue({ user: USER, session: REFRESH }),
+    rotate: vi.fn().mockResolvedValue({ user: USER, securityVersion: 5, session: REFRESH }),
     retire: vi.fn().mockResolvedValue(undefined),
   };
   const prisma = { user: { findUnique } } as unknown as PrismaService;
@@ -55,7 +59,8 @@ describe('AuthService', () => {
     expect(result.session).toMatchObject({ expiresIn: ACCESS_TOKEN_TTL_SEC, user: USER });
     expect(result.session.user).not.toHaveProperty('passwordHash');
     const claims = await jwt.verifyAsync<Record<string, unknown>>(result.session.accessToken);
-    expect(claims).toMatchObject({ sub: USER.id, role: 'member' });
+    // sv: the version SessionsService read under the user's lock.
+    expect(claims).toMatchObject({ sub: USER.id, role: 'member', sv: 3 });
   });
 
   it('ends the session this browser already had before starting a new one', async () => {
@@ -102,6 +107,7 @@ describe('AuthService', () => {
     expect(result.refresh).toBe(REFRESH);
     await expect(jwt.verifyAsync(result.session.accessToken)).resolves.toMatchObject({
       sub: USER.id,
+      sv: 5,
     });
   });
 
