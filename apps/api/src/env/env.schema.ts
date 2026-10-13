@@ -6,10 +6,13 @@ export const LOG_LEVELS = ['fatal', 'error', 'warn', 'log', 'debug', 'verbose'] 
 /** 32 random bytes as hex: what `openssl rand -hex 32` prints. */
 export const MIN_SECRET_LENGTH = 64;
 
+// z.url() runs the refinement even on a value it rejected: parsing
+// defensively reports a malformed URL as invalid instead of throwing (a
+// TypeError from new URL() would stop the boot with the value in its message).
 const origin = z
   .url({ protocol: /^https?$/ })
   .refine(
-    (value) => new URL(value).origin === value,
+    (value) => !URL.canParse(value) || new URL(value).origin === value,
     'must be an origin: scheme://host[:port], without path or trailing slash',
   );
 
@@ -60,6 +63,44 @@ const label = z
   .regex(/^[a-z][a-z0-9-]{0,31}$/, 'lowercase letters, digits and "-", starting with a letter');
 
 const redisUrl = z.url({ protocol: /^rediss?$/ });
+
+// smtp://[user:password@]host[:port] (STARTTLS, port 587 by default) or
+// smtps://... (TLS from the first byte, port 465 by default). Credentials are
+// percent-encoded, as in any URL.
+// (Parsed defensively, like origin above.)
+const smtpUrl = z
+  .url({ protocol: /^smtps?$/ })
+  .refine(
+    (value) => !URL.canParse(value) || new URL(value).hostname !== '',
+    'must name a host: smtp://host:587',
+  )
+  .refine((value) => {
+    if (!URL.canParse(value)) return true;
+    const { pathname, search, hash } = new URL(value);
+    return (pathname === '' || pathname === '/') && search === '' && hash === '';
+  }, 'must be scheme://[user:password@]host[:port], without a path, query or fragment');
+
+// "Name <address>" or a bare address: what every message carries as From.
+// Parsed here so a malformed value stops the boot instead of every message
+// being refused by the server; no quotes, angle brackets, commas or line
+// breaks in the name (no header can be injected through it).
+const MAIL_FROM = /^(?:(?<name>[^"<>,;\r\n\\]{1,100}?)\s*<(?<named>[^<>\s]+)>|(?<bare>[^<>\s]+))$/;
+const mailFrom = z
+  .string()
+  .trim()
+  .transform((value, ctx) => {
+    const groups = MAIL_FROM.exec(value)?.groups;
+    const address = groups?.named ?? groups?.bare;
+    if (address === undefined || !z.email().safeParse(address).success) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'must be "Name <address@domain>" or address@domain',
+      });
+      return z.NEVER;
+    }
+    const name = groups?.name?.trim();
+    return { address, ...(name ? { name } : {}) };
+  });
 
 // Every variable the API reads, with its type, default and rules. The schema
 // lives apart from env.ts so it can be unit tested: env.ts parses
@@ -190,6 +231,23 @@ export const EnvSchema = z
     RATE_LIMIT_STORE: z.enum(['memory', 'redis']).default('memory'),
     // Where cache entries live (docs/architecture.md#cache).
     CACHE_STORE: z.enum(['memory', 'redis']).default('memory'),
+
+    // --- Email, OPTIONAL (docs/architecture.md#email) ---------------------
+    // The SMTP server messages are sent through. Unset: email is off (the
+    // features that need it are unavailable, nothing is queued). Locally,
+    // Mailpit: smtp://localhost:1035. In production the connection must be
+    // encrypted: smtps://, or smtp:// with STARTTLS required (a server
+    // without it, like Mailpit, is refused).
+    MAIL_SMTP_URL: optional(smtpUrl),
+    // The From of every message; required with MAIL_SMTP_URL.
+    MAIL_FROM: optional(mailFrom),
+    // Delivery attempts per message (exponential backoff with jitter between
+    // them) before it is marked failed.
+    MAIL_MAX_ATTEMPTS: emptyAsUnset(z.coerce.number().int().min(1).max(50).default(8)),
+    // Messages one address may get per day from the requests anyone can make
+    // (a password reset, a confirmation); at most one a minute besides.
+    // Security notices about an account are never held back.
+    MAIL_DAILY_LIMIT_PER_ADDRESS: emptyAsUnset(z.coerce.number().int().min(1).max(100).default(10)),
   })
   .superRefine((values, ctx) => {
     // Browsers drop SameSite=None cookies that are not Secure, and cookies
@@ -227,6 +285,32 @@ export const EnvSchema = z
       if (values.REDIS_REQUIRED) {
         ctx.addIssue({ code: 'custom', path: ['REDIS_REQUIRED'], message: 'requires REDIS_URL' });
       }
+    }
+    // Email needs a sender, and the public origin its links point to: never
+    // the Host of a request, which a client chooses (docs/security.md#email).
+    if (values.MAIL_SMTP_URL !== undefined) {
+      if (values.MAIL_FROM === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MAIL_FROM'],
+          message: 'required with MAIL_SMTP_URL',
+        });
+      }
+      if (values.APP_ORIGIN === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['APP_ORIGIN'],
+          message: 'required with MAIL_SMTP_URL: the origin links in messages point to',
+        });
+      } else if (values.NODE_ENV === 'production' && !values.APP_ORIGIN.startsWith('https:')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['APP_ORIGIN'],
+          message: 'must be https in production: links in messages carry one-time tokens',
+        });
+      }
+    } else if (values.MAIL_FROM !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['MAIL_FROM'], message: 'requires MAIL_SMTP_URL' });
     }
     // Error reports leave the network: encrypted in production.
     if (values.NODE_ENV === 'production' && values.SENTRY_DSN?.startsWith('http:') === true) {

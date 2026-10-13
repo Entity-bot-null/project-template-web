@@ -24,7 +24,7 @@ env:
   TOOL_IMAGE_MIRROR: mirror.gcr.io
 
 jobs:
-  # The pinned PostgreSQL and Redis images of .github/tool-images/Dockerfile
+  # The pinned PostgreSQL, Redis and Mailpit images of .github/tool-images/Dockerfile
   # (updated by Dependabot, tag and digest), for the service containers below,
   # which cannot read a file themselves: the mirror's copy, by the same
   # digest, when the mirror has it (a service container cannot fall back to
@@ -36,6 +36,7 @@ jobs:
     outputs:
       postgres: ${{ steps.images.outputs.postgres }}
       redis: ${{ steps.images.outputs.redis }}
+      mailpit: ${{ steps.images.outputs.mailpit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,6 +51,7 @@ jobs:
           {
             echo "postgres=$(node scripts/tool-image.mjs --mirrored postgres)"
             echo "redis=$(node scripts/tool-image.mjs --mirrored redis)"
+            echo "mailpit=$(node scripts/tool-image.mjs --mirrored mailpit)"
           } >> "$GITHUB_OUTPUT"
 
   static:
@@ -144,14 +146,17 @@ jobs:
           retention-days: 14
 
   integration:
-    name: Integration tests (API + PostgreSQL + Redis)
+    name: Integration tests (API + PostgreSQL + Redis + Mailpit)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: tool-images
     env:
-      # The Redis-backed adapters' specs run against this throwaway server;
-      # in CI a missing one fails them instead of skipping them.
+      # The Redis-backed adapters' specs and the mail outbox's run against
+      # these throwaway servers; in CI a missing one fails them instead of
+      # skipping them.
       REDIS_TEST_URL: redis://localhost:6379
+      MAIL_TEST_SMTP_URL: smtp://localhost:1025
+      MAILPIT_TEST_URL: http://localhost:8025
     services:
       postgres:
         # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
@@ -174,6 +179,21 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      mailpit:
+        # Digest-pinned: scripts/tool-image.mjs refuses a reference without one.
+        image: ${{ needs.tool-images.outputs.mailpit }} # zizmor: ignore[unpinned-images]
+        env:
+          # Lets the outbox specs make it refuse messages (451, 550) on demand.
+          MP_ENABLE_CHAOS: 'true'
+          MP_SMTP_DISABLE_RDNS: 'true'
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd "/mailpit readyz"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20

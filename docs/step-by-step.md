@@ -256,9 +256,12 @@ pnpm dev
 | sign out, sign in as `member@example.com` / `member-password` | the app as Member, without admin screens |
 | http://localhost:3000/api/docs                                | the API documentation (Swagger)          |
 | http://127.0.0.1:3000/api/health/ready                        | a JSON answer with `"status":"ok"`       |
+| http://localhost:8035                                         | Mailpit, where the app's email lands     |
 
 The terminal shows the API's first line:
-`Starting release unversioned in development: … error tracking off, Redis off`.
+`Starting release unversioned in development: … error tracking off, Redis off, email on`, and a
+box with these addresses under the logs. `pnpm --filter api mail test --to you@example.test`
+queues a test message: it appears in Mailpit within seconds.
 
 Stop with `Ctrl+C`. Tomorrow, `pnpm dev` is enough.
 
@@ -672,6 +675,14 @@ with `?sslmode=require&uselibpqcompat=true` instead (the Terraform outputs alrea
 would otherwise refuse the certificate (a certificate error such as
 `self-signed certificate in certificate chain`,
 [deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)).
+
+**Email** (optional; without it the app runs, and features that need email are unavailable): in
+`api.env`, `MAIL_SMTP_URL=smtps://<user>:<password, percent-encoded>@<provider host>:465` and
+`MAIL_FROM="Acme <no-reply@acme.com>"` from your email provider (Amazon SES, Postmark, Resend,
+Brevo...), and at the provider, SPF, DKIM and DMARC for `acme.com`
+([manual](manual.md#115-email)). After the first deployment (phase 8),
+`docker compose --env-file server.env --env-file release.env run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <you>`
+must print `Delivered`.
 
 **Check:** `ls -l /srv/app` shows `api.env` and `migrate.env` as `-rw-------` (only `deploy` can
 read them), and `grep -c '<' *.env` prints `0` for each file (no placeholder left).

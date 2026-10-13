@@ -42,6 +42,8 @@ describe('EnvSchema', () => {
       REDIS_COMMAND_TIMEOUT_MS: 500,
       RATE_LIMIT_STORE: 'memory',
       CACHE_STORE: 'memory',
+      MAIL_MAX_ATTEMPTS: 8,
+      MAIL_DAILY_LIMIT_PER_ADDRESS: 10,
     });
   });
 
@@ -50,6 +52,8 @@ describe('EnvSchema', () => {
     expect(parsed.SENTRY_DSN).toBeUndefined();
     expect(parsed.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
     expect(parsed.REDIS_URL).toBeUndefined();
+    expect(parsed.MAIL_SMTP_URL).toBeUndefined();
+    expect(parsed.MAIL_FROM).toBeUndefined();
   });
 
   it('applies the production defaults: every interface (IPv4 and IPv6), JSON logs', () => {
@@ -232,5 +236,86 @@ describe('EnvSchema', () => {
     expect(parsed.REDIS_COMMAND_TIMEOUT_MS).toBe(500);
     // An explicit 0 is still 0 where it is valid.
     expect(EnvSchema.parse({ ...base, SENTRY_SAMPLE_RATE: '0' }).SENTRY_SAMPLE_RATE).toBe(0);
+  });
+
+  it('reports a malformed origin as invalid, never throws (the value would reach the log)', () => {
+    expect(() => EnvSchema.safeParse({ ...base, APP_ORIGIN: 'not a url' })).not.toThrow();
+    expect(issuePaths({ ...base, APP_ORIGIN: 'not a url' })).toEqual(['APP_ORIGIN']);
+    // The second origin of the list, exactly.
+    expect(issuePaths({ ...base, CORS_ORIGINS: 'https://ok.test,not a url' })).toEqual([
+      'CORS_ORIGINS.1',
+    ]);
+    expect(issuePaths({ ...base, MAIL_SMTP_URL: 'not a url' })).toContain('MAIL_SMTP_URL');
+  });
+
+  describe('email', () => {
+    const mail = {
+      ...base,
+      MAIL_SMTP_URL: 'smtp://localhost:1035',
+      MAIL_FROM: 'Acme <no-reply@acme.test>',
+      APP_ORIGIN: 'http://localhost:5173',
+    };
+
+    it('turns on with an SMTP URL, a sender and the public origin links point to', () => {
+      expect(EnvSchema.parse(mail)).toMatchObject({
+        MAIL_SMTP_URL: 'smtp://localhost:1035',
+        MAIL_FROM: { name: 'Acme', address: 'no-reply@acme.test' },
+      });
+      expect(EnvSchema.parse({ ...mail, MAIL_FROM: 'no-reply@acme.test' }).MAIL_FROM).toEqual({
+        address: 'no-reply@acme.test',
+      });
+      expect(
+        EnvSchema.parse({ ...mail, MAIL_SMTP_URL: 'smtps://user:p%40ss@smtp.acme.test:465' })
+          .MAIL_SMTP_URL,
+      ).toBe('smtps://user:p%40ss@smtp.acme.test:465');
+    });
+
+    it('requires the sender and the public origin with an SMTP URL, and an SMTP URL with a sender', () => {
+      const { MAIL_FROM: _from, APP_ORIGIN: _origin, ...urlOnly } = mail;
+      expect(issuePaths(urlOnly).sort()).toEqual(['APP_ORIGIN', 'MAIL_FROM']);
+      expect(issuePaths({ ...base, MAIL_FROM: 'no-reply@acme.test' })).toEqual(['MAIL_FROM']);
+    });
+
+    it('requires an https public origin in production: links carry one-time tokens', () => {
+      const productionMail = { ...production, ...mail, NODE_ENV: 'production' };
+      expect(issuePaths(productionMail)).toEqual(['APP_ORIGIN']);
+      expect(issuePaths({ ...productionMail, APP_ORIGIN: 'https://app.acme.test' })).toEqual([]);
+    });
+
+    it('accepts only smtp:// or smtps:// with a host and nothing after it', () => {
+      for (const value of [
+        'http://smtp.acme.test',
+        'smtp://',
+        'smtp://smtp.acme.test/path',
+        'smtp://smtp.acme.test?secure=false',
+        'not a url',
+      ]) {
+        expect(issuePaths({ ...mail, MAIL_SMTP_URL: value }), value).toEqual(['MAIL_SMTP_URL']);
+      }
+    });
+
+    it('refuses a sender that could inject a header or is not an address', () => {
+      for (const value of [
+        'Acme <no-reply@acme.test>\r\nBcc: victim@example.test',
+        '"Acme" <no-reply@acme.test>',
+        'Acme, Inc <no-reply@acme.test>',
+        'Acme <not-an-address>',
+        'no-reply',
+        '<no-reply@acme.test>',
+      ]) {
+        expect(issuePaths({ ...mail, MAIL_FROM: value }), value).toEqual(['MAIL_FROM']);
+      }
+    });
+
+    it('bounds the attempts and the per-address daily limit', () => {
+      expect(issuePaths({ ...mail, MAIL_MAX_ATTEMPTS: '0' })).toEqual(['MAIL_MAX_ATTEMPTS']);
+      expect(issuePaths({ ...mail, MAIL_MAX_ATTEMPTS: '51' })).toEqual(['MAIL_MAX_ATTEMPTS']);
+      expect(issuePaths({ ...mail, MAIL_DAILY_LIMIT_PER_ADDRESS: '0' })).toEqual([
+        'MAIL_DAILY_LIMIT_PER_ADDRESS',
+      ]);
+      expect(EnvSchema.parse({ ...mail, MAIL_DAILY_LIMIT_PER_ADDRESS: '3' })).toMatchObject({
+        MAIL_DAILY_LIMIT_PER_ADDRESS: 3,
+      });
+    });
   });
 });

@@ -1,4 +1,10 @@
-import { type Attributes, type Counter, type Histogram, metrics } from '@opentelemetry/api';
+import {
+  type Attributes,
+  type Counter,
+  type Histogram,
+  metrics,
+  type ObservableGauge,
+} from '@opentelemetry/api';
 
 // The application's own metrics, next to the ones the instrumentations record
 // (HTTP server and client, database, runtime: docs/observability.md#metrics).
@@ -51,6 +57,66 @@ const slowQueries = lazy<Counter>(() =>
   }),
 );
 
+// Email (docs/architecture.md#email). Attributes are the message kind and the
+// outcome: never an address, a user or a message id.
+const mailDeliveries = lazy<Counter>(() =>
+  meter().createCounter('app.mail.deliveries', {
+    description: 'Delivery attempts of outbox messages, by outcome (sent, retry, failed, expired)',
+  }),
+);
+
+const mailDeliveryDuration = lazy<Histogram>(() =>
+  meter().createHistogram('app.mail.delivery.duration', {
+    description: 'Time the SMTP server took to accept or refuse one message',
+    unit: 's',
+    advice: { explicitBucketBoundaries: DURATION_BUCKETS },
+  }),
+);
+
+const mailLatency = lazy<Histogram>(() =>
+  meter().createHistogram('app.mail.latency', {
+    description: 'Time from queueing a message to the SMTP server accepting it, retries included',
+    unit: 's',
+    advice: { explicitBucketBoundaries: [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200] },
+  }),
+);
+
+const mailSuppressed = lazy<Counter>(() =>
+  meter().createCounter('app.mail.suppressed', {
+    description: 'Messages not queued because their address reached its per-address limit',
+  }),
+);
+
+/** The queue's numbers, as the worker last read them (undefined until then). */
+export interface MailOutboxGaugeValues {
+  waiting: number;
+  oldestAgeSeconds: number;
+}
+
+let mailOutboxValues: (() => MailOutboxGaugeValues | undefined) | undefined;
+
+// Gauges read the worker's last reading (every 30 s), never the database on
+// the export path.
+const mailOutboxGauges = lazy<[ObservableGauge, ObservableGauge]>(() => {
+  const waiting = meter().createObservableGauge('app.mail.outbox.waiting', {
+    description: 'Outbox messages still to send (pending, or being sent)',
+  });
+  const oldest = meter().createObservableGauge('app.mail.outbox.oldest_age', {
+    description: 'Age of the oldest outbox message still to send',
+    unit: 's',
+  });
+  meter().addBatchObservableCallback(
+    (result) => {
+      const values = mailOutboxValues?.();
+      if (values === undefined) return;
+      result.observe(waiting, values.waiting);
+      result.observe(oldest, values.oldestAgeSeconds);
+    },
+    [waiting, oldest],
+  );
+  return [waiting, oldest];
+});
+
 // Web Vitals the web app reports (telemetry/web-vitals.ts). The buckets hold
 // every rating threshold of web.dev, so the share of good page loads and the
 // p75 compared with a threshold are exact.
@@ -102,6 +168,30 @@ export function recordDegradation(feature: string, dependency: string): void {
 
 export function recordSlowQuery(): void {
   slowQueries().add(1);
+}
+
+export type MailOutcome = 'sent' | 'retry' | 'failed' | 'expired';
+
+/** One delivery attempt; `seconds` is the SMTP exchange (none for a message dropped unsent). */
+export function recordMailDelivery(kind: string, outcome: MailOutcome, seconds?: number): void {
+  const attributes: Attributes = { 'mail.kind': kind, outcome };
+  mailDeliveries().add(1, attributes);
+  if (seconds !== undefined) mailDeliveryDuration().record(seconds, attributes);
+}
+
+/** Queued to accepted, for a message the server accepted. */
+export function recordMailLatency(kind: string, seconds: number): void {
+  mailLatency().record(seconds, { 'mail.kind': kind });
+}
+
+export function recordMailSuppressed(kind: string): void {
+  mailSuppressed().add(1, { 'mail.kind': kind });
+}
+
+/** Registers the outbox gauges; `read` returns the worker's latest reading. */
+export function observeMailOutbox(read: () => MailOutboxGaugeValues | undefined): void {
+  mailOutboxValues = read;
+  mailOutboxGauges();
 }
 
 export type WebVitalRating = 'good' | 'needs-improvement' | 'poor';

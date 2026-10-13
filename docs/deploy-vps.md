@@ -80,21 +80,21 @@ files on the server, readable by the deploy user only.
 
 `deploy/vps/` in the repository, copied to `/srv/app` on the server:
 
-| File                   | What it is                                                                               | Committed        |
-| ---------------------- | ---------------------------------------------------------------------------------------- | ---------------- |
-| `compose.yaml`         | the services: `proxy` (Caddy), `api`, `web`, `migrate` (run once per deployment)         | yes              |
-| `Caddyfile`            | TLS for `APP_DOMAIN`, HSTS, compression, forward to `web`                                | yes              |
-| `realip.conf`          | mounted into the web image: the client address comes from Caddy, not from the connection | yes              |
-| `deploy.sh`            | one deployment (the steps above)                                                         | yes              |
-| `rollback.sh`          | back to the previous release, without the registry                                       | yes              |
-| `*.env.example`        | the settings to fill in                                                                  | yes              |
-| `server.env`           | `APP_DOMAIN`                                                                             | no (server only) |
-| `api.env`              | `DATABASE_URL` (runtime role), `JWT_ACCESS_SECRET`, `APP_ENVIRONMENT`, `APP_ORIGIN`, ... | no (server only) |
-| `migrate.env`          | `DATABASE_URL` (migrator role)                                                           | no (server only) |
-| `web.env`              | `APP_ENVIRONMENT`, optional `WEB_SENTRY_DSN`, `WEB_VITALS_SAMPLE_RATE`                   | no (server only) |
-| `release.env`          | the digests and release running now (written by `deploy.sh`)                             | no (server only) |
-| `release.previous.env` | the release before it                                                                    | no (server only) |
-| `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                        | no (server only) |
+| File                   | What it is                                                                                                                         | Committed        |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `compose.yaml`         | the services: `proxy` (Caddy), `api`, `web`, `migrate` (run once per deployment)                                                   | yes              |
+| `Caddyfile`            | TLS for `APP_DOMAIN`, HSTS, compression, forward to `web`                                                                          | yes              |
+| `realip.conf`          | mounted into the web image: the client address comes from Caddy, not from the connection                                           | yes              |
+| `deploy.sh`            | one deployment (the steps above)                                                                                                   | yes              |
+| `rollback.sh`          | back to the previous release, without the registry                                                                                 | yes              |
+| `*.env.example`        | the settings to fill in                                                                                                            | yes              |
+| `server.env`           | `APP_DOMAIN`                                                                                                                       | no (server only) |
+| `api.env`              | `DATABASE_URL` (runtime role), `JWT_ACCESS_SECRET`, `APP_ENVIRONMENT`, `APP_ORIGIN`, optional `MAIL_SMTP_URL` and `MAIL_FROM`, ... | no (server only) |
+| `migrate.env`          | `DATABASE_URL` (migrator role)                                                                                                     | no (server only) |
+| `web.env`              | `APP_ENVIRONMENT`, optional `WEB_SENTRY_DSN`, `WEB_VITALS_SAMPLE_RATE`                                                             | no (server only) |
+| `release.env`          | the digests and release running now (written by `deploy.sh`)                                                                       | no (server only) |
+| `release.previous.env` | the release before it                                                                                                              | no (server only) |
+| `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                                                                  | no (server only) |
 
 Why `realip.conf`: the web image replaces `X-Forwarded-For` with the address that connected to it
 (so a client cannot choose its own address). Behind Caddy that address would be Caddy's, and the
@@ -240,13 +240,17 @@ cp migrate.env.example migrate.env
 cp web.env.example web.env
 chmod 600 api.env migrate.env
 nano server.env      # APP_DOMAIN=app.example.com
-nano api.env         # DATABASE_URL (app_runtime, ?sslmode=require), JWT_ACCESS_SECRET, APP_ENVIRONMENT, APP_ORIGIN
+nano api.env         # DATABASE_URL (app_runtime, ?sslmode=require), JWT_ACCESS_SECRET, APP_ENVIRONMENT, APP_ORIGIN; email: MAIL_SMTP_URL, MAIL_FROM
 nano migrate.env     # DATABASE_URL (app_migrator, ?sslmode=require)
 nano web.env         # APP_ENVIRONMENT
 ```
 
 `JWT_ACCESS_SECRET`: `openssl rand -hex 32`, a different one per environment. Every other API
-variable is in [environment.md](environment.md); none is needed to start.
+variable is in [environment.md](environment.md); none is needed to start. Email is off until
+`MAIL_SMTP_URL` and `MAIL_FROM` name your provider's SMTP server and sender (encrypted: `smtps://`,
+or `smtp://` with STARTTLS); after the first deployment,
+`docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <you>`
+checks the whole path ([manual](manual.md#115-email)).
 
 The API's database driver (node-postgres) reads `sslmode=require` as `verify-full`: it refuses a
 certificate signed by the provider's own CA (DigitalOcean, Amazon RDS), and the rollout stops with
@@ -611,7 +615,8 @@ investigation ([incident-response.md](incident-response.md#11-authentication-or-
      in the database, and an access token signed with the old secret is refused and renewed by the
      next refresh ([security.md](security.md#secret-rotation)).
    - `server.env`, `web.env`, `APP_ENVIRONMENT`, `APP_ORIGIN`: as in section 6; the optional
-     settings (`SENTRY_DSN`, ...) from their services.
+     settings (`SENTRY_DSN`, `MAIL_SMTP_URL` and `MAIL_FROM`, ...) from their services. Email still
+     waiting in the outbox is sent once the API runs again.
 3. **GitHub**: `DEPLOY_KNOWN_HOSTS` with the new server's host key (section 4).
    `DEPLOY_SSH_KEY` stays when the new server has the same deploy key (Terraform registers it);
    after a compromise, a new key pair, on the server and in the environment.

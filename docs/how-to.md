@@ -19,6 +19,7 @@ When something fails along the way, see [troubleshooting.md](troubleshooting.md)
 - [Cache a read](#cache-a-read)
 - [Call an external service](#call-an-external-service)
 - [Run a job on one instance, or process a message once](#run-a-job-on-one-instance-or-process-a-message-once)
+- [Send an email](#send-an-email)
 - [Turn on Redis](#turn-on-redis)
 - [Turn on error tracking](#turn-on-error-tracking)
 - [Turn on tracing and metrics](#turn-on-tracing-and-metrics)
@@ -851,6 +852,59 @@ provider's first retry after `processingTtlSec`.
 within the process without it, and fail closed (503) while Redis is down. For money or anything that
 must happen exactly once, make the write itself idempotent in the database
 ([architecture.md](architecture.md#locks-and-idempotency)).
+
+## Send an email
+
+Email goes through the outbox ([architecture.md](architecture.md#email)): you queue a message in
+the transaction of the change it reports, never send it from the request.
+
+1. **A kind.** Add it to `MailKind` in `apps/api/prisma/schema.prisma` and run
+   `pnpm db:migrate --name add_<kind>_mail_kind` (`ALTER TYPE ... ADD VALUE`: an expand step).
+2. **A template** in `apps/api/src/infrastructure/mail/templates/`, registered in `registry.ts`:
+
+   ```ts
+   export const welcomeTemplate: MailTemplate = {
+     limited: false, // true when anyone can trigger it (a reset, a confirmation): per-address limits
+     ttlMs: 24 * 60 * 60_000, // dropped unsent after this
+     async compose({ tx, message, product, appOrigin }) {
+       const user = await tx.user.findUnique({ where: { id: message.userId ?? '' } });
+       if (user === null || user.email !== message.recipient) return null; // no longer applies
+       return renderMail(
+         {
+           subject: `Welcome to ${product}`,
+           heading: `Welcome, ${user.name}`,
+           paragraphs: ['Your account is ready.'],
+           action: { label: 'Open the app', url: `${appOrigin}/` },
+           footer: ['You get this message because an account was created with this address.'],
+         },
+         product,
+       );
+     },
+   };
+   ```
+
+   `compose` runs in a short transaction when the message is sent: read what the message is about
+   there, and return `null` when it no longer applies. A link that carries a secret mints it there
+   too (store only its hash; put the token after `#` so it never reaches a server log). Links are
+   built from `appOrigin`, never from a request. `renderMail` escapes every value.
+
+3. **Queue it** with the change, then wake the worker after the commit:
+
+   ```ts
+   await this.prisma.$transaction(async (tx) => {
+     const user = await tx.user.create({ data: { ... } });
+     await this.mail.enqueue(tx, { kind: 'welcome', to: user.email, userId: user.id });
+   });
+   this.mail.notifyQueued();
+   ```
+
+   `enqueue` answers `queued`, `duplicate` (same `dedupeKey`), `suppressed` (the per-address
+   limits) or `disabled` (email off): never tell a client which, or it learns whether an address
+   has an account.
+
+4. **Tests:** the template's unit spec (escaping, `null` when it no longer applies); an
+   integration spec that queues it and reads it back from Mailpit (`apps/api/test/mailpit.ts`);
+   an end-to-end test for a flow a person follows from the message.
 
 ## Turn on Redis
 

@@ -10,7 +10,7 @@ push / pull request
        │    ├─ Observability as code            dashboards and alert rules: metric names, runbooks, promtool tests
        │    ├─ Infrastructure as code           infra/terraform: fmt, validate, tests, TFLint, Trivy, cloud-init, roles SQL
        │    ├─ Unit and component tests         vitest + coverage thresholds + OpenAPI drift
-       │    ├─ Integration tests                API + PostgreSQL + Redis services (Redis adapters, degraded mode)
+       │    ├─ Integration tests                API + PostgreSQL + Redis + Mailpit services (adapters, degraded mode, email outbox)
        │    ├─ Security                         pnpm audit (high+), dependency policy, secretlint, gitleaks
        │    ├─ Build and performance budget     pnpm build, bundle size budget
        │    ├─ End-to-end tests                 Playwright on the built stack
@@ -55,7 +55,7 @@ produce findings that need judgment.
 | Lint (ESLint, type-aware, security rules), zero warnings                                 | `pnpm verify`, pre-commit, CI  | BLOCKING                |
 | Types, contract types in sync with `openapi/openapi.json`                                | `pnpm verify`, pre-push, CI    | BLOCKING                |
 | Unit and component tests, coverage thresholds, OpenAPI drift                             | `pnpm verify`, pre-push, CI    | BLOCKING                |
-| Integration tests (API + PostgreSQL + Redis adapters)                                    | CI (`pnpm test:integration`)   | BLOCKING                |
+| Integration tests (API + PostgreSQL + Redis adapters + Mailpit, the email outbox)        | CI (`pnpm test:integration`)   | BLOCKING                |
 | End-to-end tests (Playwright)                                                            | CI (`pnpm test:e2e`)           | BLOCKING                |
 | Dependency advisories, high and critical (`pnpm audit`)                                  | `pnpm verify`, CI              | BLOCKING                |
 | Dependency policy: registry sources, licenses (`pnpm deps:check`)                        | `pnpm verify`, CI              | BLOCKING                |
@@ -290,16 +290,16 @@ which the gate enforces.
 
 ## Pinning
 
-| What                                                                                                                                                          | Pinned by                                                          | Updated by                                               |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
-| GitHub Actions (`uses:`)                                                                                                                                      | commit SHA, tag in comment                                         | Dependabot (`github-actions`)                            |
-| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, Terraform, TFLint, Ubuntu, ZAP, promtool) and the CI PostgreSQL and Redis services | tag and digest in `.github/tool-images/Dockerfile`                 | Dependabot (`docker`), tag and digest together           |
-| Base images in the Dockerfiles (Node.js from ECR Public's mirror of Docker's official images, nginx from NGINX's GHCR)                                        | tag and digest                                                     | Dependabot (`docker`), tag and digest together           |
-| Compose images                                                                                                                                                | tag                                                                | Dependabot (`docker-compose`)                            |
-| npm packages                                                                                                                                                  | `pnpm-lock.yaml` (integrity hashes)                                | Dependabot (`npm`), `pnpm update`                        |
-| Terraform providers (`infra/terraform`)                                                                                                                       | exact version in `versions.tf`, checksums in `.terraform.lock.hcl` | Dependabot (`terraform`), version and checksums together |
-| Node.js                                                                                                                                                       | the major in `.nvmrc` (CI, hooks); the base images above           | the major by hand ([below](#nodejs))                     |
-| pnpm                                                                                                                                                          | `packageManager` in `package.json`, recorded in `pnpm-lock.yaml`   | by hand ([below](#pnpm))                                 |
+| What                                                                                                                                                                   | Pinned by                                                          | Updated by                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| GitHub Actions (`uses:`)                                                                                                                                               | commit SHA, tag in comment                                         | Dependabot (`github-actions`)                            |
+| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, Terraform, TFLint, Ubuntu, ZAP, promtool) and the CI PostgreSQL, Redis and Mailpit services | tag and digest in `.github/tool-images/Dockerfile`                 | Dependabot (`docker`), tag and digest together           |
+| Base images in the Dockerfiles (Node.js from ECR Public's mirror of Docker's official images, nginx from NGINX's GHCR)                                                 | tag and digest                                                     | Dependabot (`docker`), tag and digest together           |
+| Compose images                                                                                                                                                         | tag                                                                | Dependabot (`docker-compose`)                            |
+| npm packages                                                                                                                                                           | `pnpm-lock.yaml` (integrity hashes)                                | Dependabot (`npm`), `pnpm update`                        |
+| Terraform providers (`infra/terraform`)                                                                                                                                | exact version in `versions.tf`, checksums in `.terraform.lock.hcl` | Dependabot (`terraform`), version and checksums together |
+| Node.js                                                                                                                                                                | the major in `.nvmrc` (CI, hooks); the base images above           | the major by hand ([below](#nodejs))                     |
+| pnpm                                                                                                                                                                   | `packageManager` in `package.json`, recorded in `pnpm-lock.yaml`   | by hand ([below](#pnpm))                                 |
 
 The Dockerfiles' base images come from registries without Docker Hub's anonymous pull limit, which
 CI runners share and hit: the same images, with the same digests, as on Docker Hub.
@@ -321,7 +321,7 @@ read by `scripts/tool-image.mjs`; an ECR Public image under its Docker Hub name)
 the content identical whatever the source, the pinned registry stays the fallback, and Dependabot
 keeps updating the pins from their source. The same goes for what CI pulls without a script:
 
-- the PostgreSQL and Redis service containers of the integration and end-to-end jobs get the
+- the PostgreSQL, Redis and Mailpit service containers of the integration and end-to-end jobs get the
   mirror's copy from the `Tool images` job (`node scripts/tool-image.mjs --mirrored <name>`), which
   first asks the mirror whether it has that digest, since a service container cannot fall back;
 - the image builds, of the gates (`docker-images.yml`) and of a deployment (`deploy.yml`), get a

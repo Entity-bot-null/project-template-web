@@ -378,6 +378,25 @@ OPTIONAL infrastructure (docs/architecture.md#redis). Secure defaults, developme
 The application treats Redis as untrusted for correctness: losing it degrades features but never
 authorizes a request, and no session or authorization data lives there.
 
+## Email
+
+OPTIONAL infrastructure ([architecture.md](architecture.md#email), ADR
+[0003](adr/0003-transactional-email-outbox.md)). Development uses Mailpit, which accepts anyone's
+mail without authentication: it is published on 127.0.0.1 only and is never part of a deployment.
+
+| Concern                | How                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified.                                                                                                                                        |
+| Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                        |
+| Links                  | Built from `APP_ORIGIN` only (required with email, https in production), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                         |
+| What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits. |
+| Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address.                                                                                                                                 |
+| Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                |
+| Abuse                  | Messages anyone can request are limited per address (one a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day), counted in PostgreSQL so every instance shares them, on top of the routes' per-IP limits. Callers answer the same whatever was queued: no account enumeration through email. Security notices are never held back.          |
+| Automatic replies      | `Auto-Submitted: auto-generated` and `X-Auto-Response-Suppress: All` on every message (RFC 3834).                                                                                                                                                                                                                                     |
+| Sender authentication  | REQUIERE CONFIGURACIÓN: SPF, DKIM and DMARC for the sending domain at the provider, before the first message; without them messages are spoofable and land in spam.                                                                                                                                                                   |
+| Retention              | Finished outbox rows (metadata: kind, status, attempts, timestamps, error category, keyed hash) are deleted after 30 days; a failed message's address is cleared after 7.                                                                                                                                                             |
+
 ## Dependency vulnerabilities
 
 `pnpm security` = `pnpm audit --audit-level=high` + `pnpm deps:check` + the repository secret scan. High and critical
@@ -616,6 +635,9 @@ Accepted on purpose, each with its way out:
   ends and the user signs in again. That is the price of reuse detection (RFC 9700 accepts it);
   raise `REFRESH_REUSE_LEEWAY_SEC` only with a reason. A reload or a closed tab does not lose it:
   the web app sends its refreshes with `keepalive`.
+- **Email is delivered at least once**: a worker that dies after the SMTP server accepted a
+  message and before recording it sends it again when its lease ends (same `Message-ID`). Links
+  stay single-use, so a duplicate does no harm beyond the noise.
 - **Old browsers** without `BroadcastChannel` keep a signed-out tab's access token until it expires
   (15 minutes), and without Web Locks three or more tabs refreshing at the same moment can sign one
   of them out locally (it signs in again; the session itself is fine). The server session is

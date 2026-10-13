@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { answers, apiReadyWatcher, pnpmCommand, resolvedExecPath } from './dev.mjs';
+import { answers, apiReadyWatcher, pnpmCommand, readMailStatus, resolvedExecPath } from './dev.mjs';
 
 const READY =
   'apps/api dev: [Nest] 158233  - 12/10/2026, 16:44:24     LOG [NestApplication] Nest application successfully started';
@@ -132,5 +132,51 @@ describe('answers', () => {
     const stopped = new AbortController();
     stopped.abort();
     assert.equal(await answers('http://127.0.0.1:9/', stopped.signal), false);
+  });
+});
+
+describe('readMailStatus', () => {
+  /** @param {number} status @param {string} body */
+  async function api(status, body) {
+    const http = createServer((_request, response) => {
+      response.writeHead(status, { 'Content-Type': 'application/json' }).end(body);
+    });
+    http.listen(0, '127.0.0.1');
+    await once(http, 'listening');
+    const address = /** @type {import('node:net').AddressInfo} */ (http.address());
+    return { url: `http://127.0.0.1:${String(address.port)}/api`, close: () => http.close() };
+  }
+
+  test("reads email's state from the readiness answer", async () => {
+    for (const mail of ['ok', 'degraded', 'disabled']) {
+      const { url, close } = await api(200, JSON.stringify({ data: { checks: { mail } } }));
+      try {
+        assert.equal(await readMailStatus(url, new AbortController().signal), mail);
+      } finally {
+        close();
+      }
+    }
+  });
+
+  test('cannot tell from anything else: an older API, an error, nobody listening', async () => {
+    for (const [status, body] of [
+      [200, JSON.stringify({ data: { checks: { database: 'ok' } } })],
+      [503, JSON.stringify({ data: null, message: 'Database unreachable' })],
+      [200, 'not json'],
+    ]) {
+      const { url, close } = await api(
+        /** @type {number} */ (status),
+        /** @type {string} */ (body),
+      );
+      try {
+        assert.equal(await readMailStatus(url, new AbortController().signal), undefined);
+      } finally {
+        close();
+      }
+    }
+    assert.equal(
+      await readMailStatus('http://127.0.0.1:9/api', new AbortController().signal),
+      undefined,
+    );
   });
 });

@@ -9,9 +9,13 @@ import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  observeMailOutbox,
   recordCacheRead,
   recordDegradation,
   recordDependencyCall,
+  recordMailDelivery,
+  recordMailLatency,
+  recordMailSuppressed,
   recordServerError,
   recordSlowQuery,
   recordWebVital,
@@ -105,6 +109,10 @@ describe('observability/api-metrics.json', () => {
       recordCacheRead('profiles', 'hit');
       recordDegradation('cache', 'redis');
       recordSlowQuery();
+      recordMailDelivery('test', 'sent', 0.3);
+      recordMailLatency('test', 2);
+      recordMailSuppressed('test');
+      observeMailOutbox(() => ({ waiting: 2, oldestAgeSeconds: 40 }));
       const page = { rating: 'good', navigationType: 'navigate', route: '/' } as const;
       recordWebVital('LCP', 1.2, page);
       recordWebVital('CLS', 0.05, page);
