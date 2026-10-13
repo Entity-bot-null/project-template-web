@@ -36,6 +36,22 @@ export const routes = createRoutesFromElements(
     </Route>
     {/* Signed in or not: a person may open an emailed link in any state. */}
     <Route
+      path="confirm-email-change"
+      lazy={() =>
+        import('./pages/ConfirmEmailChangePage').then(({ ConfirmEmailChangePage }) => ({
+          Component: ConfirmEmailChangePage,
+        }))
+      }
+    />
+    <Route
+      path="revert-email-change"
+      lazy={() =>
+        import('./pages/RevertEmailChangePage').then(({ RevertEmailChangePage }) => ({
+          Component: RevertEmailChangePage,
+        }))
+      }
+    />
+    <Route
       path="confirm-sign-up"
       lazy={() =>
         import('./pages/ConfirmSignUpPage').then(({ ConfirmSignUpPage }) => ({

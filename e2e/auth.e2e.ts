@@ -1,4 +1,5 @@
-import { type BrowserContext, expect, type Page, test } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
+import { expect, test } from './support/fixtures.js';
 
 // The development accounts created by the API seed (apps/api/src/seed/seed.ts).
 const MEMBER = { email: 'member@example.com', password: 'member-password', name: 'Member' };
@@ -10,7 +11,7 @@ const REFRESH_COOKIE = '__Host-refresh_token';
 async function signIn(page: Page, user: { email: string; password: string }) {
   await page.goto('/sign-in');
   await page.getByLabel('Email').fill(user.email);
-  await page.getByLabel('Password').fill(user.password);
+  await page.getByLabel('Password', { exact: true }).fill(user.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
 

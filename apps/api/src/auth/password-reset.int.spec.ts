@@ -216,11 +216,19 @@ describe.skipIf(skipWithoutMailpit)('password reset (PostgreSQL + Mailpit)', () 
 
   it('says what it offers, and answers 503 for a reset when email is off', async () => {
     const capabilities = await request(t.server).get('/api/auth/capabilities').expect(200);
-    expect(envelopeOf(capabilities).data).toEqual({ passwordReset: true, signUp: false });
+    expect(envelopeOf(capabilities).data).toEqual({
+      passwordReset: true,
+      signUp: false,
+      emailChange: true,
+    });
     await t.app.close();
     t = await app({ smtpUrl: undefined });
     const off = await request(t.server).get('/api/auth/capabilities').expect(200);
-    expect(envelopeOf(off).data).toEqual({ passwordReset: false, signUp: false });
+    expect(envelopeOf(off).data).toEqual({
+      passwordReset: false,
+      signUp: false,
+      emailChange: false,
+    });
     await request(t.server)
       .post('/api/auth/password-resets')
       .send({ email: 'ada@example.test' })

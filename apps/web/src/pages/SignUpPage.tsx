@@ -6,6 +6,7 @@ import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
 import { emailError } from '../auth/validation';
 import { Alert } from '../components/Alert';
 import { PasswordField } from '../components/PasswordField';
+import { TextField } from '../components/TextField';
 
 interface FieldErrors {
   name: string | null;
@@ -102,46 +103,24 @@ export function SignUpPage() {
         }}
       >
         {failure !== null && <Alert>{failure}</Alert>}
-        <div className="field">
-          <label htmlFor="name">Name</label>
-          <input
-            id="name"
-            name="name"
-            autoComplete="name"
-            maxLength={100}
-            value={name}
-            aria-invalid={errors.name !== null}
-            aria-describedby={errors.name === null ? undefined : 'name-error'}
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-          />
-          {errors.name !== null && (
-            <span id="name-error" className="field-error">
-              {errors.name}
-            </span>
-          )}
-        </div>
-        <div className="field">
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            name="email"
-            autoComplete="username"
-            value={email}
-            aria-invalid={errors.email !== null}
-            aria-describedby={errors.email === null ? undefined : 'email-error'}
-            onChange={(event) => {
-              setEmail(event.target.value);
-            }}
-          />
-          {errors.email !== null && (
-            <span id="email-error" className="field-error">
-              {errors.email}
-            </span>
-          )}
-        </div>
+        <TextField
+          label="Name"
+          name="name"
+          autoComplete="name"
+          maxLength={100}
+          value={name}
+          onChange={setName}
+          error={errors.name}
+        />
+        <TextField
+          label="Email"
+          type="email"
+          name="email"
+          autoComplete="username"
+          value={email}
+          onChange={setEmail}
+          error={errors.email}
+        />
         <PasswordField
           label="Password"
           autoComplete="new-password"

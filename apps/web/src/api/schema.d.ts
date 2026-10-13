@@ -65,7 +65,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** What this deployment offers: password recovery, public sign-up */
+        /** What this deployment offers: password recovery, public sign-up, change of email */
         get: operations["AuthController_capabilities"];
         put?: never;
         post?: never;
@@ -169,6 +169,66 @@ export interface paths {
          * @description Every other session ends; this browser gets a new session (a new access token in the body and a new refresh cookie). 400: the new password is refused (too short, too common, too easy to guess, or containing the email or name). 403: the current password is wrong. 409: the password changed meanwhile.
          */
         post: operations["AccountController_changePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/account/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask to change the email address, confirming the current password
+         * @description Answers 202 once the current password is checked: a one-time link (valid 24 hours) goes to the new address, which changes only when it is opened; if the new address already has an account, its owner gets a notice instead. 400: the new address is the current one. 403: the current password is wrong. 503: this deployment sends no email.
+         */
+        post: operations["AccountController_changeEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email-changes/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm a new email address with the link sent to it
+         * @description The token works once, while the account is as it was when the link was sent. The address changes, every session ends (sign in again with the new address), and the previous address gets a notice with a link to undo it. 404: the link is invalid, used or expired. 409: the new address got an account meanwhile.
+         */
+        post: operations["EmailChangeController_confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/email-changes/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a change of email with the link sent to the previous address
+         * @description The token works once, for 7 days, whatever happened to the account since. The previous address comes back with the new password given here, and every session ends. 400: the password is refused (too short, too common, too easy to guess, or containing the email or name); the link still works. 404: the link is invalid, used or expired. 409: the previous address got another account meanwhile.
+         */
+        post: operations["EmailChangeController_revert"];
         delete?: never;
         options?: never;
         head?: never;
@@ -497,6 +557,7 @@ export interface operations {
                         data: {
                             passwordReset: boolean;
                             signUp: boolean;
+                            emailChange: boolean;
                         };
                         message: string;
                     };
@@ -872,6 +933,216 @@ export interface operations {
             };
         };
     };
+    AccountController_changeEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    currentPassword: string;
+                    /** Format: email */
+                    newEmail: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    EmailChangeController_confirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Address changed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    EmailChangeController_revert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Change undone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not allowed */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Rate limit exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     UsersController_me: {
         parameters: {
             query?: never;
@@ -1159,7 +1430,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    route: "/" | "/sign-in" | "/forgot-password" | "/reset-password" | "/sign-up" | "/confirm-sign-up" | "/account" | "/admin/users" | "/*";
+                    route: "/" | "/sign-in" | "/forgot-password" | "/reset-password" | "/sign-up" | "/confirm-sign-up" | "/confirm-email-change" | "/revert-email-change" | "/account" | "/admin/users" | "/*";
                     metrics: ({
                         /** @enum {string} */
                         name: "FCP" | "INP" | "LCP" | "TTFB";

@@ -128,10 +128,17 @@ export class AuthController {
 
   // Public and the same for everyone: the web app shows only what works here.
   @Get('capabilities')
-  @ApiOperation({ summary: 'What this deployment offers: password recovery, public sign-up' })
+  @ApiOperation({
+    summary: 'What this deployment offers: password recovery, public sign-up, change of email',
+  })
   @ApiData(AuthCapabilitiesSchema)
   capabilities(): AuthCapabilities {
-    return { passwordReset: this.passwordReset.available, signUp: this.signUp.available };
+    return {
+      passwordReset: this.passwordReset.available,
+      signUp: this.signUp.available,
+      // Both need email only: the same answer as passwordReset.
+      emailChange: this.passwordReset.available,
+    };
   }
 
   // Public sign-up (docs/security.md#sign-up), when SIGN_UP_ENABLED. The same

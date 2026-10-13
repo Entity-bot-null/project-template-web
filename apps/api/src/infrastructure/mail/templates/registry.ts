@@ -1,6 +1,9 @@
 import type { MailKind, Prisma } from '../../../prisma/generated/client.js';
 import type { ClaimedMessage, MailOptions } from '../mail.types.js';
 import type { RenderedMail } from './layout.js';
+import { emailChangeConfirmationTemplate } from './email-change-confirmation.template.js';
+import { emailChangeExistingTemplate } from './email-change-existing.template.js';
+import { emailChangedTemplate } from './email-changed.template.js';
 import { passwordChangedTemplate } from './password-changed.template.js';
 import { passwordResetTemplate } from './password-reset.template.js';
 import { signUpConfirmationTemplate } from './sign-up-confirmation.template.js';
@@ -34,6 +37,9 @@ export const MAIL_TEMPLATE_REGISTRY: MailTemplates = {
   password_changed: passwordChangedTemplate,
   sign_up_confirmation: signUpConfirmationTemplate,
   sign_up_existing: signUpExistingTemplate,
+  email_change_confirmation: emailChangeConfirmationTemplate,
+  email_change_existing: emailChangeExistingTemplate,
+  email_changed: emailChangedTemplate,
 };
 
 /** What messages call the product: the sender's display name, else the public host. */

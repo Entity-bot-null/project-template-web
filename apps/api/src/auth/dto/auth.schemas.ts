@@ -47,6 +47,8 @@ export const AuthCapabilitiesSchema = z.object({
   passwordReset: z.boolean(),
   /** Public sign-up is open (SIGN_UP_ENABLED): "Create an account". */
   signUp: z.boolean(),
+  /** Email is configured: the Account page can change the address (confirmed by a link). */
+  emailChange: z.boolean(),
 });
 export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 
@@ -91,3 +93,17 @@ export const SignUpConfirmSchema = z.object({
   password: z.string().min(1, 'Password is required').max(PASSWORD_MAX_INPUT_LENGTH),
 });
 export type SignUpConfirmDto = z.infer<typeof SignUpConfirmSchema>;
+
+export const ChangeEmailSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required').max(PASSWORD_MAX_INPUT_LENGTH),
+  newEmail: z.string().trim().max(254).pipe(z.email()).meta({ format: 'email' }),
+});
+export type ChangeEmailDto = z.infer<typeof ChangeEmailSchema>;
+
+export const EmailChangeConfirmSchema = z.object({ token: ONE_TIME_TOKEN });
+export type EmailChangeConfirmDto = z.infer<typeof EmailChangeConfirmSchema>;
+
+// Undoing a change of address also sets a new password (whoever changed the
+// address knew the old one): the policy is checked by the service.
+export const EmailRevertSchema = z.object({ token: ONE_TIME_TOKEN, password: newPassword });
+export type EmailRevertDto = z.infer<typeof EmailRevertSchema>;

@@ -278,9 +278,12 @@ auth/password.ts             Argon2id hash and check, NFKC-normalized
 auth/account-tokens.ts       one-time tokens: mint (hash stored), consume (locked, once), sweep
 auth/password-reset.service  POST /api/auth/password-resets (+ /confirm); answers before the lookup
 auth/sign-up.service         POST /api/auth/sign-ups (+ /confirm), when SIGN_UP_ENABLED; sign_ups table
-account/                     the signed-in user's own account: POST /api/account/password
+account/                     the signed-in user's own account: POST /api/account/password and
+                             /email; the change-of-email links: /api/auth/email-changes/*
 templates/password-*.ts      the reset link (token minted at send time) and the changed notice
 templates/sign-up-*.ts       the confirmation link, and the notice to an address that has an account
+templates/email-change*.ts   the link to the new address, the notice to an address that has an account
+templates/email-changed.ts   the notice to the previous address, with the undo link (7 days)
 ```
 
 - **`users.security_version`** (ADR [0004](adr/0004-security-version-in-access-tokens.md)):
@@ -292,8 +295,9 @@ templates/sign-up-*.ts       the confirmation link, and the notice to an address
 - **Sign-up without half-made accounts:** a sign-up lives in `sign_ups` until its link is
   confirmed (with the password chosen); only then is the `users` row created, in the transaction
   that deletes the sign-up. Nothing else in the API ever sees an unconfirmed address.
-- **Email off:** `GET /api/auth/capabilities` answers `{ passwordReset: false, signUp: false }`
-  and the web app hides both links; the reset routes answer 503 (sign-up cannot be on without
+- **Email off:** `GET /api/auth/capabilities` answers
+  `{ passwordReset: false, signUp: false, emailChange: false }` and the web app hides what needs
+  email; the reset routes answer 503 (sign-up cannot be on without
   email: the boot refuses it). Changing the password while signed in works either
   way (the notice is then not sent).
 

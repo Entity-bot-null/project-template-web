@@ -314,11 +314,15 @@
                         },
                         "signUp": {
                           "type": "boolean"
+                        },
+                        "emailChange": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
                         "passwordReset",
-                        "signUp"
+                        "signUp",
+                        "emailChange"
                       ],
                       "additionalProperties": false
                     },
@@ -341,7 +345,7 @@
             }
           }
         },
-        "summary": "What this deployment offers: password recovery, public sign-up",
+        "summary": "What this deployment offers: password recovery, public sign-up, change of email",
         "tags": [
           "auth"
         ]
@@ -906,6 +910,279 @@
         ]
       }
     },
+    "/api/account/email": {
+      "post": {
+        "description": "Answers 202 once the current password is checked: a one-time link (valid 24 hours) goes to the new address, which changes only when it is opened; if the new address already has an account, its owner gets a notice instead. 400: the new address is the current one. 403: the current password is wrong. 503: this deployment sends no email.",
+        "operationId": "AccountController_changeEmail",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 400
+                  },
+                  "newEmail": {
+                    "format": "email",
+                    "type": "string",
+                    "maxLength": 254
+                  }
+                },
+                "required": [
+                  "currentPassword",
+                  "newEmail"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Ask to change the email address, confirming the current password",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/auth/email-changes/confirm": {
+      "post": {
+        "description": "The token works once, while the account is as it was when the link was sent. The address changes, every session ends (sign in again with the new address), and the previous address gets a notice with a link to undo it. 404: the link is invalid, used or expired. 409: the new address got an account meanwhile.",
+        "operationId": "EmailChangeController_confirm",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  }
+                },
+                "required": [
+                  "token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Address changed"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Confirm a new email address with the link sent to it",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/email-changes/revert": {
+      "post": {
+        "description": "The token works once, for 7 days, whatever happened to the account since. The previous address comes back with the new password given here, and every session ends. 400: the password is refused (too short, too common, too easy to guess, or containing the email or name); the link still works. 404: the link is invalid, used or expired. 409: the previous address got another account meanwhile.",
+        "operationId": "EmailChangeController_revert",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "token",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Change undone"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Undo a change of email with the link sent to the previous address",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/users/me": {
       "get": {
         "operationId": "UsersController_me",
@@ -1441,6 +1718,8 @@
                       "/reset-password",
                       "/sign-up",
                       "/confirm-sign-up",
+                      "/confirm-email-change",
+                      "/revert-email-change",
                       "/account",
                       "/admin/users",
                       "/*"

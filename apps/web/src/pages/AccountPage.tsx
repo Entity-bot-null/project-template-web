@@ -1,9 +1,13 @@
 import { useState } from 'react';
-import { describeFailure } from '../api/errors';
+import { api } from '../api/client';
+import { call, describeFailure } from '../api/errors';
 import { useAuth } from '../auth';
+import { useCapabilities } from '../auth/capabilities';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
+import { emailError } from '../auth/validation';
 import { Alert } from '../components/Alert';
 import { PasswordField } from '../components/PasswordField';
+import { TextField } from '../components/TextField';
 
 interface FieldErrors {
   current: string | null;
@@ -12,11 +16,13 @@ interface FieldErrors {
 
 const NO_ERRORS: FieldErrors = { current: null, next: null };
 
-// The signed-in person's own account: who they are, and a new password
-// (confirmed with the current one). A change signs every other session out;
-// this one carries on in the new session the API answers with.
+// The signed-in person's own account: who they are, a new password
+// (confirmed with the current one; every other session is signed out, this
+// one carries on in the new session the API answers with), and, where email
+// works, a new address (confirmed from that address).
 export function AccountPage() {
   const auth = useAuth();
+  const capabilities = useCapabilities();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [errors, setErrors] = useState<FieldErrors>(NO_ERRORS);
@@ -104,6 +110,97 @@ export function AccountPage() {
           {submitting ? 'Saving…' : 'Change password'}
         </button>
       </form>
+      {capabilities?.emailChange === true && <ChangeEmailForm currentEmail={user.email} />}
     </section>
+  );
+}
+
+// Asks to move the account to another address. Nothing changes here: a link
+// goes to the new address, and the change happens when it is opened (then
+// every session, this one included, is signed out). The answer is the same
+// whether the new address has an account or not.
+function ChangeEmailForm({ currentEmail }: { currentEmail: string }) {
+  const [newEmail, setNewEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errors, setErrors] = useState<{ email: string | null; password: string | null }>({
+    email: null,
+    password: null,
+  });
+  const [failure, setFailure] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit() {
+    const address = newEmail.trim();
+    const found = {
+      email:
+        emailError(address) ??
+        (address.toLowerCase() === currentEmail ? 'This is already your address.' : null),
+      password: password.length === 0 ? 'Enter your current password.' : null,
+    };
+    setErrors(found);
+    setSentTo(null);
+    if (found.email !== null || found.password !== null) return;
+    setSubmitting(true);
+    setFailure(null);
+    const result = await call(
+      api.POST('/api/account/email', { body: { newEmail: address, currentPassword: password } }),
+    );
+    setSubmitting(false);
+    if (result.ok) {
+      setNewEmail('');
+      setPassword('');
+      setSentTo(address);
+      return;
+    }
+    const { status } = result.failure;
+    if (status === 403) {
+      setErrors({ email: null, password: 'Your current password is not correct.' });
+    } else if (status === 400) {
+      setErrors({ email: 'This is already your address.', password: null });
+    } else if (status === 503) {
+      setFailure('Changing the address is not available here.');
+    } else {
+      setFailure(describeFailure(result.failure));
+    }
+  }
+
+  return (
+    <form
+      className="stack auth-form"
+      noValidate
+      aria-labelledby="email-heading"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <h2 id="email-heading">Change your email</h2>
+      {sentTo !== null && (
+        <Alert tone="info">
+          A link is on its way to {sentTo}. Your address changes when you open it; until then
+          nothing changes. Then every session is signed out: sign in with the new address.
+        </Alert>
+      )}
+      {failure !== null && <Alert>{failure}</Alert>}
+      <TextField
+        label="New email"
+        type="email"
+        autoComplete="email"
+        value={newEmail}
+        onChange={setNewEmail}
+        error={errors.email}
+      />
+      <PasswordField
+        label="Current password"
+        autoComplete="current-password"
+        value={password}
+        onChange={setPassword}
+        error={errors.password}
+      />
+      <button type="submit" disabled={submitting}>
+        {submitting ? 'Sending…' : 'Change email'}
+      </button>
+    </form>
   );
 }

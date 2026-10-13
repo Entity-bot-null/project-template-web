@@ -18,6 +18,8 @@ export const WEB_VITALS_ROUTES = [
   '/reset-password',
   '/sign-up',
   '/confirm-sign-up',
+  '/confirm-email-change',
+  '/revert-email-change',
   '/account',
   '/admin/users',
   '/*',

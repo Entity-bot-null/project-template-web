@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { call, describeFailure } from '../api/errors';
 import { emailError } from '../auth/validation';
 import { Alert } from '../components/Alert';
+import { TextField } from '../components/TextField';
 
 // Asks for a reset link. The API answers the same for every address, so the
 // page does too: it never says whether an account exists.
@@ -77,26 +78,15 @@ export function ForgotPasswordPage() {
           Enter the email address of your account: we will send you a link to choose a new password.
         </p>
         {failure !== null && <Alert>{failure}</Alert>}
-        <div className="field">
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            name="email"
-            autoComplete="username"
-            value={email}
-            aria-invalid={error !== null}
-            aria-describedby={error === null ? undefined : 'email-error'}
-            onChange={(event) => {
-              setEmail(event.target.value);
-            }}
-          />
-          {error !== null && (
-            <span id="email-error" className="field-error">
-              {error}
-            </span>
-          )}
-        </div>
+        <TextField
+          label="Email"
+          type="email"
+          name="email"
+          autoComplete="username"
+          value={email}
+          onChange={setEmail}
+          error={error}
+        />
         <button type="submit" disabled={submitting}>
           {submitting ? 'Sending…' : 'Send the link'}
         </button>
