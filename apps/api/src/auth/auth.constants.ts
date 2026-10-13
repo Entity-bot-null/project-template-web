@@ -27,6 +27,13 @@ export const PASSWORD_MAX_INPUT_LENGTH = PASSWORD_MAX_LENGTH * 2;
 /** A password reset link works this long after the message is sent. */
 export const PASSWORD_RESET_TTL_MS = 30 * 60_000;
 
+/** Public sign-up is open (SIGN_UP_ENABLED): the injection token, so specs can turn it on. */
+export const SIGN_UP_ENABLED = Symbol('SIGN_UP_ENABLED');
+/** A sign-up's confirmation link works this long after the message is sent. */
+export const SIGN_UP_TTL_MS = 24 * 60 * 60_000;
+/** Wrong passwords given with one sign-up's link before the sign-up is dropped. */
+export const SIGN_UP_MAX_FAILED_ATTEMPTS = 5;
+
 // Per client IP: credential stuffing protection. Counted on top of the global
 // limit (RATE_LIMIT_MAX), not instead of it: both apply, and whichever runs
 // out first blocks (@RouteRateLimit, common/guards/rate-limit.guard.ts).
@@ -41,6 +48,12 @@ export const PASSWORD_RESET_CONFIRM_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec
 // Changing the password while signed in: each attempt checks the current
 // password, so it is limited like a sign-in.
 export const PASSWORD_CHANGE_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
+// Signing up, per IP: each request hashes a password and may send a message
+// (each address also gets at most one a minute and a few a day).
+export const SIGN_UP_RATE_LIMIT: RouteLimit = { limit: 5, ttlSec: 15 * 60 };
+// Confirming a sign-up checks the password chosen with it: limited like a
+// sign-in, besides the attempts each sign-up allows.
+export const SIGN_UP_CONFIRM_RATE_LIMIT: RouteLimit = { limit: 10, ttlSec: 15 * 60 };
 
 // In production the refresh cookie carries the __Host- prefix: browsers then
 // accept it only when Secure, without Domain and on Path=/, so a site on a

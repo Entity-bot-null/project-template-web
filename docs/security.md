@@ -72,8 +72,8 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   database failover does not sign anyone out.
 - **`has_session` cookie:** readable, no secret; tells the app whether a boot refresh is worth
   trying.
-- **Not included (REQUIERE CONFIGURACIÓN per product):** sign-up, email verification, MFA, SSO,
-  account lockout per user, session listing, account deletion.
+- **Not included (REQUIERE CONFIGURACIÓN per product):** MFA, SSO, account lockout per user,
+  session listing, account deletion.
 
 ### Passwords
 
@@ -136,6 +136,40 @@ needs a compliance claim verifies it itself.
   when and how, and links to password recovery in case it was not the owner. It carries no token.
 - **Logs** name the account by id, never its address; tokens, passwords and links are never logged
   (the logger also redacts credential shapes).
+
+### Sign-up
+
+Public sign-up is OPTIONAL: off unless `SIGN_UP_ENABLED=true`, which requires email (the boot
+fails otherwise); off, accounts are created by an operator (`user:create`). When it is on:
+
+- **No account until the address is confirmed.** `POST /api/auth/sign-ups` records a pending
+  sign-up (`sign_ups`: address, name, the password's Argon2id hash) and emails a link; the account
+  is created only when the link is confirmed. Sign-in, password recovery and the admin list never
+  see an unconfirmed sign-up, and an unconfirmed one cannot sign in. One pending sign-up per
+  address: a newer one replaces it and its link, unless its own message is held back by the
+  per-address limits (then the earlier one stays as it was).
+- **No account enumeration.** The answer (202) is the same, byte for byte and at once, for every
+  well-formed request whose password follows the policy (400 otherwise, which says nothing about
+  the address); the lookup, the hashing and the queueing run after it. An address that already
+  has an account gets a notice to its owner ("someone tried to create an account with this
+  address"), never a link; the person signing up cannot tell the difference.
+- **The confirmation needs the link AND the password chosen at sign-up**
+  (`POST /api/auth/sign-ups/confirm`). Someone who signs up with another person's address (to
+  pre-claim it) cannot use the account without that person's mailbox; and the person who receives
+  a link they did not ask for cannot finish the stranger's sign-up by opening it, because they do
+  not know its password. Wrong passwords count: the fifth drops the sign-up and its link (and the
+  route is limited per IP like a sign-in). The confirmation creates the account (role `member`)
+  and signs it in, ending any session the browser had, like a sign-in.
+- **The token:** 256 random bits, minted when the message is sent, only its SHA-256 stored on the
+  sign-up; 24 hours, once (the sign-up row is deleted in the transaction that creates the
+  account, under its row lock: two confirmations, one account). The link is
+  `APP_ORIGIN/confirm-sign-up#token=...`, handled like a reset link (fragment, removed from the
+  address bar and history, memory only, opening it changes nothing).
+- **Limits:** 5 sign-ups per 15 minutes per IP, 10 confirmations per 15 minutes per IP; per
+  address, one message a minute and `MAIL_DAILY_LIMIT_PER_ADDRESS` a day, shared with password
+  recovery. An address that gets an account by other means after the link was sent answers 409.
+- **Cleanup:** sign-ups whose link expired a day ago, or whose message never went out, are
+  deleted by the hourly sweep.
 
 ### Web client
 
@@ -694,7 +728,16 @@ Accepted on purpose, each with its way out:
   stopped. Way out: `RATE_LIMIT_STORE=redis`, per-account limits, CAPTCHA or MFA.
 - **Redaction recognizes credential shapes, not all personal data**: an email or a name written
   into a log message stays readable. Way out: log ids (review rule).
-- **No MFA, no account lockout**: product work (see Authentication). **No breached-password
+- **No MFA, no account lockout**: product work (see Authentication). **Sign-up has no CAPTCHA:**
+  automated sign-ups are bounded by the per-IP and per-address limits and need a working mailbox
+  to finish; a project that sees abuse adds a challenge (REQUIERE CONFIGURACIÓN). Someone can keep
+  replacing the pending sign-up of an address they do not own (each costs them a request within
+  the limits), delaying its owner's sign-up, never taking it.
+- **The per-address email limits can be spent by anyone.** They keep a mailbox from being flooded
+  (one message a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day, shared by password recovery and
+  sign-up), and so whoever asks for that many messages for an address keeps further ones from it
+  until the window passes: its owner's reset link waits too. Bounded per IP, not across many. Way
+  out: a higher daily limit, a challenge on the public forms, or an operator-sent link. **No breached-password
   service:** the policy refuses the most used passwords from a local list, so a password leaked
   elsewhere but not common passes. Way out: a k-anonymity range check (OPCIONAL; it sends a hash
   prefix to a third party).

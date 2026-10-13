@@ -98,13 +98,16 @@ test.describe('with email', () => {
   });
 });
 
-test('offers no recovery where email is off', async ({ page }) => {
+test('offers no recovery and no sign-up where email is off', async ({ page }) => {
   await page.route('**/api/auth/capabilities', (route) =>
-    route.fulfill({ json: { data: { passwordReset: false }, message: 'Operation successful' } }),
+    route.fulfill({
+      json: { data: { passwordReset: false, signUp: false }, message: 'Operation successful' },
+    }),
   );
   const answered = page.waitForResponse('**/api/auth/capabilities');
   await page.goto('/sign-in');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await answered;
   await expect(page.getByRole('link', { name: 'Forgot your password?' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Create an account' })).toHaveCount(0);
 });

@@ -250,6 +250,12 @@ export const EnvSchema = z
     // (a password reset, a confirmation); at most one a minute besides.
     // Security notices about an account are never held back.
     MAIL_DAILY_LIMIT_PER_ADDRESS: emptyAsUnset(z.coerce.number().int().min(1).max(100).default(10)),
+
+    // --- Accounts ------------------------------------------------------------
+    // Public sign-up (docs/security.md#sign-up): anyone can create a member
+    // account by confirming their address. Off by default: accounts are then
+    // created by an operator (user:create). Requires email.
+    SIGN_UP_ENABLED: flag.default(false),
   })
   .superRefine((values, ctx) => {
     // Browsers drop SameSite=None cookies that are not Secure, and cookies
@@ -319,7 +325,14 @@ export const EnvSchema = z
             'must be https in production (http only on loopback): links in messages carry one-time tokens',
         });
       }
-    } else if (values.MAIL_FROM !== undefined) {
+    } else if (values.SIGN_UP_ENABLED) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SIGN_UP_ENABLED'],
+        message: 'requires MAIL_SMTP_URL: a sign-up is confirmed with an emailed link',
+      });
+    }
+    if (values.MAIL_SMTP_URL === undefined && values.MAIL_FROM !== undefined) {
       ctx.addIssue({ code: 'custom', path: ['MAIL_FROM'], message: 'requires MAIL_SMTP_URL' });
     }
     // Error reports leave the network: encrypted in production.

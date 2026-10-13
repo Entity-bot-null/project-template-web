@@ -216,8 +216,28 @@ export function boot(): Promise<boolean> {
   return refresh();
 }
 
-export async function signIn(email: string, password: string): Promise<ApiResult<AuthSession>> {
-  const attempt = sendSignIn(email, password);
+export function signIn(email: string, password: string): Promise<ApiResult<AuthSession>> {
+  return startSession(() => call(api.POST('/api/auth/sign-in', { body: { email, password } })));
+}
+
+/**
+ * Confirms a sign-up with its link's token and the password chosen with it:
+ * the API creates the account and answers with its session, which starts
+ * here exactly like a sign-in's.
+ */
+export function confirmSignUp(token: string, password: string): Promise<ApiResult<AuthSession>> {
+  return startSession(() =>
+    call(api.POST('/api/auth/sign-ups/confirm', { body: { token, password } })),
+  );
+}
+
+// A request under /api/auth that answers with a new session and sets the
+// refresh cookie (sign-in, sign-up confirmation). Tracked so a sign-out retry
+// waits for it (retrySignOut).
+async function startSession(
+  send: () => Promise<ApiResult<AuthSession>>,
+): Promise<ApiResult<AuthSession>> {
+  const attempt = sendStartingSession(send);
   signInInFlight = attempt;
   try {
     return await attempt;
@@ -226,15 +246,17 @@ export async function signIn(email: string, password: string): Promise<ApiResult
   }
 }
 
-async function sendSignIn(email: string, password: string): Promise<ApiResult<AuthSession>> {
+async function sendStartingSession(
+  send: () => Promise<ApiResult<AuthSession>>,
+): Promise<ApiResult<AuthSession>> {
   // A logout or a rotation still on its way would overwrite the cookie this
   // sign-in sets: the logout clears it, a late rotation replaces it.
   if (logoutInFlight) await logoutInFlight;
   if (refreshInFlight) await refreshInFlight;
   // Another tab's refresh or logout goes through the same lock (withAuthLock).
-  const result = await withAuthLock(() =>
-    call(api.POST('/api/auth/sign-in', { body: { email, password } })),
-  );
+  // These routes are under /api/auth, which the 401 middleware leaves alone:
+  // nothing inside the lock waits for it.
+  const result = await withAuthLock(send);
   // Checked like a refresh: a proxy, a captive portal or a deploy in progress
   // can answer 2xx with something that is not a session.
   if (result.ok && !isSession(result.data)) {

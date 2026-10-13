@@ -301,6 +301,13 @@ describe('EnvSchema', () => {
       }
     });
 
+    it('keeps public sign-up off by default, and allows it only with email', () => {
+      expect(EnvSchema.parse(mail).SIGN_UP_ENABLED).toBe(false);
+      expect(EnvSchema.parse({ ...mail, SIGN_UP_ENABLED: 'true' }).SIGN_UP_ENABLED).toBe(true);
+      expect(issuePaths({ ...base, SIGN_UP_ENABLED: 'true' })).toEqual(['SIGN_UP_ENABLED']);
+      expect(issuePaths({ ...base, SIGN_UP_ENABLED: 'yes' })).toEqual(['SIGN_UP_ENABLED']);
+    });
+
     it('accepts only smtp:// or smtps:// with a host and nothing after it', () => {
       for (const value of [
         'http://smtp.acme.test',

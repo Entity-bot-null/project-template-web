@@ -52,6 +52,8 @@ const runEnv = {
   MAIL_SMTP_URL: mailpit?.smtpUrl ?? '',
   MAIL_FROM: mailpit === undefined ? '' : 'App <no-reply@example.test>',
   APP_ORIGIN: process.env.APP_ORIGIN ?? '',
+  // Public sign-up needs email: open whenever Mailpit is there.
+  SIGN_UP_ENABLED: mailpit === undefined ? 'false' : 'true',
 };
 execSync('pnpm exec prisma migrate deploy', { cwd: API_DIR, env: runEnv, stdio: 'inherit' });
 

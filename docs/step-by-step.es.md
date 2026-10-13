@@ -58,8 +58,9 @@ cuenta o de una decisión que nadie tenía cuando hizo falta.
 - [ ] **Quién** aprueba los despliegues a producción (al menos una persona además del autor), quién
       revisa el código (CODEOWNERS), quién recibe los reportes de seguridad y las alertas.
 - [ ] **Lo que la plantilla no decide por ti** (escribe la respuesta, aunque sea "más adelante"):
-      cómo consiguen los usuarios una cuenta (registro, invitaciones, SSO), la recuperación de
-      contraseña, los roles además de `member` y `admin`, el idioma y el diseño de la interfaz.
+      cómo consiguen los usuarios una cuenta (registro abierto, `SIGN_UP_ENABLED`, o solo cuentas
+      que crea un administrador; SSO), los roles además de `member` y `admin`, el idioma y el
+      diseño de la interfaz.
 
 ### 0.2 Crea las cuentas
 
@@ -462,10 +463,11 @@ request, CI, revisión, merge. Los primeros suelen ser:
 2. **Tu dominio de negocio** (los datos y las reglas de tu producto, no el dominio web). Añade tus tablas y tus módulos de la API junto a `users`, siguiendo las recetas:
    [how-to.md](how-to.md) (añadir una tabla, un módulo de la API, un endpoint, una pantalla, un
    rol, una variable de entorno).
-3. **Cómo se crean las cuentas.** La plantilla tiene inicio de sesión, sesiones y roles, pero no
-   registro, invitaciones ni recuperación de contraseña: implementa lo que se decidió en 0.1. Hasta
-   entonces, las cuentas se crean con el comando `create-user`
-   ([fase 8](#84-crea-el-primer-administrador)).
+3. **Cómo se crean las cuentas.** La plantilla tiene inicio de sesión, sesiones, roles,
+   recuperación y cambio de contraseña, y un registro público opcional confirmado por correo
+   (`SIGN_UP_ENABLED`, apagado por defecto), pero no invitaciones: ajústalo a lo que se decidió en
+   0.1. Los administradores, y todas las cuentas mientras el registro esté apagado, se crean con el
+   comando `create-user` ([fase 8](#84-crea-el-primer-administrador)).
 4. **Servicios opcionales**, solo si hacen falta: Redis (más de una instancia de la API),
    OpenTelemetry (trazas y métricas): [manual.es.md](manual.es.md#11-infraestructura-opcional).
 

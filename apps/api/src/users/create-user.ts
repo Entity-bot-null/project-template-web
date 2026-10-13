@@ -6,8 +6,8 @@ import { ROLES } from '../common/types/request-user.js';
 import type { PrismaClient } from '../prisma/generated/client.js';
 
 // Creates one account in any environment, production included: the audited
-// way to get the first administrator, since the template ships no sign-up
-// (docs/deploy-vps.md#9-create-the-first-administrator). Run by
+// way to get the first administrator (public sign-up, off by default, only
+// ever creates members: docs/deploy-vps.md#9-create-the-first-administrator). Run by
 // create-user.cli.ts, which reads the password from standard input, never
 // from the command line or the environment, where it would end up in shell
 // history and process listings.

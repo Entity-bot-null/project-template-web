@@ -19,6 +19,8 @@ import {
   REFRESH_COOKIE,
   REFRESH_RATE_LIMIT,
   SIGN_IN_RATE_LIMIT,
+  SIGN_UP_CONFIRM_RATE_LIMIT,
+  SIGN_UP_RATE_LIMIT,
 } from './auth.constants.js';
 import { AuthService } from './auth.service.js';
 import {
@@ -32,10 +34,15 @@ import {
   PasswordResetRequestSchema,
   type SignInDto,
   SignInSchema,
+  type SignUpConfirmDto,
+  SignUpConfirmSchema,
+  type SignUpDto,
+  SignUpSchema,
 } from './dto/auth.schemas.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { RefreshRaceLostException } from './sessions.service.js';
 import { clearSessionCookies, respondWithSession } from './session-cookies.js';
+import { SignUpService } from './sign-up.service.js';
 
 // Cross-site requests never reach these routes: the global Fetch Metadata
 // guard refuses them first (CSRF), and only JSON bodies are accepted.
@@ -45,6 +52,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly passwordReset: PasswordResetService,
+    private readonly signUp: SignUpService,
   ) {}
 
   @Post('sign-in')
@@ -120,10 +128,47 @@ export class AuthController {
 
   // Public and the same for everyone: the web app shows only what works here.
   @Get('capabilities')
-  @ApiOperation({ summary: 'What this deployment offers: password recovery by email' })
+  @ApiOperation({ summary: 'What this deployment offers: password recovery, public sign-up' })
   @ApiData(AuthCapabilitiesSchema)
   capabilities(): AuthCapabilities {
-    return { passwordReset: this.passwordReset.available };
+    return { passwordReset: this.passwordReset.available, signUp: this.signUp.available };
+  }
+
+  // Public sign-up (docs/security.md#sign-up), when SIGN_UP_ENABLED. The same
+  // answer, at the same speed, whether the address has an account or not.
+  @Post('sign-ups')
+  @HttpCode(202)
+  @RouteRateLimit(SIGN_UP_RATE_LIMIT)
+  @ApiOperation({
+    summary: 'Sign up: ask for a confirmation link',
+    description:
+      'Answers 202 for any well-formed request whose password follows the policy. A new address gets a one-time link (valid 24 hours) to confirm it; one that already has an account gets a notice to its owner instead. No account exists until the link is confirmed. 400: the password is refused (too short, too common, too easy to guess, or containing the email or name). 403: sign-up is closed here.',
+  })
+  @ZodBody(SignUpSchema)
+  @ApiResponse({ status: 202, description: 'Accepted' })
+  @ApiErrors(400, 403)
+  requestSignUp(@Body() body: SignUpDto): void {
+    this.signUp.request(body);
+  }
+
+  @Post('sign-ups/confirm')
+  @HttpCode(200)
+  @RouteRateLimit(SIGN_UP_CONFIRM_RATE_LIMIT)
+  @ApiOperation({
+    summary: "Confirm a sign-up with its link's token and its password",
+    description:
+      'Creates the account and signs it in, like a sign-in (refresh cookie, access token). 401: not the password chosen at sign-up (a few wrong ones drop the sign-up). 403: sign-up is closed here. 404: the link is invalid, replaced, used or expired. 409: the address got an account meanwhile.',
+  })
+  @ZodBody(SignUpConfirmSchema)
+  @ApiData(AuthSessionSchema)
+  @ApiErrors(400, 401, 403, 404, 409)
+  async confirmSignUp(
+    @Body() body: SignUpConfirmDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<ApiEnvelope<AuthSession>> {
+    const result = await this.signUp.confirm(body.token, body.password, refreshTokenOf(req));
+    return respondWithSession(res, result, 'Account created');
   }
 
   // The same answer, at the same speed, for every address: whether it has an

@@ -5,6 +5,7 @@ import { call } from '../api/errors';
 /** What this deployment offers (GET /api/auth/capabilities); null until known. */
 export interface Capabilities {
   passwordReset: boolean;
+  signUp: boolean;
 }
 
 let pending: Promise<Capabilities | null> | undefined;

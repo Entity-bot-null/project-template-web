@@ -55,8 +55,8 @@ had when it was needed.
 - [ ] **Who** approves production deployments (at least one person besides the author), who
       reviews code (CODEOWNERS), who receives security reports and alerts.
 - [ ] **What the template does not decide for you** (write the answer, even "later"): how users
-      get an account (sign-up, invitations, SSO), password reset, the roles beyond `member` and
-      `admin`, the UI language and design.
+      get an account (open sign-up, `SIGN_UP_ENABLED`, or only accounts an administrator creates;
+      SSO), the roles beyond `member` and `admin`, the UI language and design.
 
 ### 0.2 Create the accounts
 
@@ -449,9 +449,11 @@ request, CI, review, merge. The first ones usually are:
 2. **Your domain.** Add your tables and API modules next to `users`, following the recipes:
    [how-to.md](how-to.md) (add a table, an API module, an endpoint, a screen, a role, an
    environment variable).
-3. **How accounts are created.** The template has sign-in, sessions and roles, but no sign-up,
-   invitations or password reset: implement what 0.1 decided. Until then, accounts are created with
-   the `create-user` command ([phase 8](#84-create-the-first-administrator)).
+3. **How accounts are created.** The template has sign-in, sessions, roles, password recovery and
+   change, and an optional public sign-up confirmed by email (`SIGN_UP_ENABLED`, off by default),
+   but no invitations: adjust it to what 0.1 decided. Administrators, and every account while
+   sign-up is off, are created with the `create-user` command
+   ([phase 8](#84-create-the-first-administrator)).
 4. **Optional services**, only if needed: Redis (more than one API instance), OpenTelemetry
    (traces and metrics): [manual.md](manual.md#11-optional-infrastructure).
 

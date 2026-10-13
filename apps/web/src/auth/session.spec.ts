@@ -14,6 +14,7 @@ import {
   boot,
   changePassword,
   clearSession,
+  confirmSignUp,
   getAccessToken,
   getState,
   refresh,
@@ -695,5 +696,40 @@ describe('changePassword', () => {
     expect(odd.ok ? null : odd.failure.status).toBe(502);
     expect(getAccessToken()).toBe('token-1');
     expect(getState()).toEqual({ status: 'authenticated', user: member });
+  });
+});
+
+describe('confirmSignUp', () => {
+  const CONFIRM = 'POST /api/auth/sign-ups/confirm';
+
+  it('starts the new account session like a sign-in, after a rotation in flight', async () => {
+    const rotation = deferred<Response>();
+    const { calls } = stubFetch({
+      [REFRESH]: () => rotation.promise,
+      [CONFIRM]: () => session('token-new', admin),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const renewed = refresh();
+    const confirmed = confirmSignUp('t'.repeat(43), 'violet harbour lantern 7');
+    await Promise.resolve();
+    expect(calls.map(routeOf)).toEqual([REFRESH]);
+    rotation.resolve(session('token-2'));
+    await renewed;
+    expect((await confirmed).ok).toBe(true);
+    expect(calls.map(routeOf)).toEqual([REFRESH, CONFIRM]);
+    // An /api/auth route: anonymous, no bearer header.
+    expect(calls[1]?.headers.get('Authorization')).toBeNull();
+    expect(getAccessToken()).toBe('token-new');
+    expect(getState()).toEqual({ status: 'authenticated', user: admin });
+  });
+
+  it('stores nothing from a refusal or from an answer that is not a session', async () => {
+    stubFetch({ [CONFIRM]: () => failure(401, 'This is not the password chosen at sign-up') });
+    const refused = await confirmSignUp('t'.repeat(43), 'wrong');
+    expect(refused.ok ? null : refused.failure.status).toBe(401);
+    stubFetch({ [CONFIRM]: () => ok({ unexpected: true }) });
+    const odd = await confirmSignUp('t'.repeat(43), 'violet harbour lantern 7');
+    expect(odd.ok ? null : odd.failure.status).toBe(502);
+    expect(getAccessToken()).toBeNull();
   });
 });

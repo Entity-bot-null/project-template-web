@@ -311,10 +311,14 @@
                       "properties": {
                         "passwordReset": {
                           "type": "boolean"
+                        },
+                        "signUp": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
-                        "passwordReset"
+                        "passwordReset",
+                        "signUp"
                       ],
                       "additionalProperties": false
                     },
@@ -337,7 +341,249 @@
             }
           }
         },
-        "summary": "What this deployment offers: password recovery by email",
+        "summary": "What this deployment offers: password recovery, public sign-up",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/sign-ups": {
+      "post": {
+        "description": "Answers 202 for any well-formed request whose password follows the policy. A new address gets a one-time link (valid 24 hours) to confirm it; one that already has an account gets a notice to its owner instead. No account exists until the link is confirmed. 400: the password is refused (too short, too common, too easy to guess, or containing the email or name). 403: sign-up is closed here.",
+        "operationId": "AuthController_requestSignUp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "format": "email",
+                    "type": "string",
+                    "maxLength": 254
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "email",
+                  "name",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Sign up: ask for a confirmation link",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/sign-ups/confirm": {
+      "post": {
+        "description": "Creates the account and signs it in, like a sign-in (refresh cookie, access token). 401: not the password chosen at sign-up (a few wrong ones drop the sign-up). 403: sign-up is closed here. 404: the link is invalid, replaced, used or expired. 409: the address got an account meanwhile.",
+        "operationId": "AuthController_confirmSignUp",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 400
+                  }
+                },
+                "required": [
+                  "token",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "message"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "accessToken": {
+                          "type": "string"
+                        },
+                        "expiresIn": {
+                          "type": "integer"
+                        },
+                        "user": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "email": {
+                              "type": "string",
+                              "format": "email"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "admin"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "email",
+                            "name",
+                            "role"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "accessToken",
+                        "expiresIn",
+                        "user"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Confirm a sign-up with its link's token and its password",
         "tags": [
           "auth"
         ]
@@ -1193,6 +1439,8 @@
                       "/sign-in",
                       "/forgot-password",
                       "/reset-password",
+                      "/sign-up",
+                      "/confirm-sign-up",
                       "/account",
                       "/admin/users",
                       "/*"
