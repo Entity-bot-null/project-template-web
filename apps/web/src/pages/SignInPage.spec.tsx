@@ -118,12 +118,22 @@ describe('the way back into an account', () => {
     });
     const router = renderRoute('/sign-in');
     await expect.poll(() => attempts).toBe(1);
-    // Settled (a screen mounted while it is in flight shares it).
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('link', { name: 'Forgot your password?' })).toBeNull();
+    // Visit again until the failure has settled: a page that opens while the
+    // first answer is still on its way shares it, one that opens after asks
+    // again.
+    await expect
+      .poll(async () => {
+        await act(() => router.navigate('/no/such/page'));
+        await act(() => router.navigate('/sign-in'));
+        return attempts;
+      })
+      .toBe(2);
+    expect(await screen.findByRole('link', { name: 'Forgot your password?' })).toBeInTheDocument();
+    // Remembered once it worked: no third request.
     await act(() => router.navigate('/no/such/page'));
     await act(() => router.navigate('/sign-in'));
-    expect(await screen.findByRole('link', { name: 'Forgot your password?' })).toBeInTheDocument();
+    await screen.findByRole('link', { name: 'Forgot your password?' });
     expect(attempts).toBe(2);
   });
 });

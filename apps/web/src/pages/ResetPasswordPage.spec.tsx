@@ -32,8 +32,10 @@ describe('ResetPasswordPage', () => {
     stubFetch({});
     const router = renderRoute(LINK);
     await screen.findByRole('heading', { name: 'Choose a new password' });
+    // Replaced by an effect right after the first render: the navigation that
+    // follows it lands a moment later.
+    await expect.poll(() => router.state.location.hash).toBe('');
     expect(router.state.location.pathname).toBe('/reset-password');
-    expect(router.state.location.hash).toBe('');
     // Replaced, not pushed: the back button does not bring it back.
     expect(router.state.historyAction).toBe('REPLACE');
   });
