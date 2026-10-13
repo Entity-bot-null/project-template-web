@@ -22,18 +22,23 @@ enum Role {
 }
 
 model User {
-  id           String   @id @default(uuid(7)) @db.Uuid
+  id              String   @id @default(uuid(7)) @db.Uuid
   // Stored trimmed and lowercased (normalizeEmail) so the unique index is
   // case-insensitive in practice.
-  email        String   @unique
-  name         String
-  passwordHash String   @map("password_hash")
-  role         Role     @default(member)
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  email           String   @unique
+  name            String
+  passwordHash    String   @map("password_hash")
+  role            Role     @default(member)
+  // Raised by every change that must end what was granted before it (a new
+  // password): access tokens carry it (claim sv) and are refused once it moved
+  // on, and one-time tokens minted under an older value no longer work.
+  securityVersion Int      @default(0) @map("security_version")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  sessions     Session[]
-  mailMessages MailMessage[]
+  sessions      Session[]
+  mailMessages  MailMessage[]
+  accountTokens AccountToken[]
 
   @@map("users")
 }
@@ -73,6 +78,10 @@ model Session {
 enum MailKind {
   // An operator's delivery check (pnpm --filter api mail:test).
   test
+  // A link to choose a new password (anyone can ask for one: limited).
+  password_reset
+  // The password of an account was changed or reset (a security notice).
+  password_changed
 }
 
 enum MailStatus {
@@ -136,4 +145,36 @@ model MailMessage {
   @@index([createdAt])
   @@index([userId])
   @@map("mail_messages")
+}
+
+// What a one-time token is for.
+enum AccountTokenPurpose {
+  password_reset
+}
+
+// One-time tokens sent in emailed links (docs/security.md#one-time-tokens).
+// Only the SHA-256 of the token is stored: the token itself exists in the
+// message on its way, never in the database or the outbox. A token works
+// once (usedAt), until expiresAt, and only while the account is as it was
+// when it was minted: the same securityVersion and, for an address-bound
+// purpose, the same email. Minting one deletes the previous unused ones of
+// the same purpose, so at most one link works.
+model AccountToken {
+  id              String              @id @default(uuid(7)) @db.Uuid
+  userId          String              @map("user_id") @db.Uuid
+  purpose         AccountTokenPurpose
+  tokenHash       String              @unique @map("token_hash")
+  securityVersion Int                 @map("security_version")
+  // The address the link was sent to.
+  email           String
+  expiresAt       DateTime            @map("expires_at") @db.Timestamptz(3)
+  usedAt          DateTime?           @map("used_at") @db.Timestamptz(3)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  // The sweep deletes expired and used tokens.
+  @@index([expiresAt])
+  @@map("account_tokens")
 }

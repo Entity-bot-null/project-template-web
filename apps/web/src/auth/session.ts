@@ -249,6 +249,41 @@ async function sendSignIn(email: string, password: string): Promise<ApiResult<Au
 }
 
 /**
+ * Changes the signed-in user's password (POST /api/account/password). The
+ * API ends every session of the account and answers with a new one, and a
+ * new refresh cookie, for this browser: stored as a sign-in's is. A logout or
+ * a rotation in flight goes first (its answer would overwrite the new
+ * cookie), and the epoch moves on, so a refresh started meanwhile cannot put
+ * the ended session back when it lands.
+ *
+ * Unlike a sign-in it does not take the cross-tab lock: it is an
+ * authenticated request, and renewing an expired access token (the 401
+ * middleware) takes that lock, which would then wait for itself forever. A
+ * renewal at that very instant (another tab's, or another request's of this
+ * one) can therefore leave its older cookie in the jar. That session ended on
+ * the server: the worst outcome is a sign-in with the new password, never a
+ * session the change ended.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<ApiResult<AuthSession>> {
+  if (logoutInFlight) await logoutInFlight;
+  if (refreshInFlight) await refreshInFlight;
+  const result = await call(
+    api.POST('/api/account/password', { body: { currentPassword, newPassword } }),
+  );
+  if (result.ok && !isSession(result.data)) {
+    return { ok: false, failure: { status: 502, message: 'The answer was not a session' } };
+  }
+  if (result.ok) {
+    epoch += 1;
+    setSession(result.data);
+  }
+  return result;
+}
+
+/**
  * Signs out: at once in this tab and the others, then on the server. Resolves
  * false when the server could not be reached. The refresh cookie may then
  * still be valid, so the state says so and the sign-in page offers a retry.

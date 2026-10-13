@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { describeFailure } from '../api/errors';
 import { useAuth } from '../auth';
+import { useCapabilities } from '../auth/capabilities';
 import { emailError, passwordError } from '../auth/validation';
 import { Alert } from '../components/Alert';
 
@@ -13,6 +15,8 @@ interface FieldErrors {
 // sends the user on (back where they came from, or home).
 export function SignInPage() {
   const auth = useAuth();
+  // The link shows only where recovery works (email configured).
+  const capabilities = useCapabilities();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({ email: null, password: null });
@@ -102,6 +106,11 @@ export function SignInPage() {
         <button type="submit" disabled={submitting}>
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
+        {capabilities?.passwordReset === true && (
+          <p>
+            <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
+        )}
       </form>
     </main>
   );

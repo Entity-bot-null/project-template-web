@@ -60,9 +60,10 @@ export function cookiesOf(res: request.Response): string[] {
 export const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 /**
- * A bearer header minted with the app's own signer: the guard verifies tokens
- * offline, so suites that only need "some admin" need no database row.
+ * A bearer header minted with the app's own signer, for a user the suite
+ * created (seedUser): the guard checks the token's securityVersion (sv)
+ * against the account's, 0 for a new one.
  */
-export function asUser(app: INestApplication, id: string, role: Role = 'member') {
-  return bearer(app.get(JwtService).sign({ sub: id, role }));
+export function asUser(app: INestApplication, id: string, role: Role = 'member', sv = 0) {
+  return bearer(app.get(JwtService).sign({ sub: id, role, sv }));
 }

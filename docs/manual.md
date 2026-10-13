@@ -195,8 +195,8 @@ Stop it with `Ctrl+C`, then `docker compose --profile stack down`.
 
 - UI language, the design system (`apps/web/src/index.css` is a placeholder), the product name.
 - Roles: [how-to.md](how-to.md#add-a-role).
-- The account lifecycle the product needs: sign-up, verification, password reset, MFA or SSO
-  (docs/security.md#authentication-and-tokens).
+- The account lifecycle the product needs beyond password recovery and change: sign-up,
+  verification, MFA or SSO (docs/security.md#authentication-and-tokens).
 - Replace or extend the example `users` module with your domain; keep `auth`, `health`, `common`,
   `observability`, `infrastructure` and `lifecycle`.
 - Coverage thresholds and the performance budget stay as floors; adjust them deliberately
@@ -824,7 +824,8 @@ APP_ORIGIN=https://<your domain>
 ```
 
 or `smtp://...:587`: production requires STARTTLS on it and refuses a server without TLS (Mailpit
-among them). `APP_ORIGIN` is where links in messages point: never a request's Host. Before the
+among them), except one on the machine itself (`localhost`, `127.0.0.1`, `[::1]`).
+`APP_ORIGIN` is where links in messages point: never a request's Host. Before the
 first message, authenticate the sending domain at the provider (SPF, DKIM, DMARC): without them
 messages land in spam or are refused. Then, from the API image:
 
@@ -838,6 +839,15 @@ messages again once the cause is fixed. Alerts `ApiMailBacklog` and `ApiMailDeli
 the runbook: [incident-response.md](incident-response.md#16-email-not-delivered). To rotate the SMTP
 credentials, create the new ones at the provider, update `MAIL_SMTP_URL`, redeploy, then revoke the
 old ones; messages waiting meanwhile go out with their next attempt.
+
+**Password recovery and change.** With email on, the sign-in page offers "Forgot your password?":
+the person enters their address, receives a link valid for 30 minutes and once, and chooses a new
+password (15 characters or more; the rules: [security.md](security.md#passwords)). Signed in, the
+Account page (top menu) changes it with the current one. Either way every other session of the
+account is signed out at once, and the owner gets a "your password was changed" message. Try it
+locally: `pnpm dev`, sign out, "Forgot your password?" with `member@example.com`, and open the
+link from Mailpit (http://localhost:8035). Without email the link is not shown and the reset
+routes answer 503; changing it while signed in still works.
 
 ## 12. Running in production
 

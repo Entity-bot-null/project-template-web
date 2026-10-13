@@ -65,7 +65,9 @@ src/
   infrastructure/    optional infrastructure behind interfaces: redis/ (connection),
                      rate-limit/, cache/, coordination/ (locks, idempotency)
   lifecycle/         shutdown sequence (drain, close, flush)
-  auth/              sign-in, refresh rotation, logout, JWT guard, roles guard, @Auth()
+  auth/              sign-in, refresh rotation, logout, JWT guard, roles guard, @Auth(),
+                     password policy, one-time tokens, password recovery
+  account/           the signed-in user's own account (password change)
   users/             example resource: me, admin list, owner-or-admin read
   health/            liveness and readiness probes
   prisma/            PrismaService (generated client in prisma/generated, ignored by git)
@@ -266,6 +268,28 @@ MailWorker (every instance) ── claim one due row (lease 2 min, FOR UPDATE SK
   Locally and in CI, Mailpit catches every message.
 - **Adding a message:** [the recipe](how-to.md#send-an-email).
 
+### Account credentials
+
+Password recovery and change ([security.md](security.md#password-recovery-and-change)):
+
+```
+auth/password-policy.ts      the rules of a new password (length, common list, predictable, account)
+auth/password.ts             Argon2id hash and check, NFKC-normalized
+auth/account-tokens.ts       one-time tokens: mint (hash stored), consume (locked, once), sweep
+auth/password-reset.service  POST /api/auth/password-resets (+ /confirm); answers before the lookup
+account/                     the signed-in user's own account: POST /api/account/password
+templates/password-*.ts      the reset link (token minted at send time) and the changed notice
+```
+
+- **`users.security_version`:** incremented by every credential change, in the same transaction;
+  access tokens carry it (`sv`) and `JwtAuthGuard` compares it on every request, so the change
+  ends them at once. One-time tokens record it too: a token minted before a change no longer works.
+- **Lock order:** the account's row (`lockUser`), then the token's row: the same order as every
+  session change, so a reset, a change, a sign-in and a refresh never deadlock or interleave.
+- **Email off:** `GET /api/auth/capabilities` answers `{ passwordReset: false }` and the web app
+  hides the link; the reset routes answer 503. Changing the password while signed in works either
+  way (the notice is then not sent).
+
 ### Job queues
 
 Not included: no queue library is installed until a project needs one. The integration point, when
@@ -298,10 +322,12 @@ src/
   router.tsx           every route, guarded as layout routes
   api/                 client.ts (openapi-fetch), errors.ts (call, describeFailure), schema.d.ts (generated)
   monitoring/          runtime config (/app-config.json), error tracking (Sentry), Web Vitals; lazy chunks
-  auth/                session store (token in memory), 401 middleware, guards, useAuth
+  auth/                session store (token in memory), 401 middleware, guards, useAuth,
+                       capabilities (what the deployment offers), new-password rules
   hooks/               useLoader (load, retry, stale-response protection)
   components/          layout and shared UI
-  pages/               one component per screen
+  pages/               one component per screen; the rarely visited ones (password recovery,
+                       account) load when opened (lazy routes)
   test/                setup, HTTP mocks, fixtures, render helper
 ```
 
