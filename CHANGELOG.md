@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0](https://github.com/Entity-bot-null/project-template-web/compare/v1.1.2...v1.2.0) (2026-10-13)
+
+
+### Features
+
+* **account:** change of email confirmed from the new address, undoable from the previous one ([#43](https://github.com/Entity-bot-null/project-template-web/issues/43)) ([a12e734](https://github.com/Entity-bot-null/project-template-web/commit/a12e734417c582a1d9aa1c1841c2098ca200e51a))
+* **api:** transactional email outbox over SMTP, with Mailpit for development and CI ([#40](https://github.com/Entity-bot-null/project-template-web/issues/40)) ([04ae24e](https://github.com/Entity-bot-null/project-template-web/commit/04ae24ecde2cb81c4bbbaa81703441133c8a1df1))
+* **auth:** optional public sign-up, confirmed by an emailed link and the chosen password ([#42](https://github.com/Entity-bot-null/project-template-web/issues/42)) ([b821bc4](https://github.com/Entity-bot-null/project-template-web/commit/b821bc4e1f021f21e6070d613c833f39f5d0cb31))
+* **auth:** password recovery by email link and password change, ending other sessions at once ([#41](https://github.com/Entity-bot-null/project-template-web/issues/41)) ([11103e6](https://github.com/Entity-bot-null/project-template-web/commit/11103e67edcbfcc5aa1182535cc15fca0aac117f))
+* **dev:** the app's URLs in a box under the dev servers' logs, database on port 5442 ([#39](https://github.com/Entity-bot-null/project-template-web/issues/39)) ([7a2c258](https://github.com/Entity-bot-null/project-template-web/commit/7a2c258f767d2783b81e9fb31276b8c4dc72a561))
+* **invitations:** administrators invite people to create an account with a role ([#44](https://github.com/Entity-bot-null/project-template-web/issues/44)) ([e556f90](https://github.com/Entity-bot-null/project-template-web/commit/e556f90da796eda06ee7cba94496e52029ddaef3))
+
+
+### Bug fixes
+
+* **ci:** pull service containers and image base images through the mirror ([#37](https://github.com/Entity-bot-null/project-template-web/issues/37)) ([6c3d346](https://github.com/Entity-bot-null/project-template-web/commit/6c3d346ff4c8421f794d2771667ccebed351fde6))
+* **security:** findings of the independent review, audit and penetration test ([#45](https://github.com/Entity-bot-null/project-template-web/issues/45)) ([edc2c9d](https://github.com/Entity-bot-null/project-template-web/commit/edc2c9df9cebb92a87e406f387ece5dcb3f569e8))
+
 ## [1.1.2](https://github.com/Entity-bot-null/project-template-web/compare/v1.1.1...v1.1.2) (2026-10-12)
 
 
