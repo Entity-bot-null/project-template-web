@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../api/client';
-import { call, describeFailure } from '../api/errors';
+import { call, describeFailure, failedField } from '../api/errors';
 import { useAuth } from '../auth';
+import { getState } from '../auth/session';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
-import { useLinkToken } from '../auth/useLinkToken';
+import { type LinkToken, useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 import { PasswordField } from '../components/PasswordField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 type Outcome = 'changed' | 'invalid-link' | null;
 
@@ -14,8 +17,14 @@ type Outcome = 'changed' | 'invalid-link' | null;
 // handled by useLinkToken: out of the address bar and the history at once,
 // in memory only, dropped once used; opening the link changes nothing.
 export function ResetPasswordPage() {
+  // Keyed by the link: a second link opened in this tab starts the page over.
+  const { linkId, ...link } = useLinkToken();
+  return <ResetPasswordContent key={linkId} {...link} />;
+}
+
+function ResetPasswordContent({ token, dropToken }: LinkToken) {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const auth = useAuth();
-  const [token, dropToken] = useLinkToken();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -39,13 +48,15 @@ export function ResetPasswordPage() {
       // Every session of the account ended on the server. This browser's
       // may be one of them, or another account's (a shared computer): it
       // signs out either way rather than guess.
-      if (auth.status === 'authenticated') void auth.signOut();
+      // The store's state now, not this render's: a boot refresh may have
+      // signed this tab in while the request was on its way.
+      if (getState().status === 'authenticated') void auth.signOut();
       return;
     }
     if (result.failure.status === 404) {
       dropToken();
       setOutcome('invalid-link');
-    } else if (result.failure.status === 400) {
+    } else if (failedField(result.failure) === 'password') {
       setError('Choose another password: this one is among the most used, or too easy to guess.');
     } else {
       setFailure(describeFailure(result.failure));
@@ -55,7 +66,7 @@ export function ResetPasswordPage() {
   if (outcome === 'changed') {
     return (
       <main className="auth-page stack">
-        <h1>Password changed</h1>
+        <FocusHeading>Password changed</FocusHeading>
         <Alert tone="info">
           Your password was changed, and every session of your account was signed out.
         </Alert>
@@ -69,7 +80,7 @@ export function ResetPasswordPage() {
   if (token === null) {
     return (
       <main className="auth-page stack">
-        <h1>This link does not work</h1>
+        <FocusHeading>This link does not work</FocusHeading>
         <Alert>
           {outcome === 'invalid-link'
             ? 'This link was already used, has expired, or was replaced by a newer one.'
@@ -86,11 +97,12 @@ export function ResetPasswordPage() {
     <main className="auth-page">
       <h1>Choose a new password</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit(token);
+          void submit(token).then(focusInvalid);
         }}
       >
         {failure !== null && <Alert>{failure}</Alert>}

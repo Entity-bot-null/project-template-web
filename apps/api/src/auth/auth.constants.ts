@@ -40,6 +40,8 @@ export const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60_000;
 export const EMAIL_REVERT_TTL_MS = 7 * 24 * 60 * 60_000;
 /** An invitation's link works this long after it is sent. */
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60_000;
+/** An invitation's message is worth sending this long after it is queued. */
+export const INVITATION_MESSAGE_TTL_MS = 24 * 60 * 60_000;
 
 // Per client IP: credential stuffing protection. Counted on top of the global
 // limit (RATE_LIMIT_MAX), not instead of it: both apply, and whichever runs

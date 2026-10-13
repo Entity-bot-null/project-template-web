@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { describeFailure } from '../api/errors';
 import { useAuth } from '../auth';
-import { useLinkToken } from '../auth/useLinkToken';
+import { type LinkToken, useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 import { PasswordField } from '../components/PasswordField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 type Outcome = 'invalid-link' | 'exists' | null;
 
@@ -15,9 +17,15 @@ type Outcome = 'invalid-link' | 'exists' | null;
 // so a person who gets a message they did not ask for cannot finish someone
 // else's sign-up.
 export function ConfirmSignUpPage() {
+  // Keyed by the link: a second link opened in this tab starts the page over.
+  const { linkId, ...link } = useLinkToken();
+  return <ConfirmSignUpContent key={linkId} {...link} />;
+}
+
+function ConfirmSignUpContent({ token, dropToken }: LinkToken) {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const auth = useAuth();
   const navigate = useNavigate();
-  const [token, dropToken] = useLinkToken();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -61,7 +69,7 @@ export function ConfirmSignUpPage() {
   if (outcome === 'exists') {
     return (
       <main className="auth-page stack">
-        <h1>You already have an account</h1>
+        <FocusHeading>You already have an account</FocusHeading>
         <Alert tone="info">An account with this address exists: sign in with it.</Alert>
         <p>
           <Link to="/sign-in">Sign in</Link>
@@ -73,7 +81,7 @@ export function ConfirmSignUpPage() {
   if (token === null) {
     return (
       <main className="auth-page stack">
-        <h1>This link does not work</h1>
+        <FocusHeading>This link does not work</FocusHeading>
         <Alert>
           {outcome === 'invalid-link'
             ? 'This link was already used, has expired, or was replaced by a newer sign-up.'
@@ -90,11 +98,12 @@ export function ConfirmSignUpPage() {
     <main className="auth-page">
       <h1>Confirm your account</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit(token);
+          void submit(token).then(focusInvalid);
         }}
       >
         <p>Enter the password you chose when signing up to finish creating your account.</p>

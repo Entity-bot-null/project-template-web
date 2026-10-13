@@ -1,9 +1,9 @@
-import { screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearSession, getState, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, stubFetch } from '../test/http';
+import { deferred, failure, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const CONFIRM = 'POST /api/auth/password-resets/confirm';
@@ -127,5 +127,52 @@ describe('ResetPasswordPage', () => {
     await expect
       .poll(() => calls.map((request) => new URL(request.url).pathname))
       .toEqual(['/api/auth/password-resets/confirm', '/api/auth/logout']);
+  });
+
+  it('starts over with a second link opened in the same tab (only the part after # changes)', async () => {
+    const OTHER = 'Second_link-9'.padEnd(43, 'm');
+    let attempts = 0;
+    const { calls } = stubFetch({
+      [CONFIRM]: () => (attempts++ === 0 ? failure(404, 'This link is invalid') : done()),
+    });
+    const router = renderRoute(LINK);
+    await choose(GOOD);
+    expect(
+      await screen.findByRole('heading', { name: 'This link does not work' }),
+    ).toBeInTheDocument();
+    await act(() => router.navigate(`/reset-password#token=${OTHER}`));
+    await choose(GOOD);
+    expect(await screen.findByRole('heading', { name: 'Password changed' })).toBeInTheDocument();
+    await expect(calls[1]?.json()).resolves.toEqual({ token: OTHER, password: GOOD });
+  });
+
+  it('signs out a tab that got signed in while the link was being used (a boot refresh)', async () => {
+    const answer = deferred<Response>();
+    const { calls } = stubFetch({
+      [CONFIRM]: () => answer.promise,
+      'POST /api/auth/logout': () => new Response(null, { status: 204 }),
+    });
+    renderRoute(LINK);
+    await choose(GOOD);
+    // Signed in after the click, before the answer.
+    act(() => {
+      setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    });
+    answer.resolve(done());
+    await screen.findByRole('heading', { name: 'Password changed' });
+    await expect.poll(() => getState().status).toBe('anonymous');
+    await expect
+      .poll(() => calls.map((request) => new URL(request.url).pathname))
+      .toContain('/api/auth/logout');
+  });
+
+  it('moves the focus to the field with the problem, and to the heading of a new view', async () => {
+    stubFetch({ [CONFIRM]: done });
+    renderRoute(LINK);
+    await choose('short');
+    expect(screen.getByLabelText('New password')).toHaveFocus();
+    await userEvent.setup().type(screen.getByLabelText('New password'), ' violet harbour lantern');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Save the new password' }));
+    expect(await screen.findByRole('heading', { name: 'Password changed' })).toHaveFocus();
   });
 });

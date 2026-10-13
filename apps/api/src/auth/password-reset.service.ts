@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { errorSummary } from '../common/logging/error-summary.js';
 import { MailOutboxService } from '../infrastructure/mail/mail-outbox.service.js';
 import type { PasswordChangedPayload } from '../infrastructure/mail/templates/password-changed.template.js';
 import { Prisma } from '../prisma/generated/client.js';
@@ -50,9 +51,7 @@ export class PasswordResetService {
       throw new ServiceUnavailableException('Password recovery is not available');
     const work: Promise<void> = this.queueLink(normalizeEmail(email))
       .catch((error: unknown) => {
-        this.logger.error(
-          `Could not queue a password reset message: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        this.logger.error(`Could not queue a password reset message: ${errorSummary(error)}`);
       })
       .finally(() => {
         this.pending.delete(work);
@@ -76,7 +75,7 @@ export class PasswordResetService {
    * new password.
    */
   async confirm(token: string, password: string): Promise<void> {
-    const ownerId = await tokenOwner(this.prisma, token);
+    const ownerId = await tokenOwner(this.prisma, token, 'password_reset');
     const owner =
       ownerId === undefined
         ? null

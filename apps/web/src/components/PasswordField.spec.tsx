@@ -28,15 +28,14 @@ describe('PasswordField', () => {
     expect(input).toHaveAttribute('autocomplete', 'new-password');
 
     const toggle = screen.getByRole('button', { name: 'Show new password' });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
     expect(toggle).toHaveAttribute('aria-controls', input.id);
+    // One signal of its state, its name: not a pressed state on top of it.
+    expect(toggle).not.toHaveAttribute('aria-pressed');
     await user.click(toggle);
     expect(input).toHaveAttribute('type', 'text');
     expect(input).toHaveValue('violet harbour');
-    expect(screen.getByRole('button', { name: 'Hide new password' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(toggle).toHaveAccessibleName('Hide new password');
+    expect(toggle).toHaveTextContent('Hide');
 
     // From the keyboard too: it is a real button.
     toggle.focus();

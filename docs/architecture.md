@@ -241,7 +241,8 @@ MailWorker (every instance) ── claim one due row (lease 2 min, FOR UPDATE SK
   committed. After the commit, `notifyQueued()` wakes this instance's worker at once; otherwise
   every worker polls every 5 seconds.
 - **Several instances:** one atomic `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`
-  claims one message for one worker; every later transition requires the same claim (status
+  claims one message for one worker, security notices (the kinds nobody can request) before the
+  others, so a flood of requested messages never delays a "your password was changed"; every later transition requires the same claim (status
   `sending`, same attempt), so a worker whose lease ran out cannot overwrite another's outcome.
 - **Retries:** the SMTP reply decides: 4xx and connection failures are retried (30 s doubling to
   an hour, equal jitter, at most `MAIL_MAX_ATTEMPTS`), 5xx fails the message at once; refused
@@ -284,10 +285,10 @@ account/                     the signed-in user's own account: POST /api/account
 templates/password-*.ts      the reset link (token minted at send time) and the changed notice
 templates/sign-up-*.ts       the confirmation link, and the notice to an address that has an account
 templates/email-change*.ts   the link to the new address, the notice to an address that has an account
-templates/email-changed.ts   the notice to the previous address, with the undo link (7 days)
+templates/email-changed.template.ts  the notice to the previous address, with the undo link (7 days)
 invitations/                 administrators invite (/api/admin/invitations), people accept
                              (/api/auth/invitations/accept); the invitations table
-templates/invitation.ts      the invitation link (7 days)
+templates/invitation.template.ts     the invitation link (7 days)
 ```
 
 - **`users.security_version`** (ADR [0004](adr/0004-security-version-in-access-tokens.md)):

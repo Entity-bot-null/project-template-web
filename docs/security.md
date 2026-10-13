@@ -157,8 +157,9 @@ fails otherwise); off, accounts are created by an operator (`user:create`). When
   (`POST /api/auth/sign-ups/confirm`). Someone who signs up with another person's address (to
   pre-claim it) cannot use the account without that person's mailbox; and the person who receives
   a link they did not ask for cannot finish the stranger's sign-up by opening it, because they do
-  not know its password. Wrong passwords count: the fifth drops the sign-up and its link (and the
-  route is limited per IP like a sign-in). The confirmation creates the account (role `member`)
+  not know its password. Every attempt is counted before its password is checked, in one atomic
+  statement, so requests sent in parallel cannot check more than five; a wrong fifth drops the
+  sign-up and its link (and the route is limited per IP like a sign-in). The confirmation creates the account (role `member`)
   and signs it in, ending any session the browser had, like a sign-in.
 - **The token:** 256 random bits, minted when the message is sent, only its SHA-256 stored on the
   sign-up; 24 hours, once (the sign-up row is deleted in the transaction that creates the
@@ -183,7 +184,10 @@ the role is checked by the API on every route, whatever the web app shows):
 - **The person chooses their own name and password** (`POST /api/auth/invitations/accept`, the
   password policy applies, a refused one keeps the link): the administrator never knows it. The
   **role is fixed by the administrator** and read from the invitation under its row lock when the
-  account is created: nothing in the request can change it. The acceptance signs the new account
+  account is created: nothing in the request can change it. An invitation works only while
+  **whoever sent it is still an administrator**: a demotion or a deletion voids the invitations
+  they sent, with the role they grant. Accepting takes the address's lock, as inviting does, so a
+  new invitation cannot be created alongside an acceptance. The acceptance signs the new account
   in, ending any session the browser had, like a sign-in.
 - **The token:** 256 bits minted when the message is sent, only its SHA-256 stored on the
   invitation, 7 days, once (the invitation row is deleted in the transaction that creates the
@@ -214,11 +218,13 @@ password) in someone else's hands cannot take the account for good:
   with a link to undo the change. An address taken meanwhile answers 409.
 - **Undoing** (`POST /api/auth/email-changes/revert`, from the previous mailbox, within **7
   days**): the previous address comes back **with a new password chosen there** (whoever changed
-  the address knew the old one), `security_version` increases, every session ends, and every
-  other link of the account is dropped, other undo links included. The undo link is **not bound
-  to the account's later state** and is never replaced by a newer one: whoever took the account
-  can change the address again or change the password, and the owner's link still works. A
-  refused password keeps the link usable; an address taken meanwhile answers 409.
+  the address knew the old one), `security_version` increases and every session ends. Every other
+  link of the account is dropped **except the undo links minted before this one**: they undo
+  earlier changes, so the earliest owner wins. Whoever took the account and undoes their own later
+  change cannot void the owner's link; the owner's link voids theirs (both orders are tested). The
+  undo link is **not bound to the account's later state** and is never replaced by a newer one:
+  changing the address again or the password does not void it either. A refused password keeps the
+  link usable; an address taken meanwhile answers 409.
 - **Links and tokens** as for password recovery: 256 bits, minted when the message is sent, only
   their SHA-256 stored (with the target address), after `#`, removed from the address bar and
   history, and opening a link changes nothing (the page's button does). The notice to the
@@ -536,18 +542,18 @@ OPTIONAL infrastructure ([architecture.md](architecture.md#email), ADR
 [0003](adr/0003-transactional-email-outbox.md)). Development uses Mailpit, which accepts anyone's
 mail without authentication: it is published on 127.0.0.1 only and is never part of a deployment.
 
-| Concern                | How                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified. The one exception is a server on the machine itself (`localhost`, `127.0.0.1`, `[::1]`: a local relay, the end-to-end suite's Mailpit): that traffic never crosses a network. |
-| Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                                                               |
-| Links                  | Built from `APP_ORIGIN` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                        |
-| What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits.                                        |
-| Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address.                                                                                                                                                                        |
-| Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                                                       |
-| Abuse                  | Messages anyone can request are limited per address (one a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day), counted in PostgreSQL so every instance shares them, on top of the routes' per-IP limits. Callers answer the same whatever was queued: no account enumeration through email. Security notices are never held back.                                                 |
-| Automatic replies      | `Auto-Submitted: auto-generated` and `X-Auto-Response-Suppress: All` on every message (RFC 3834).                                                                                                                                                                                                                                                                            |
-| Sender authentication  | REQUIERE CONFIGURACIÓN: SPF, DKIM and DMARC for the sending domain at the provider, before the first message; without them messages are spoofable and land in spam.                                                                                                                                                                                                          |
-| Retention              | Finished outbox rows (metadata: kind, status, attempts, timestamps, error category, keyed hash) are deleted after 30 days; a failed message's address is cleared after 7.                                                                                                                                                                                                    |
+| Concern                | How                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified. The one exception is a server on the machine itself (`localhost`, `127.0.0.1`, `[::1]`: a local relay, the end-to-end suite's Mailpit): that traffic never crosses a network, and `localhost` is connected to as `127.0.0.1`, never through a DNS answer. In production the API warns at boot when it uses the exception (a copied development setting). |
+| Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                                                                                                                                                                                                                                          |
+| Links                  | Built from `APP_ORIGIN` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                                                                                                                                                                   |
+| What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits.                                                                                                                                                                                                                   |
+| Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address. Database errors are logged by class and code, never their message (it can quote a query's arguments).                                                                                                                                                                                                                                             |
+| Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                                                                                                                                                                                                                                  |
+| Abuse                  | Messages anyone can request are limited per mailbox (one a minute, `MAIL_DAILY_LIMIT_PER_ADDRESS` a day; a `+tag` counts as the same mailbox), counted in PostgreSQL so every instance shares them, on top of the routes' per-IP limits. Callers answer the same whatever was queued: no account enumeration through email. Security notices are never held back, and workers send them before the others.                                                                                                                                              |
+| Automatic replies      | `Auto-Submitted: auto-generated` and `X-Auto-Response-Suppress: All` on every message (RFC 3834).                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Sender authentication  | REQUIERE CONFIGURACIÓN: SPF, DKIM and DMARC for the sending domain at the provider, before the first message; without them messages are spoofable and land in spam.                                                                                                                                                                                                                                                                                                                                                                                     |
+| Retention              | Finished outbox rows (metadata: kind, status, attempts, timestamps, error category, keyed hash) are deleted after 30 days; a failed message's address is cleared after 7; a message never sent a day past its validity (email turned off since) is dropped and its address cleared. The sweep runs whether email is on or off.                                                                                                                                                                                                                          |
 
 ## Dependency vulnerabilities
 
@@ -793,7 +799,13 @@ Accepted on purpose, each with its way out:
   out: a higher daily limit, a challenge on the public forms, or an operator-sent link.
 - **An undo link outlives the change it undoes for 7 days**, by design (no later change can void
   it): the person who controls the previous mailbox in that window can take the address back.
-  After the window, or if that mailbox is lost too, recovery is an operator's job. **No breached-password
+  After the window, or if that mailbox is lost too, recovery is an operator's job.
+- **A link stays in the browser's own history** (and its sync): the page removes the token from the
+  address bar and the back button, but the browser recorded the visited address with it. On a
+  shared computer an unused link could be reopened from there until it expires; a used one is
+  worth nothing. Way out: the short validities (30 minutes for a reset), and using links at once.
+- **Provider-specific address forms** (Gmail's dots, other providers' aliases) are different
+  mailboxes to the per-address limits; only `+tags` are folded. **No breached-password
   service:** the policy refuses the most used passwords from a local list, so a password leaked
   elsewhere but not common passes. Way out: a k-anonymity range check (OPCIONAL; it sends a hash
   prefix to a third party).

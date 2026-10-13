@@ -50,7 +50,7 @@ function setup({
   mailEnabled = true,
   account = null,
   invitation = { id: 'i1', email: 'ada@example.test', expiresAt: new Date(NOW + 60_000) },
-  lockedRows = [{ role: 'admin' }],
+  lockedRows = [{ role: 'admin', inviterRole: 'admin' }],
 }: Setup = {}) {
   const calls: string[] = [];
   const tx = {
@@ -231,6 +231,7 @@ describe('InvitationsService.accept', () => {
     const { service, tx, sessions, calls, refresh } = setup();
     const result = await service.accept(TOKEN, 'Ada Lovelace', GOOD, 'old-refresh', NOW);
     expect(calls).toEqual([
+      'lock address',
       'lock invitation',
       'delete invitation',
       'create account',
@@ -274,6 +275,21 @@ describe('InvitationsService.accept', () => {
     }
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['demoted since', 'member'],
+    ['deleted since', null],
+  ])(
+    'answers 404 when whoever invited was %s: nobody vouches for it any more',
+    async (_case, inviterRole) => {
+      const { service, tx, sessions } = setup({ lockedRows: [{ role: 'admin', inviterRole }] });
+      await expect(service.accept(TOKEN, 'Ada', GOOD, undefined, NOW)).rejects.toThrow(
+        new NotFoundException(INVALID_INVITATION),
+      );
+      expect(tx.user.create).not.toHaveBeenCalled();
+      expect(sessions.create).not.toHaveBeenCalled();
+    },
+  );
 
   it('answers 404 when the invitation changed after it was read, 409 for a taken address', async () => {
     const replaced = setup({ lockedRows: [] });

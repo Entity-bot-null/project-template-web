@@ -152,13 +152,22 @@ export class InvitationsService {
     let user: AuthUser;
     try {
       user = await this.prisma.$transaction(async (tx) => {
-        // Still this invitation, with this link: not replaced, revoked or used.
-        const rows = await tx.$queryRaw<{ role: 'admin' | 'member' }[]>`
-          SELECT "role" FROM "invitations"
-          WHERE "id" = ${invitation.id}::uuid AND "token_hash" = ${tokenHash}
-          FOR UPDATE`;
+        // The address's lock, as when inviting: a new invitation for it
+        // cannot be created alongside this acceptance.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invitation:${invitation.email}`}, 0))`;
+        // Still this invitation, with this link (not replaced, revoked or
+        // used), and still vouched for: whoever sent it must still be an
+        // administrator (an invitation outlives a demotion or a deletion
+        // otherwise, with the role it grants).
+        const rows = await tx.$queryRaw<
+          { role: 'admin' | 'member'; inviterRole: 'admin' | 'member' | null }[]
+        >`
+          SELECT i."role", u."role" AS "inviterRole"
+          FROM "invitations" i LEFT JOIN "users" u ON u."id" = i."invited_by_id"
+          WHERE i."id" = ${invitation.id}::uuid AND i."token_hash" = ${tokenHash}
+          FOR UPDATE OF i`;
         const locked = rows[0];
-        if (locked === undefined) throw new NotFoundException(INVALID_INVITATION);
+        if (locked?.inviterRole !== 'admin') throw new NotFoundException(INVALID_INVITATION);
         await tx.invitation.delete({ where: { id: invitation.id } });
         return tx.user.create({
           data: { email: invitation.email, name, role: locked.role, passwordHash },

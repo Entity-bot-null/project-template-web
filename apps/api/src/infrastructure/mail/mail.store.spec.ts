@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../../prisma/prisma.service.js';
 import { MailStore } from './mail.store.js';
+import { MAIL_TEMPLATE_REGISTRY } from './templates/registry.js';
 import type { ClaimedMessage } from './mail.types.js';
 
 // The SQL itself runs against PostgreSQL in mail-outbox.int.spec.ts (claims
@@ -31,7 +32,10 @@ function storeWith(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   };
-  return { prisma, store: new MailStore(prisma as unknown as PrismaService) };
+  return {
+    prisma,
+    store: new MailStore(prisma as unknown as PrismaService, MAIL_TEMPLATE_REGISTRY),
+  };
 }
 
 afterEach(() => {
@@ -52,6 +56,16 @@ describe('MailStore', () => {
     expect(statement).toContain('"attempts" = "attempts" + 1');
     expect(statement).toContain(`("status" = 'sending' AND "locked_until" < now())`);
     expect(lease).toBe(90);
+    // Security notices (the kinds nobody can request) are claimed first.
+    expect(statement).toContain('ORDER BY ("kind"::text = ANY(?::text[])) DESC, "next_attempt_at"');
+    const [, , urgent] = prisma.$queryRaw.mock.calls[0] as unknown as [unknown, unknown, string[]];
+    expect(urgent).toEqual(
+      Object.entries(MAIL_TEMPLATE_REGISTRY)
+        .filter(([, template]) => !template.limited)
+        .map(([kind]) => kind),
+    );
+    expect(urgent).toContain('password_changed');
+    expect(urgent).not.toContain('password_reset');
   });
 
   it('answers undefined when nothing is due', async () => {
@@ -119,7 +133,12 @@ describe('MailStore', () => {
   it('deletes finished rows after 30 days and clears failed addresses after 7', async () => {
     const now = Date.parse('2026-10-31T00:00:00Z');
     const { prisma, store } = storeWith();
-    await expect(store.sweep(now)).resolves.toEqual({ deleted: 3, cleared: 1 });
+    await expect(store.sweep(now)).resolves.toEqual({ deleted: 3, cleared: 1, expired: 1 });
+    // Pending ones a day past their validity (email turned off since): dropped.
+    expect(prisma.mailMessage.updateMany).toHaveBeenCalledWith({
+      where: { status: 'pending', expiresAt: { lt: new Date('2026-10-30T00:00:00Z') } },
+      data: { status: 'expired', recipient: null },
+    });
     expect(prisma.mailMessage.deleteMany).toHaveBeenCalledWith({
       where: {
         status: { in: ['sent', 'expired', 'failed'] },
@@ -136,18 +155,40 @@ describe('MailStore', () => {
     });
   });
 
-  it('puts failed messages that still have an address back in the queue, by id or kind', async () => {
-    const { prisma, store } = storeWith();
-    await expect(store.retryFailed({ id: 'm1' })).resolves.toBe(1);
-    await store.retryFailed({ kind: 'test' });
-    await store.retryFailed({});
-    const wheres = (
-      prisma.mailMessage.updateMany.mock.calls as unknown as { where: unknown }[][]
-    ).map(([call]) => call?.where);
-    expect(wheres).toEqual([
-      { status: 'failed', recipient: { not: null }, id: 'm1' },
+  it('puts failed messages that still have an address back in the queue, each with its kind validity', async () => {
+    const now = Date.parse('2026-10-13T12:00:00Z');
+    const kinds = Object.keys(MAIL_TEMPLATE_REGISTRY);
+    const { prisma, store } = storeWith({
+      mailMessage: {
+        updateMany: vi.fn(({ where }: { where: { id?: string; kind: string } }) =>
+          Promise.resolve({ count: where.kind === 'password_reset' ? 1 : 0 }),
+        ),
+      },
+    });
+    await expect(store.retryFailed({ id: 'm1' }, now)).resolves.toBe(1);
+    const calls = prisma.mailMessage.updateMany.mock.calls as unknown as [
+      { where: Record<string, unknown>; data: Record<string, unknown> },
+    ][];
+    expect(calls.map(([call]) => call.where)).toEqual(
+      kinds.map((kind) => ({ status: 'failed', recipient: { not: null }, kind, id: 'm1' })),
+    );
+    // A new validity per kind: an outage longer than it no longer drops them unsent.
+    const reset = calls.find(([call]) => call.where.kind === 'password_reset')?.[0];
+    expect(reset?.data).toEqual({
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: new Date(now),
+      expiresAt: new Date(now + MAIL_TEMPLATE_REGISTRY.password_reset.ttlMs),
+      lastError: null,
+    });
+
+    prisma.mailMessage.updateMany.mockClear();
+    await expect(store.retryFailed({ kind: 'test' }, now)).resolves.toBe(0);
+    const onlyTest = prisma.mailMessage.updateMany.mock.calls as unknown as [
+      { where: Record<string, unknown> },
+    ][];
+    expect(onlyTest.map(([call]) => call.where)).toEqual([
       { status: 'failed', recipient: { not: null }, kind: 'test' },
-      { status: 'failed', recipient: { not: null } },
     ]);
   });
 });

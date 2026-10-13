@@ -114,3 +114,9 @@ td {
 .auth-form {
   max-width: 24rem;
 }
+
+/* A heading that takes the focus when its view appears (FocusHeading): read
+   by screen readers, no outline for a heading nobody can act on. */
+h1[tabindex='-1']:focus {
+  outline: none;
+}

@@ -250,7 +250,10 @@ variable is in [environment.md](environment.md); none is needed to start. Email 
 `MAIL_SMTP_URL` and `MAIL_FROM` name your provider's SMTP server and sender (encrypted: `smtps://`,
 or `smtp://` with STARTTLS); after the first deployment,
 `docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <you>`
-checks the whole path ([manual](manual.md#115-email)).
+checks the whole path ([manual](manual.md#115-email)). DigitalOcean blocks outbound SMTP (ports 25,
+465 and 587) on the Droplets of many accounts: if `mail test` ends in `connection` or a timeout, use
+the port your provider offers for that case (2525 with STARTTLS: `smtp://...:2525`, at Postmark,
+SendGrid, Mailgun or Brevo, among others) or ask DigitalOcean's support to lift the block.
 
 The API's database driver (node-postgres) reads `sslmode=require` as `verify-full`: it refuses a
 certificate signed by the provider's own CA (DigitalOcean, Amazon RDS), and the rollout stops with

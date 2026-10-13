@@ -20,6 +20,8 @@ const message = (overrides: Partial<ClaimedMessage> = {}): ClaimedMessage => ({
 
 function txWith(user: Record<string, unknown> | null) {
   const tx = {
+    // The account's lock, taken before a token is minted.
+    $queryRaw: vi.fn(() => Promise.resolve([])),
     user: { findUnique: vi.fn(() => Promise.resolve(user)) },
     accountToken: {
       deleteMany: vi.fn(() => Promise.resolve({ count: 0 })),

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api/client';
-import { call, describeFailure } from '../api/errors';
+import { call, describeFailure, failedField } from '../api/errors';
 import { useAuth } from '../auth';
 import { useCapabilities } from '../auth/capabilities';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
@@ -8,6 +8,7 @@ import { emailError } from '../auth/validation';
 import { Alert } from '../components/Alert';
 import { PasswordField } from '../components/PasswordField';
 import { TextField } from '../components/TextField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 interface FieldErrors {
   current: string | null;
@@ -23,6 +24,7 @@ const NO_ERRORS: FieldErrors = { current: null, next: null };
 export function AccountPage() {
   const auth = useAuth();
   const capabilities = useCapabilities();
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [errors, setErrors] = useState<FieldErrors>(NO_ERRORS);
@@ -54,7 +56,7 @@ export function AccountPage() {
     const { status } = result.failure;
     if (status === 403) {
       setErrors({ ...NO_ERRORS, current: 'Your current password is not correct.' });
-    } else if (status === 400) {
+    } else if (failedField(result.failure) === 'newPassword') {
       setErrors({
         ...NO_ERRORS,
         next: 'Choose another password: this one is among the most used, or too easy to guess.',
@@ -79,9 +81,10 @@ export function AccountPage() {
         className="stack auth-form"
         noValidate
         aria-labelledby="password-heading"
+        ref={formRef}
         onSubmit={(event) => {
           event.preventDefault();
-          void submit();
+          void submit().then(focusInvalid);
         }}
       >
         <h2 id="password-heading">Change your password</h2>
@@ -120,6 +123,7 @@ export function AccountPage() {
 // every session, this one included, is signed out). The answer is the same
 // whether the new address has an account or not.
 function ChangeEmailForm({ currentEmail }: { currentEmail: string }) {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const [newEmail, setNewEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email: string | null; password: string | null }>({
@@ -156,8 +160,13 @@ function ChangeEmailForm({ currentEmail }: { currentEmail: string }) {
     const { status } = result.failure;
     if (status === 403) {
       setErrors({ email: null, password: 'Your current password is not correct.' });
-    } else if (status === 400) {
-      setErrors({ email: 'This is already your address.', password: null });
+    } else if (failedField(result.failure) === 'newEmail') {
+      setErrors({
+        email: result.failure.message.includes('already')
+          ? 'This is already your address.'
+          : 'Enter a valid email.',
+        password: null,
+      });
     } else if (status === 503) {
       setFailure('Changing the address is not available here.');
     } else {
@@ -170,9 +179,10 @@ function ChangeEmailForm({ currentEmail }: { currentEmail: string }) {
       className="stack auth-form"
       noValidate
       aria-labelledby="email-heading"
+      ref={formRef}
       onSubmit={(event) => {
         event.preventDefault();
-        void submit();
+        void submit().then(focusInvalid);
       }}
     >
       <h2 id="email-heading">Change your email</h2>

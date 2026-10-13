@@ -176,6 +176,15 @@ describe.skipIf(skipWithoutMailpit)('invitations (PostgreSQL + Mailpit)', () => 
     await accept(lateToken).expect(404);
   });
 
+  it('stops working once whoever invited is no longer an administrator', async () => {
+    const email = address();
+    await invite(email, 'admin').expect(201);
+    const token = await linkFor(email);
+    await t.prisma.user.updateMany({ where: { role: 'admin' }, data: { role: 'member' } });
+    await accept(token).expect(404);
+    expect(await t.prisma.user.count({ where: { email } })).toBe(0);
+  });
+
   it('answers 409 when the address got an account after the invitation was sent', async () => {
     const email = address();
     await invite(email).expect(201);

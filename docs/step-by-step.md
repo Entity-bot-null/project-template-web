@@ -684,7 +684,9 @@ would otherwise refuse the certificate (a certificate error such as
 Brevo...), and at the provider, SPF, DKIM and DMARC for `acme.com`
 ([manual](manual.md#115-email)). After the first deployment (phase 8),
 `docker compose --env-file server.env --env-file release.env run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <you>`
-must print `Delivered`.
+must print `Delivered`. If it ends in `connection` or a timeout, the server may not be allowed to
+send SMTP (DigitalOcean blocks ports 25, 465 and 587 on many accounts): use the provider's port 2525
+(`smtp://<user>:<password>@<provider host>:2525`, STARTTLS) or ask DigitalOcean's support.
 
 **Check:** `ls -l /srv/app` shows `api.env` and `migrate.env` as `-rw-------` (only `deploy` can
 read them), and `grep -c '<' *.env` prints `0` for each file (no placeholder left).

@@ -67,6 +67,16 @@ describe('normalizeException', () => {
       status: 413,
       message: 'request entity too large',
     });
+    // Malformed JSON: one plain message, never the parser's own text.
+    const malformed = Object.assign(new SyntaxError('Expected property name at position 1'), {
+      status: 400,
+      expose: true,
+      type: 'entity.parse.failed',
+    });
+    expect(normalizeException(malformed)).toEqual({
+      status: 400,
+      message: 'The request body is not valid JSON',
+    });
     // Not marked safe to expose, or not a client error: still a generic 500.
     const hidden = Object.assign(new Error('internal detail'), { status: 400, expose: false });
     expect(normalizeException(hidden).status).toBe(500);

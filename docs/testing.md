@@ -121,7 +121,7 @@ their own stricter numbers with glob keys, for example
 `pnpm perf:check` (after `pnpm build`; in `pnpm verify` and CI) compares the gzip size of the
 built web assets with `apps/web/performance-budget.json`. The template's budget is its measured
 build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
-Vitals chunks 5 kB, the lazy account and admin pages 12 kB, all JavaScript 155 kB, CSS 5 kB). The initial
+Vitals chunks 5 kB, the lazy account and admin pages 13 kB, all JavaScript 157 kB, CSS 5 kB). The initial
 JavaScript is what `index.html` loads before the app starts: its entry script and every chunk it
 preloads, so code the bundler splits into a shared chunk still counts, whatever its name. Each
 project should set its own from its targets (device class, network, Core Web Vitals goals) and

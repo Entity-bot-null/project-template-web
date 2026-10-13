@@ -4,7 +4,8 @@ import { useId, useState } from 'react';
 // check a long passphrase before submitting it (NIST SP 800-63B-4 asks for
 // the option). The button only changes how the field is shown, never its
 // value or its checks; it is a real button, reachable with the keyboard,
-// whose pressed state screen readers announce.
+// whose name says what it does next (Show / Hide): one signal, not a name
+// that changes and a pressed state too.
 export function PasswordField({
   label,
   value,
@@ -48,7 +49,6 @@ export function PasswordField({
         {/* The name starts with the visible word, as speech input expects. */}
         <button
           type="button"
-          aria-pressed={visible}
           aria-controls={id}
           aria-label={`${visible ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
           onClick={() => {

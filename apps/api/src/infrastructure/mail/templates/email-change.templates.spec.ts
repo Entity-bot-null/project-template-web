@@ -31,6 +31,8 @@ function txWith({
   owner = null,
 }: Rows = {}) {
   const tx = {
+    // The account's lock, taken before a token is minted.
+    $queryRaw: vi.fn(() => Promise.resolve([])),
     user: {
       findUnique: vi.fn((args: { where: { id?: string } }) =>
         Promise.resolve(args.where.id === undefined ? owner : user),
