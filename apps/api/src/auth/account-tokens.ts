@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { errorSummary } from '../common/logging/error-summary.js';
 import { sha256Hex } from '../common/utils/sha256.js';
 import type { AccountTokenPurpose, Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { SIGN_UP_TTL_MS } from './auth.constants.js';
+import { INVITATION_MESSAGE_TTL_MS, SIGN_UP_TTL_MS } from './auth.constants.js';
+import { lockUser } from './sessions.service.js';
 
 // One-time tokens sent in emailed links (docs/security.md#one-time-tokens):
 // 32 random bytes (256 bits) in base64url. The database keeps only the token's
@@ -44,13 +46,19 @@ export interface MintInput {
 
 /**
  * Mints a token, and deletes the account's unused tokens of the same purpose
- * first: at most one link of a kind works at a time, the latest.
+ * first: at most one link of a kind works at a time, the latest. Takes the
+ * account's lock first, like every flow that uses a token (the account's
+ * row, then its tokens): otherwise this transaction, holding a token row,
+ * could wait on the account row (the foreign key's check) while a flow
+ * holding the account row waits on that token, and PostgreSQL would abort
+ * one of them as a deadlock.
  */
 export async function mintAccountToken(
   tx: Tx,
   input: MintInput,
   now = Date.now(),
 ): Promise<string> {
+  await lockUser(tx, input.userId);
   if (input.replaceEarlier !== false) {
     await tx.accountToken.deleteMany({
       where: { userId: input.userId, purpose: input.purpose, usedAt: null },
@@ -77,6 +85,8 @@ export interface UsableToken {
   userId: string;
   /** email_change: the new address; email_revert: the address to put back. */
   targetEmail: string | null;
+  /** When it was minted: an undo link outranks the ones minted after it. */
+  createdAt: Date;
 }
 
 /**
@@ -108,10 +118,11 @@ export async function consumeAccountToken(
       email: string;
       targetEmail: string | null;
       expiresAt: Date;
+      createdAt: Date;
     }[]
   >`
     SELECT "id", "user_id" AS "userId", "security_version" AS "securityVersion", "email",
-           "target_email" AS "targetEmail", "expires_at" AS "expiresAt"
+           "target_email" AS "targetEmail", "expires_at" AS "expiresAt", "created_at" AS "createdAt"
     FROM "account_tokens"
     WHERE "token_hash" = ${hashAccountToken(token)}
       AND "purpose" = ${purpose}::"AccountTokenPurpose"
@@ -129,16 +140,28 @@ export async function consumeAccountToken(
     where: { id: row.id, usedAt: null },
     data: { usedAt: new Date(now) },
   });
-  return count === 1 ? { id: row.id, userId: row.userId, targetEmail: row.targetEmail } : undefined;
+  return count === 1
+    ? { id: row.id, userId: row.userId, targetEmail: row.targetEmail, createdAt: row.createdAt }
+    : undefined;
 }
 
 /** Whose account a token claims to be for (unchecked): the account to lock before consuming it. */
-export async function tokenOwner(tx: Tx, token: string): Promise<string | undefined> {
+export async function tokenOwner(
+  tx: Tx,
+  token: string,
+  purpose: AccountTokenPurpose,
+  now = Date.now(),
+): Promise<string | undefined> {
   const row = await tx.accountToken.findUnique({
     where: { tokenHash: hashAccountToken(token) },
-    select: { userId: true },
+    select: { userId: true, purpose: true, usedAt: true, expiresAt: true },
   });
-  return row?.userId;
+  // Only a token that can still work: a used, expired or other-purpose one
+  // goes no further (no password check against its account, no hashing).
+  if (row?.purpose !== purpose || row.usedAt !== null || row.expiresAt.getTime() <= now) {
+    return undefined;
+  }
+  return row.userId;
 }
 
 const DAY_MS = 86_400_000;
@@ -180,12 +203,15 @@ export class AccountTokenSweep implements OnModuleInit, OnModuleDestroy {
           ],
         },
       });
-      // Invitations likewise (their messages are valid for a day in the queue).
+      // Invitations likewise.
       const invitations = await this.prisma.invitation.deleteMany({
         where: {
           OR: [
             { expiresAt: { lt: before } },
-            { expiresAt: null, createdAt: { lt: new Date(now - 2 * DAY_MS) } },
+            {
+              expiresAt: null,
+              createdAt: { lt: new Date(now - INVITATION_MESSAGE_TTL_MS - DAY_MS) },
+            },
           ],
         },
       });
@@ -198,9 +224,7 @@ export class AccountTokenSweep implements OnModuleInit, OnModuleDestroy {
       }
       return count + signUps.count + invitations.count;
     } catch (error) {
-      this.logger.warn(
-        `Account token sweep failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.warn(`Account token sweep failed: ${errorSummary(error)}`);
       return 0;
     }
   }

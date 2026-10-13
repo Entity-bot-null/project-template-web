@@ -350,7 +350,7 @@ describe.skipIf(skipWithoutMailpit)('mail outbox (PostgreSQL + Mailpit)', () => 
     );
   });
 
-  it('deletes finished rows after 30 days and clears the address of old failed ones', async () => {
+  it('deletes finished rows after 30 days, clears the address of old failed ones, drops stale pending ones', async () => {
     const [old, recent, failing] = [address(), address(), address()];
     for (const each of [old, recent, failing]) await queue(main, each);
     await deliver(main);
@@ -364,10 +364,36 @@ describe.skipIf(skipWithoutMailpit)('mail outbox (PostgreSQL + Mailpit)', () => 
       where: { recipientHash: hash(failing) },
       data: { status: 'failed', sentAt: null, recipient: failing, updatedAt: daysAgo(8) },
     });
-    await expect(main.store.sweep()).resolves.toEqual({ deleted: 1, cleared: 1 });
+    // Never sent (email turned off since, say), and a day past its validity.
+    const stale = address();
+    await queue(main, stale);
+    await main.prisma.mailMessage.updateMany({
+      where: { recipientHash: hash(stale) },
+      data: { expiresAt: daysAgo(2) },
+    });
+    await expect(main.store.sweep()).resolves.toEqual({ deleted: 1, cleared: 1, expired: 1 });
     expect(await rowsTo(main, old)).toEqual([]);
     expect(await rowsTo(main, recent)).toHaveLength(1);
     expect(await rowsTo(main, failing)).toMatchObject([{ status: 'failed', recipient: null }]);
+    expect(await rowsTo(main, stale)).toMatchObject([{ status: 'expired', recipient: null }]);
+  });
+
+  it('claims the messages nobody can request (security notices) before the others', async () => {
+    const [flooded, notified] = [address(), address()];
+    // A message anyone can ask for, queued first and due first...
+    await main.prisma.$transaction((tx) =>
+      main.outbox.enqueue(tx, { kind: 'password_reset', to: flooded }),
+    );
+    await main.prisma.mailMessage.updateMany({
+      data: { nextAttemptAt: new Date(Date.now() - 60_000) },
+    });
+    // ...and a notice nobody can request, queued after it.
+    await queue(main, notified);
+    const first = await main.store.claim();
+    expect(first?.kind).toBe('test');
+    expect(first?.recipient).toBe(notified);
+    const second = await main.store.claim();
+    expect(second?.kind).toBe('password_reset');
   });
 
   it('left alone, a worker sends a committed message within seconds, without being asked', async () => {

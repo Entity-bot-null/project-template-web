@@ -68,8 +68,18 @@ describe('SignUpPage', () => {
     expect(screen.getByLabelText('Password')).toHaveValue('');
   });
 
+  it('shows a refused address next to the email field, not as a password problem', async () => {
+    stubFetch({ [SIGN_UP]: () => failure(400, 'email: Invalid email address') });
+    renderRoute('/sign-up');
+    await signUp({ email: 'a..b@example.com' });
+    expect(await screen.findByText('Enter a valid email.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toHaveFocus();
+    expect(screen.queryByText(/Choose another password/)).toBeNull();
+  });
+
   it.each([
     [400, 'password: too common', 'Choose another password'],
+    [400, 'name: Too long', 'Enter your name (up to 100 characters).'],
     [403, 'Sign-up is closed', 'Sign-up is closed here.'],
     [429, 'Too many', 'Too many attempts.'],
   ])('explains a %i', async (status, message, shown) => {

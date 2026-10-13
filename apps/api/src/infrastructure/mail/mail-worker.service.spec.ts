@@ -70,7 +70,7 @@ function setup({
     markFailed: vi.fn(() => Promise.resolve(true)),
     markExpired: vi.fn(() => Promise.resolve(true)),
     stats: vi.fn(() => Promise.resolve(stats)),
-    sweep: vi.fn(() => Promise.resolve({ deleted: 0, cleared: 0 })),
+    sweep: vi.fn(() => Promise.resolve({ deleted: 0, cleared: 0, expired: 0 })),
   };
   let queuedListener: (() => void) | undefined;
   const outbox = {
@@ -125,12 +125,47 @@ function tracked(context: ReturnType<typeof setup>) {
 }
 
 describe('MailWorker', () => {
-  it('stays off when email is off: no transport, no timers, readiness says disabled', () => {
+  it('stays off when email is off: no transport, no claims, readiness says disabled; retention still runs', () => {
     const context = tracked(setup({ enabled: false }));
     context.worker.onApplicationBootstrap();
     context.worker.wake();
     expect(context.store.claim).not.toHaveBeenCalled();
     expect(context.worker.health()).toBe('disabled');
+    // Messages left from when email was on still hold addresses.
+    expect(context.store.sweep).toHaveBeenCalledOnce();
+  });
+
+  it('warns at boot in production about a loopback origin or SMTP server (a copied development setting)', () => {
+    const warned = tracked(
+      setup({
+        workerOptions: {
+          ...options,
+          production: true,
+          smtpUrl: 'smtp://localhost:1035',
+          appOrigin: 'http://localhost:5173',
+        },
+      }),
+    );
+    warned.worker.onApplicationBootstrap();
+    expect(logs.warn).toHaveBeenCalledWith(
+      expect.stringContaining('APP_ORIGIN is a loopback origin'),
+    );
+    expect(logs.warn).toHaveBeenCalledWith(
+      expect.stringContaining('MAIL_SMTP_URL is a server on this machine'),
+    );
+    logs.warn.mockClear();
+    const real = tracked(
+      setup({
+        workerOptions: {
+          ...options,
+          production: true,
+          smtpUrl: 'smtps://smtp.acme.test',
+          appOrigin: 'https://app.acme.test',
+        },
+      }),
+    );
+    real.worker.onApplicationBootstrap();
+    expect(logs.warn).not.toHaveBeenCalled();
   });
 
   it('renders a due message in a short transaction, sends it, records it as sent', async () => {
@@ -332,10 +367,12 @@ describe('MailWorker', () => {
 
   it('logs what the retention sweep removed', async () => {
     const context = tracked(setup());
-    context.store.sweep.mockResolvedValueOnce({ deleted: 2, cleared: 1 });
+    context.store.sweep.mockResolvedValueOnce({ deleted: 2, cleared: 1, expired: 4 });
     await started(context);
     await vi.waitFor(() => {
-      expect(logs.log).toHaveBeenCalledWith(expect.stringContaining('deleted 2 old messages'));
+      expect(logs.log).toHaveBeenCalledWith(
+        expect.stringContaining('deleted 2 old messages, cleared 1 addresses, dropped 4 stale'),
+      );
     });
   });
 

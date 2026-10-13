@@ -286,6 +286,17 @@ describe('SignUpService.confirm', () => {
     });
   });
 
+  it('answers 404 without checking the password once every attempt is spent', async () => {
+    const { service, prisma } = await setup();
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+    await expect(service.confirm(TOKEN, GOOD, undefined, NOW)).rejects.toThrow(
+      new NotFoundException(INVALID_SIGN_UP_LINK),
+    );
+    const [sql] = prisma.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray];
+    expect(sql.join('?')).toContain('"failed_attempts" < ?');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('answers 404 when the sign-up was replaced or used after its password was checked', async () => {
     const { service, tx, sessions } = await setup({ lockedRows: [] });
     await expect(service.confirm(TOKEN, GOOD, undefined, NOW)).rejects.toThrow(

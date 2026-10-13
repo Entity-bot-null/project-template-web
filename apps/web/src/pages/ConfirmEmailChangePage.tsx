@@ -3,8 +3,10 @@ import { Link } from 'react-router';
 import { api } from '../api/client';
 import { call, describeFailure } from '../api/errors';
 import { useAuth } from '../auth';
-import { useLinkToken } from '../auth/useLinkToken';
+import { getState } from '../auth/session';
+import { type LinkToken, useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 
 type Outcome = 'changed' | 'invalid-link' | 'taken' | null;
 
@@ -13,8 +15,13 @@ type Outcome = 'changed' | 'invalid-link' | 'taken' | null;
 // only). Opening the link changes nothing: the button does, so a mail
 // scanner that fetches the link does no harm.
 export function ConfirmEmailChangePage() {
+  // Keyed by the link: a second link opened in this tab starts the page over.
+  const { linkId, ...link } = useLinkToken();
+  return <ConfirmEmailChangeContent key={linkId} {...link} />;
+}
+
+function ConfirmEmailChangeContent({ token, dropToken }: LinkToken) {
   const auth = useAuth();
-  const [token, dropToken] = useLinkToken();
   const [failure, setFailure] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>(null);
@@ -31,7 +38,9 @@ export function ConfirmEmailChangePage() {
       setOutcome('changed');
       // Every session of the account ended on the server; this browser's
       // may be one of them, or another account's: it signs out either way.
-      if (auth.status === 'authenticated') void auth.signOut();
+      // The store's state now, not this render's: a boot refresh may have
+      // signed this tab in while the request was on its way.
+      if (getState().status === 'authenticated') void auth.signOut();
       return;
     }
     const { status } = result.failure;
@@ -46,7 +55,7 @@ export function ConfirmEmailChangePage() {
   if (outcome === 'changed') {
     return (
       <main className="auth-page stack">
-        <h1>Email address changed</h1>
+        <FocusHeading>Email address changed</FocusHeading>
         <Alert tone="info">
           Your account now uses this address, and every session of it was signed out.
         </Alert>
@@ -60,7 +69,7 @@ export function ConfirmEmailChangePage() {
   if (token === null) {
     return (
       <main className="auth-page stack">
-        <h1>This link does not work</h1>
+        <FocusHeading>This link does not work</FocusHeading>
         <Alert>
           {outcome === 'taken'
             ? 'This address is now used by another account: your address was not changed.'

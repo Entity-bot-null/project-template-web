@@ -21,7 +21,13 @@ export function smtpSettings(smtpUrl: string, production: boolean) {
   const secure = url.protocol === 'smtps:';
   return {
     // An IPv6 literal keeps its brackets in a URL, not in a socket address.
-    host: url.hostname.replace(/^\[(.*)\]$/, '$1'),
+    // localhost is connected to as 127.0.0.1: nodemailer resolves a name
+    // through the DNS servers before /etc/hosts, and a resolver must never be
+    // able to send the unencrypted loopback connection somewhere else.
+    host:
+      url.hostname.toLowerCase() === 'localhost'
+        ? '127.0.0.1'
+        : url.hostname.replace(/^\[(.*)\]$/, '$1'),
     port: url.port === '' ? (secure ? 465 : 587) : Number(url.port),
     // smtps: TLS from the first byte. smtp: STARTTLS when the server offers it,
     // and in production only then: an unencrypted server is refused, unless

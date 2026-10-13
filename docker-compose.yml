@@ -12,7 +12,9 @@
 # deployment: no TLS, local credentials, nothing published beyond loopback.
 services:
   db:
-    image: postgres:18-alpine
+    # Pinned by digest, the same as CI's (.github/tool-images/Dockerfile);
+    # Dependabot proposes updates.
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     restart: unless-stopped
     environment:
       POSTGRES_DB: app
@@ -42,7 +44,7 @@ services:
   # Chaos (MP_ENABLE_CHAOS) only arms Mailpit's API to inject SMTP errors on
   # demand (the outbox specs do, then disarm it); nothing fails until asked.
   mailpit:
-    image: axllent/mailpit:v1.31.4
+    image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
     restart: unless-stopped
     environment:
       MP_MAX_MESSAGES: 500
@@ -130,7 +132,7 @@ services:
   # SIGTERM reaches it and it saves before exiting.
   redis:
     profiles: [redis]
-    image: redis:8-alpine
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     restart: unless-stopped
     user: redis
     environment:
@@ -166,7 +168,7 @@ services:
   # evaluates the rules (docs/observability.md#dashboards-and-alerts-as-code).
   otel-lgtm:
     profiles: [observability]
-    image: grafana/otel-lgtm:0.34.0
+    image: grafana/otel-lgtm:0.34.0@sha256:b966ea107831d526d9eb8fe4d2d86c9e5731392fad9dce8296bcf2072031f07c
     ports:
       - '127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318'
       - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'

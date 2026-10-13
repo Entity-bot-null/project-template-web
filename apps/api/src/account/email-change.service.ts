@@ -12,6 +12,7 @@ import { normalizeEmail } from '../auth/auth.constants.js';
 import { checkPassword, hashPassword } from '../auth/password.js';
 import { passwordProblem } from '../auth/password-policy.js';
 import { lockUser, revokeSessionsLocked } from '../auth/sessions.service.js';
+import { errorSummary } from '../common/logging/error-summary.js';
 import { MailOutboxService } from '../infrastructure/mail/mail-outbox.service.js';
 import type { EmailChangedPayload } from '../infrastructure/mail/templates/email-changed.template.js';
 import type { PasswordChangedPayload } from '../infrastructure/mail/templates/password-changed.template.js';
@@ -74,9 +75,7 @@ export class EmailChangeService {
     }
     const work: Promise<void> = this.queueLink(user.id, address)
       .catch((error: unknown) => {
-        this.logger.error(
-          `Could not queue a change of email: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        this.logger.error(`Could not queue a change of email: ${errorSummary(error)}`);
       })
       .finally(() => {
         this.pending.delete(work);
@@ -98,7 +97,7 @@ export class EmailChangeService {
    * a notice with an undo link queued to the previous address.
    */
   async confirm(token: string, now = Date.now()): Promise<void> {
-    const owner = await this.ownerOf(token, 'email_change');
+    const owner = await this.ownerOf(token, 'email_change', now);
     try {
       await this.prisma.$transaction(async (tx) => {
         await lockUser(tx, owner.userId);
@@ -143,11 +142,11 @@ export class EmailChangeService {
    * whatever happened to the account since. In one transaction under the
    * account's lock: the address and the password replaced, the
    * securityVersion raised, every session ended, every other link of the
-   * account dropped (other undo links included), and a notice queued to the
-   * restored address.
+   * account dropped except earlier undo links (the earliest owner wins), and
+   * a notice queued to the restored address.
    */
   async revert(token: string, password: string, now = Date.now()): Promise<void> {
-    const owner = await this.ownerOf(token, 'email_revert');
+    const owner = await this.ownerOf(token, 'email_revert', now);
     const account = await this.prisma.user.findUnique({
       where: { id: owner.userId },
       select: { name: true },
@@ -174,7 +173,17 @@ export class EmailChangeService {
           data: { email: used.targetEmail, passwordHash, securityVersion: { increment: 1 } },
         });
         await revokeSessionsLocked(tx, current.id);
-        await tx.accountToken.deleteMany({ where: { userId: current.id, usedAt: null } });
+        // Every other link of the account, except the undo links minted
+        // BEFORE this one: they undo earlier changes, so the earliest owner
+        // wins. Whoever took the account and undoes their own later change
+        // cannot void the owner's link; the owner's link voids theirs.
+        await tx.accountToken.deleteMany({
+          where: {
+            userId: current.id,
+            usedAt: null,
+            NOT: { purpose: 'email_revert', createdAt: { lt: used.createdAt } },
+          },
+        });
         const payload: PasswordChangedPayload = {
           changedAt: new Date(now).toISOString(),
           via: 'reset',
@@ -198,12 +207,17 @@ export class EmailChangeService {
   private async ownerOf(
     token: string,
     purpose: 'email_change' | 'email_revert',
+    now: number,
   ): Promise<{ userId: string; targetEmail: string | null }> {
     const row = await this.prisma.accountToken.findUnique({
       where: { tokenHash: hashAccountToken(token) },
-      select: { userId: true, purpose: true, targetEmail: true },
+      select: { userId: true, purpose: true, targetEmail: true, usedAt: true, expiresAt: true },
     });
-    if (row?.purpose !== purpose) throw new NotFoundException(INVALID_EMAIL_LINK);
+    // Only a link that can still work goes further (no password check
+    // against its account, no hashing for a used or expired one).
+    if (row?.purpose !== purpose || row.usedAt !== null || row.expiresAt.getTime() <= now) {
+      throw new NotFoundException(INVALID_EMAIL_LINK);
+    }
     return { userId: row.userId, targetEmail: row.targetEmail };
   }
 

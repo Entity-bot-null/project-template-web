@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../api/client';
-import { call, describeFailure } from '../api/errors';
+import { call, describeFailure, failedField } from '../api/errors';
 import { emailError } from '../auth/validation';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 import { TextField } from '../components/TextField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 // Asks for a reset link. The API answers the same for every address, so the
 // page does too: it never says whether an account exists.
 export function ForgotPasswordPage() {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -28,6 +31,10 @@ export function ForgotPasswordPage() {
       setSentTo(address);
       return;
     }
+    if (failedField(result.failure) === 'email') {
+      setError('Enter a valid email.');
+      return;
+    }
     setFailure(
       result.failure.status === 503
         ? 'Password recovery is not available here. Ask your administrator for help.'
@@ -38,7 +45,7 @@ export function ForgotPasswordPage() {
   if (sentTo !== null) {
     return (
       <main className="auth-page stack">
-        <h1>Check your email</h1>
+        <FocusHeading>Check your email</FocusHeading>
         <Alert tone="info">
           If an account exists for {sentTo}, a message with a link to choose a new password is on
           its way. The link works once, for 30 minutes.
@@ -67,11 +74,12 @@ export function ForgotPasswordPage() {
     <main className="auth-page">
       <h1>Forgot your password?</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit();
+          void submit().then(focusInvalid);
         }}
       >
         <p>

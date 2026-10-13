@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { describeFailure } from '../api/errors';
+import { describeFailure, failedField } from '../api/errors';
 import { useAuth } from '../auth';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
-import { useLinkToken } from '../auth/useLinkToken';
+import { type LinkToken, useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 import { PasswordField } from '../components/PasswordField';
 import { TextField } from '../components/TextField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 type Outcome = 'invalid-link' | 'exists' | null;
 
@@ -16,9 +18,15 @@ type Outcome = 'invalid-link' | 'exists' | null;
 // (out of the address bar and the history at once, in memory only); only
 // the form's submit spends it.
 export function AcceptInvitationPage() {
+  // Keyed by the link: a second link opened in this tab starts the page over.
+  const { linkId, ...link } = useLinkToken();
+  return <AcceptInvitationContent key={linkId} {...link} />;
+}
+
+function AcceptInvitationContent({ token, dropToken }: LinkToken) {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const auth = useAuth();
   const navigate = useNavigate();
-  const [token, dropToken] = useLinkToken();
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ name: string | null; password: string | null }>({
@@ -47,11 +55,14 @@ export function AcceptInvitationPage() {
       return;
     }
     const { status } = result.failure;
-    if (status === 400) {
+    const field = failedField(result.failure);
+    if (field === 'password') {
       setErrors({
         name: null,
         password: 'Choose another password: this one is among the most used, or too easy to guess.',
       });
+    } else if (field === 'name') {
+      setErrors({ name: 'Enter your name (up to 100 characters).', password: null });
     } else if (status === 404 || status === 409) {
       dropToken();
       setOutcome(status === 404 ? 'invalid-link' : 'exists');
@@ -63,7 +74,7 @@ export function AcceptInvitationPage() {
   if (outcome === 'exists') {
     return (
       <main className="auth-page stack">
-        <h1>You already have an account</h1>
+        <FocusHeading>You already have an account</FocusHeading>
         <Alert tone="info">An account with this address exists: sign in with it.</Alert>
         <p>
           <Link to="/sign-in">Sign in</Link>
@@ -75,7 +86,7 @@ export function AcceptInvitationPage() {
   if (token === null) {
     return (
       <main className="auth-page stack">
-        <h1>This invitation does not work</h1>
+        <FocusHeading>This invitation does not work</FocusHeading>
         <Alert>
           {outcome === 'invalid-link'
             ? 'This invitation was already used, has expired, or was revoked or replaced. Ask the person who invited you for a new one.'
@@ -92,11 +103,12 @@ export function AcceptInvitationPage() {
     <main className="auth-page">
       <h1>Accept your invitation</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit(token);
+          void submit(token).then(focusInvalid);
         }}
       >
         <p>Choose your name and a password to create your account.</p>

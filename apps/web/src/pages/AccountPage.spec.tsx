@@ -170,6 +170,7 @@ describe('changing the email', () => {
   it.each([
     [403, 'The current password is wrong', 'Your current password is not correct.'],
     [400, 'newEmail: This is already the address', 'This is already your address.'],
+    [400, 'newEmail: Invalid email address', 'Enter a valid email.'],
     [503, 'Not available', 'Changing the address is not available here.'],
     [429, 'Too many', 'Too many attempts.'],
   ])('explains a %i', async (status, message, shown) => {

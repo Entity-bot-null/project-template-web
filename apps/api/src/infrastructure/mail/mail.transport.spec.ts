@@ -62,6 +62,12 @@ describe('smtpSettings', () => {
     expect(smtpSettings('smtp://localhost:1035', false)).not.toHaveProperty('auth');
   });
 
+  it('connects to localhost as 127.0.0.1: no resolver can send the connection elsewhere', () => {
+    expect(smtpSettings('smtp://localhost:1035', true).host).toBe('127.0.0.1');
+    expect(smtpSettings('smtp://LOCALHOST:1035', false).host).toBe('127.0.0.1');
+    expect(smtpSettings('smtp://smtp.acme.test', true).host).toBe('smtp.acme.test');
+  });
+
   it('connects to an IPv6 literal without its brackets', () => {
     expect(smtpSettings('smtp://[::1]:1035', false).host).toBe('::1');
   });

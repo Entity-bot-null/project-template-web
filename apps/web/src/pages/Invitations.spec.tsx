@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetCapabilitiesForTests } from '../auth/capabilities';
 import { clearSession, getAccessToken, getState, resetForTests, setSession } from '../auth/session';
 import { admin, member } from '../test/fixtures';
-import { failure, json, ok, session, stubFetch } from '../test/http';
+import { deferred, failure, json, ok, session, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 // The administrators' invitations page, and the page an invitation's link
@@ -81,6 +81,28 @@ describe('AdminInvitationsPage', () => {
     expect(form.getByLabelText('Email')).toHaveValue('');
   });
 
+  it('keeps the list on screen, marked busy, while it loads again', async () => {
+    const reload = deferred<Response>();
+    let lists = 0;
+    stubFetch({
+      [CAPABILITIES]: offers(true),
+      [LIST]: () => (lists++ === 0 ? ok({ items: [pending], total: 1 }) : reload.promise),
+      [INVITE]: () => created('grace@example.com', 'member'),
+    });
+    renderRoute('/admin/invitations');
+    expect(await screen.findByRole('cell', { name: pending.email })).toBeInTheDocument();
+    await invite('grace@example.com');
+    await expect.poll(() => lists).toBe(2);
+    // No loading message in its place: the previous rows, busy.
+    expect(screen.queryByText('Loading invitations…')).toBeNull();
+    expect(screen.getByRole('table')).toHaveAttribute('aria-busy', 'true');
+    reload.resolve(ok({ items: [], total: 0 }));
+    expect(await screen.findByText('No pending invitations.')).toHaveAttribute(
+      'aria-busy',
+      'false',
+    );
+  });
+
   it('checks the address before calling the API', async () => {
     const { calls } = stubFetch({
       [CAPABILITIES]: offers(true),
@@ -147,6 +169,34 @@ describe('AdminInvitationsPage', () => {
     expect(screen.queryByRole('form', { name: 'Invite someone' })).toBeNull();
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('No pending invitations.')).toBeInTheDocument();
+  });
+
+  it('holds every row back while one action is on its way (no double send)', async () => {
+    const revoking = deferred<Response>();
+    stubFetch({
+      [CAPABILITIES]: offers(true),
+      [LIST]: () => ok({ items: [pending], total: 1 }),
+      [`DELETE /api/admin/invitations/${pending.id}`]: () => revoking.promise,
+    });
+    renderRoute('/admin/invitations');
+    const user = userEvent.setup();
+    const revoke = await screen.findByRole('button', {
+      name: `Revoke the invitation to ${pending.email}`,
+    });
+    await user.click(revoke);
+    expect(revoke).toBeDisabled();
+    expect(screen.getByRole('button', { name: `Send again to ${pending.email}` })).toBeDisabled();
+    revoking.resolve(new Response(null, { status: 204 }));
+    expect(await screen.findByRole('status')).toHaveTextContent('revoked');
+  });
+
+  it('offers the form while what the deployment offers is unknown (the API still answers 503)', async () => {
+    stubFetch({
+      [CAPABILITIES]: () => failure(503, 'down'),
+      [LIST]: () => ok({ items: [], total: 0 }),
+    });
+    renderRoute('/admin/invitations');
+    expect(await screen.findByRole('form', { name: 'Invite someone' })).toBeInTheDocument();
   });
 
   it('keeps members out', async () => {

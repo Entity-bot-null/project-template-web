@@ -6,6 +6,8 @@ import {
   type OnApplicationBootstrap,
   type OnModuleDestroy,
 } from '@nestjs/common';
+import { errorSummary } from '../../common/logging/error-summary.js';
+import { isLoopbackHost } from '../../common/utils/loopback.js';
 import { errorTracker } from '../../observability/error-tracker.js';
 import {
   observeMailOutbox,
@@ -34,8 +36,9 @@ import { type MailTemplates, productName } from './templates/registry.js';
 /** disabled: not configured. ok: delivering. degraded: deliveries failing, or a backlog. */
 export type MailHealth = 'ok' | 'degraded' | 'disabled';
 
-const message = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+// Prisma's errors by class and code only: their messages can quote a query's
+// arguments, the recipient among them (common/logging/error-summary.ts).
+const message = errorSummary;
 
 // Delivers the outbox (docs/architecture.md#email). Every API instance runs
 // one worker; they share the queue safely (MailStore.claim). A worker takes
@@ -64,7 +67,15 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
   ) {}
 
   onApplicationBootstrap(): void {
-    if (!this.outbox.enabled) return;
+    // Retention runs whether or not email is on: messages left from when it
+    // was on still hold addresses until the sweep clears them.
+    const sweep = setInterval(() => void this.sweep(), MAIL_SWEEP_INTERVAL_MS).unref();
+    void this.sweep();
+    if (!this.outbox.enabled) {
+      this.timers = [sweep];
+      return;
+    }
+    this.warnAboutLoopback();
     this.transport = this.createTransport(this.options);
     this.outbox.onQueued(() => {
       this.wake();
@@ -76,10 +87,9 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
         this.wake();
       }, MAIL_POLL_INTERVAL_MS).unref(),
       setInterval(() => void this.refreshStats(), MAIL_STATS_INTERVAL_MS).unref(),
-      setInterval(() => void this.sweep(), MAIL_SWEEP_INTERVAL_MS).unref(),
+      sweep,
     ];
     void this.refreshStats();
-    void this.sweep();
     this.wake();
   }
 
@@ -284,12 +294,32 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     }
   }
 
+  // Production accepts an http loopback origin and SMTP without TLS on
+  // loopback only to run the production build on one machine (the end-to-end
+  // suite). Anywhere else that is a copied development configuration: links
+  // would point to this machine, and delivery would fail. Said at boot.
+  private warnAboutLoopback(): void {
+    if (!this.options.production) return;
+    const origin = this.options.appOrigin;
+    if (origin !== undefined && isLoopbackHost(new URL(origin).hostname)) {
+      this.logger.warn(
+        `APP_ORIGIN is a loopback origin (${origin}): links in messages open on this machine only. Set the public origin (docs/environment.md).`,
+      );
+    }
+    const smtp = this.options.smtpUrl;
+    if (smtp !== undefined && isLoopbackHost(new URL(smtp).hostname)) {
+      this.logger.warn(
+        'MAIL_SMTP_URL is a server on this machine, reached without TLS: right for a local relay, a mistake if it is a copied development setting (docs/environment.md).',
+      );
+    }
+  }
+
   private async sweep(): Promise<void> {
     try {
-      const { deleted, cleared } = await this.store.sweep();
-      if (deleted + cleared > 0) {
+      const { deleted, cleared, expired } = await this.store.sweep();
+      if (deleted + cleared + expired > 0) {
         this.logger.log(
-          `Mail retention: deleted ${String(deleted)} old messages, cleared ${String(cleared)} addresses`,
+          `Mail retention: deleted ${String(deleted)} old messages, cleared ${String(cleared)} addresses, dropped ${String(expired)} stale pending ones`,
         );
       }
     } catch (error) {

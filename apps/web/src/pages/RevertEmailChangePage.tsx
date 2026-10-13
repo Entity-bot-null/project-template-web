@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { api } from '../api/client';
-import { call, describeFailure } from '../api/errors';
+import { call, describeFailure, failedField } from '../api/errors';
 import { useAuth } from '../auth';
+import { getState } from '../auth/session';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
-import { useLinkToken } from '../auth/useLinkToken';
+import { type LinkToken, useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
+import { FocusHeading } from '../components/FocusHeading';
 import { PasswordField } from '../components/PasswordField';
+import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
 type Outcome = 'reverted' | 'invalid-link' | 'taken' | null;
 
@@ -15,8 +18,14 @@ type Outcome = 'reverted' | 'invalid-link' | 'taken' | null;
 // address knew the old one), and every session of the account ends. The
 // token is handled by useLinkToken; only the form's submit spends it.
 export function RevertEmailChangePage() {
+  // Keyed by the link: a second link opened in this tab starts the page over.
+  const { linkId, ...link } = useLinkToken();
+  return <RevertEmailChangeContent key={linkId} {...link} />;
+}
+
+function RevertEmailChangeContent({ token, dropToken }: LinkToken) {
+  const { formRef, focusInvalid } = useFocusFirstInvalid();
   const auth = useAuth();
-  const [token, dropToken] = useLinkToken();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -37,11 +46,13 @@ export function RevertEmailChangePage() {
       dropToken();
       setPassword('');
       setOutcome('reverted');
-      if (auth.status === 'authenticated') void auth.signOut();
+      // The store's state now, not this render's: a boot refresh may have
+      // signed this tab in while the request was on its way.
+      if (getState().status === 'authenticated') void auth.signOut();
       return;
     }
     const { status } = result.failure;
-    if (status === 400) {
+    if (failedField(result.failure) === 'password') {
       setError('Choose another password: this one is among the most used, or too easy to guess.');
     } else if (status === 404 || status === 409) {
       dropToken();
@@ -54,7 +65,7 @@ export function RevertEmailChangePage() {
   if (outcome === 'reverted') {
     return (
       <main className="auth-page stack">
-        <h1>Your address is back</h1>
+        <FocusHeading>Your address is back</FocusHeading>
         <Alert tone="info">
           Your account uses this address again, with the password you just chose. Every session of
           it was signed out.
@@ -69,7 +80,7 @@ export function RevertEmailChangePage() {
   if (token === null) {
     return (
       <main className="auth-page stack">
-        <h1>This link does not work</h1>
+        <FocusHeading>This link does not work</FocusHeading>
         <Alert>
           {outcome === 'taken'
             ? 'This address now belongs to another account, so it cannot come back. Ask your administrator for help.'
@@ -88,11 +99,12 @@ export function RevertEmailChangePage() {
     <main className="auth-page">
       <h1>Undo the change of address</h1>
       <form
+        ref={formRef}
         className="stack"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          void submit(token);
+          void submit(token).then(focusInvalid);
         }}
       >
         <p>

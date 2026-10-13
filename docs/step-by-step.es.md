@@ -707,7 +707,10 @@ disponibles): en `api.env`,
 Brevo...), y en el proveedor, SPF, DKIM y DMARC para `acme.com` ([manual](manual.es.md#115-correo)).
 Tras el primer despliegue (fase 8),
 `docker compose --env-file server.env --env-file release.env run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <tú>`
-debe imprimir `Delivered`.
+debe imprimir `Delivered`. Si termina en `connection` o se agota el tiempo, puede que el servidor no
+tenga permitido enviar SMTP (DigitalOcean bloquea los puertos 25, 465 y 587 en muchas cuentas): usa
+el puerto 2525 del proveedor (`smtp://<usuario>:<contraseña>@<host del proveedor>:2525`, STARTTLS) o
+pide al soporte de DigitalOcean que lo desbloquee.
 
 **Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
 puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).

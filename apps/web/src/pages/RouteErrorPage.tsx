@@ -10,6 +10,15 @@ export function RouteErrorPage() {
   const error = useRouteError();
   const notFound = isRouteErrorResponse(error) && error.status === 404;
   useEffect(() => {
+    // A page an emailed link opens may have failed before it could take the
+    // token out of the address bar (its code did not load): it goes now.
+    if (window.location.hash.startsWith('#token=')) {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        window.location.pathname + window.location.search,
+      );
+    }
     console.error('Unhandled route error', error);
     if (!notFound) reportError(error, { source: 'route' });
   }, [error, notFound]);

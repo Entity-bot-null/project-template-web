@@ -4,6 +4,7 @@ import { api } from './client';
 import {
   call,
   describeFailure,
+  failedField,
   failureOf,
   NETWORK_ERROR_MESSAGE,
   NOT_AN_ENVELOPE_MESSAGE,
@@ -124,5 +125,18 @@ describe('describeFailure', () => {
       'The service is unavailable. Try again later.',
     );
     expect(describeFailure({ status: 418, message: 'x' })).toBe('Something went wrong (418).');
+  });
+});
+
+describe('failedField', () => {
+  it('names the field a 400 is about, from the message the API starts with it', () => {
+    expect(failedField({ status: 400, message: 'password: Use at least 15 characters.' })).toBe(
+      'password',
+    );
+    expect(failedField({ status: 400, message: 'newEmail: Invalid email address' })).toBe(
+      'newEmail',
+    );
+    expect(failedField({ status: 400, message: 'Invalid link' })).toBeUndefined();
+    expect(failedField({ status: 403, message: 'password: wrong' })).toBeUndefined();
   });
 });

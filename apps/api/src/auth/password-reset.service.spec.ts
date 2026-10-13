@@ -60,7 +60,18 @@ function setup({
       }),
     },
     accountToken: {
-      findUnique: vi.fn(() => Promise.resolve(owner === null ? null : { userId: owner.id })),
+      findUnique: vi.fn(() =>
+        Promise.resolve(
+          owner === null
+            ? null
+            : {
+                userId: owner.id,
+                purpose: 'password_reset',
+                usedAt: null,
+                expiresAt: new Date(Date.now() + 60_000),
+              },
+        ),
+      ),
       updateMany: vi.fn(() => {
         calls.push('consume token');
         return Promise.resolve({ count: 1 });

@@ -101,3 +101,13 @@ export function describeFailure(failure: ApiFailure): string {
   if (failure.status >= 500) return 'The service is unavailable. Try again later.';
   return `Something went wrong (${failure.status}).`;
 }
+
+/**
+ * The field a 400 is about: the API's validation and password-policy
+ * messages start with it ("password: Use at least 15 characters."). A page
+ * shows the problem next to that field, and falls back to a general message
+ * for anything else.
+ */
+export function failedField(failure: ApiFailure): string | undefined {
+  return failure.status === 400 ? /^(\w+):/.exec(failure.message)?.[1] : undefined;
+}
