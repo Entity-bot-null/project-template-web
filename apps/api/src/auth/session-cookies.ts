@@ -1,4 +1,4 @@
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import type { ApiEnvelope } from '../common/interceptors/transform.interceptor.js';
 import {
   REFRESH_COOKIE,
@@ -29,4 +29,20 @@ export function respondWithSession(
 export function clearSessionCookies(res: Response): void {
   res.clearCookie(REFRESH_COOKIE, refreshCookieOptions());
   res.clearCookie(SESSION_HINT_COOKIE, sessionHintCookieOptions());
+}
+
+// Two refresh cookies (a parent-domain cookie a sibling site planted next to
+// ours, for instance) are never guessed between: whichever one the parser
+// keeps could be an attacker's session.
+export function hasAmbiguousRefreshCookie(req: Request): boolean {
+  const names = (req.get('Cookie') ?? '').split(';').map((pair) => pair.split('=', 1)[0]?.trim());
+  return names.filter((name) => name === REFRESH_COOKIE).length > 1;
+}
+
+/** The request's refresh token: undefined when absent or ambiguous. */
+export function refreshTokenOf(req: Request): string | undefined {
+  if (hasAmbiguousRefreshCookie(req)) return undefined;
+  const cookies = req.cookies as Record<string, unknown> | undefined;
+  const value = cookies?.[REFRESH_COOKIE];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }

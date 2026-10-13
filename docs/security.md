@@ -73,7 +73,7 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 - **`has_session` cookie:** readable, no secret; tells the app whether a boot refresh is worth
   trying.
 - **Not included (REQUIERE CONFIGURACIÓN per product):** MFA, SSO, account lockout per user,
-  session listing, account deletion.
+  session listing, account deletion, changing a user's role from the web app (an operator's job).
 
 ### Passwords
 
@@ -170,6 +170,30 @@ fails otherwise); off, accounts are created by an operator (`user:create`). When
   recovery. An address that gets an account by other means after the link was sent answers 409.
 - **Cleanup:** sign-ups whose link expired a day ago, or whose message never went out, are
   deleted by the hourly sweep.
+
+### Invitations
+
+Administrators invite people from the Invitations page (`/api/admin/invitations`, `@Auth('admin')`:
+the role is checked by the API on every route, whatever the web app shows):
+
+- **No account until it is accepted.** An invitation lives in `invitations` (address, role, who
+  invited) until its link is accepted; sign-in, recovery and the user list never see it. Inviting
+  an address that has an account answers 409 (administrators see every account anyway); inviting
+  one again replaces its invitation and link; revoking deletes it and its link at once.
+- **The person chooses their own name and password** (`POST /api/auth/invitations/accept`, the
+  password policy applies, a refused one keeps the link): the administrator never knows it. The
+  **role is fixed by the administrator** and read from the invitation under its row lock when the
+  account is created: nothing in the request can change it. The acceptance signs the new account
+  in, ending any session the browser had, like a sign-in.
+- **The token:** 256 bits minted when the message is sent, only its SHA-256 stored on the
+  invitation, 7 days, once (the invitation row is deleted in the transaction that creates the
+  account: two acceptances, one account; an address that got an account meanwhile answers 409).
+  The link is `APP_ORIGIN/accept-invitation#token=...`, handled like every emailed link.
+- **Limits:** 30 invitations per 15 minutes per IP; per address, one message a minute and
+  `MAIL_DAILY_LIMIT_PER_ADDRESS` a day (an administrator who resends too soon gets 429, and the
+  earlier invitation stands); 10 acceptances per 15 minutes per IP. Expired invitations are swept.
+- **Logs** name invitations and accounts by id (who invited, who revoked, which account was
+  created with which role), never the address.
 
 ### Change of email
 

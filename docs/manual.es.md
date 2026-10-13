@@ -895,6 +895,13 @@ y la dirección anterior recibe un aviso con un enlace que deshace el cambio dur
 una contraseña nueva. Pruébalo en local con dos direcciones cualesquiera y Mailpit. El diseño:
 [security.md](security.md#change-of-email).
 
+**Invitaciones.** Con el correo encendido, los administradores ven "Invitations" en el menú
+superior: una dirección y un rol (member o admin) envían un enlace válido 7 días; la persona lo
+abre, elige su nombre y contraseña, y queda con la sesión iniciada con ese rol. Las invitaciones
+pendientes se pueden reenviar o revocar. Pruébalo en local: inicia sesión como `admin@example.com`,
+invita cualquier dirección y abre el enlace desde Mailpit. El diseño:
+[security.md](security.md#invitations).
+
 ## 12. Operar en producción
 
 | Antes y durante la operación               | Dónde                                                         |

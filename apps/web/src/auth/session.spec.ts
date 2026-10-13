@@ -11,6 +11,7 @@ import {
   stubFetch,
 } from '../test/http';
 import {
+  acceptInvitation,
   boot,
   changePassword,
   clearSession,
@@ -731,5 +732,26 @@ describe('confirmSignUp', () => {
     const odd = await confirmSignUp('t'.repeat(43), 'violet harbour lantern 7');
     expect(odd.ok ? null : odd.failure.status).toBe(502);
     expect(getAccessToken()).toBeNull();
+  });
+});
+
+describe('acceptInvitation', () => {
+  it('starts the new account session like a sign-in, anonymous on the wire', async () => {
+    const { calls } = stubFetch({
+      'POST /api/auth/invitations/accept': () => session('token-new'),
+    });
+    const accepted = await acceptInvitation(
+      'i'.repeat(43),
+      'Katherine Johnson',
+      'violet harbour lantern 7',
+    );
+    expect(accepted.ok).toBe(true);
+    await expect(calls[0]?.json()).resolves.toEqual({
+      token: 'i'.repeat(43),
+      name: 'Katherine Johnson',
+      password: 'violet harbour lantern 7',
+    });
+    expect(calls[0]?.headers.get('Authorization')).toBeNull();
+    expect(getAccessToken()).toBe('token-new');
   });
 });

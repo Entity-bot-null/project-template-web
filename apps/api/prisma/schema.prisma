@@ -36,9 +36,10 @@ model User {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  sessions      Session[]
-  mailMessages  MailMessage[]
-  accountTokens AccountToken[]
+  sessions        Session[]
+  mailMessages    MailMessage[]
+  accountTokens   AccountToken[]
+  invitationsSent Invitation[]
 
   @@map("users")
 }
@@ -96,6 +97,8 @@ enum MailKind {
   // The address of an account was changed: a notice to the previous address,
   // with a link to undo it (a security notice, never held back).
   email_changed
+  // An administrator's invitation to create an account (limited per address).
+  invitation
 }
 
 enum MailStatus {
@@ -223,4 +226,31 @@ model SignUp {
 
   @@index([createdAt])
   @@map("sign_ups")
+}
+
+// An administrator's invitation to create an account with a given role. No
+// account exists until it is accepted (with a name and a password chosen by
+// the person invited): sign-in, recovery and the user list never see it. One
+// per address; inviting again replaces it, and its link. The link's token is
+// minted when the message is sent, only its SHA-256 stored
+// (docs/security.md#invitations).
+model Invitation {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  // normalizeEmail()'d, like users.email.
+  email       String    @unique
+  // Fixed by the administrator: accepting cannot change it.
+  role        Role
+  // Who invited; kept when that account is deleted, as unknown.
+  invitedById String?   @map("invited_by_id") @db.Uuid
+  // Null until the message is sent.
+  tokenHash   String?   @unique @map("token_hash")
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  invitedBy User? @relation(fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  // Deleting a user sets its invitations' invitedById to null.
+  @@index([invitedById])
+  @@map("invitations")
 }

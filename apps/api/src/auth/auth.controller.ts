@@ -16,7 +16,6 @@ import { ApiData, ApiErrors, ZodBody } from '../common/openapi/index.js';
 import {
   PASSWORD_RESET_CONFIRM_RATE_LIMIT,
   PASSWORD_RESET_REQUEST_RATE_LIMIT,
-  REFRESH_COOKIE,
   REFRESH_RATE_LIMIT,
   SIGN_IN_RATE_LIMIT,
   SIGN_UP_CONFIRM_RATE_LIMIT,
@@ -41,7 +40,12 @@ import {
 } from './dto/auth.schemas.js';
 import { PasswordResetService } from './password-reset.service.js';
 import { RefreshRaceLostException } from './sessions.service.js';
-import { clearSessionCookies, respondWithSession } from './session-cookies.js';
+import {
+  clearSessionCookies,
+  hasAmbiguousRefreshCookie,
+  refreshTokenOf,
+  respondWithSession,
+} from './session-cookies.js';
 import { SignUpService } from './sign-up.service.js';
 
 // Cross-site requests never reach these routes: the global Fetch Metadata
@@ -129,15 +133,17 @@ export class AuthController {
   // Public and the same for everyone: the web app shows only what works here.
   @Get('capabilities')
   @ApiOperation({
-    summary: 'What this deployment offers: password recovery, public sign-up, change of email',
+    summary:
+      'What this deployment offers: password recovery, public sign-up, change of email, invitations',
   })
   @ApiData(AuthCapabilitiesSchema)
   capabilities(): AuthCapabilities {
     return {
       passwordReset: this.passwordReset.available,
       signUp: this.signUp.available,
-      // Both need email only: the same answer as passwordReset.
+      // These need email only: the same answer as passwordReset.
       emailChange: this.passwordReset.available,
+      invitations: this.passwordReset.available,
     };
   }
 
@@ -210,20 +216,4 @@ export class AuthController {
   async confirmPasswordReset(@Body() body: PasswordResetConfirmDto): Promise<void> {
     await this.passwordReset.confirm(body.token, body.password);
   }
-}
-
-// Two refresh cookies (a parent-domain cookie a sibling site planted next to
-// ours, for instance) are never guessed between: whichever one the parser
-// keeps could be an attacker's session.
-function hasAmbiguousRefreshCookie(req: Request): boolean {
-  const names = (req.get('Cookie') ?? '').split(';').map((pair) => pair.split('=', 1)[0]?.trim());
-  return names.filter((name) => name === REFRESH_COOKIE).length > 1;
-}
-
-/** The request's refresh token: undefined when absent or ambiguous. */
-function refreshTokenOf(req: Request): string | undefined {
-  if (hasAmbiguousRefreshCookie(req)) return undefined;
-  const cookies = req.cookies as Record<string, unknown> | undefined;
-  const value = cookies?.[REFRESH_COOKIE];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }

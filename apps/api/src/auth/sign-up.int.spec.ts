@@ -236,7 +236,12 @@ describe.skipIf(skipWithoutMailpit)('sign-up (PostgreSQL + Mailpit)', () => {
 
   it('says what it offers, and is closed (403) unless enabled', async () => {
     const open = await request(t.server).get('/api/auth/capabilities').expect(200);
-    expect(envelopeOf(open).data).toEqual({ passwordReset: true, signUp: true, emailChange: true });
+    expect(envelopeOf(open).data).toEqual({
+      passwordReset: true,
+      signUp: true,
+      emailChange: true,
+      invitations: true,
+    });
     await t.app.close();
     t = await app(false);
     const closed = await request(t.server).get('/api/auth/capabilities').expect(200);
@@ -244,6 +249,7 @@ describe.skipIf(skipWithoutMailpit)('sign-up (PostgreSQL + Mailpit)', () => {
       passwordReset: true,
       signUp: false,
       emailChange: true,
+      invitations: true,
     });
     await ask('ada@example.test').expect(403);
     await confirm('a'.repeat(43)).expect(403);
