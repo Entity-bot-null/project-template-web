@@ -31,6 +31,7 @@ export function createAccount(name: string, password = 'lantern harbour violet 4
         MAIL_SMTP_URL: '',
         MAIL_FROM: '',
         APP_ORIGIN: '',
+        SIGN_UP_ENABLED: 'false',
       },
       stdio: ['pipe', 'ignore', 'inherit'],
     },

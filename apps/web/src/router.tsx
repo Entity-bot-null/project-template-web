@@ -27,8 +27,22 @@ export const routes = createRoutesFromElements(
           }))
         }
       />
+      <Route
+        path="sign-up"
+        lazy={() =>
+          import('./pages/SignUpPage').then(({ SignUpPage }) => ({ Component: SignUpPage }))
+        }
+      />
     </Route>
-    {/* Signed in or not: a person may open a reset link in any state. */}
+    {/* Signed in or not: a person may open an emailed link in any state. */}
+    <Route
+      path="confirm-sign-up"
+      lazy={() =>
+        import('./pages/ConfirmSignUpPage').then(({ ConfirmSignUpPage }) => ({
+          Component: ConfirmSignUpPage,
+        }))
+      }
+    />
     <Route
       path="reset-password"
       lazy={() =>

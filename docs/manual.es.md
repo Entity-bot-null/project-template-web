@@ -115,7 +115,7 @@ openssl rand -hex 32
 
 Pega el valor impreso como `JWT_ACCESS_SECRET=` en `apps/api/.env`. Es el único valor que la API
 necesita para arrancar en local; el fichero documenta todas las demás variables. Ya apunta el correo
-al Mailpit local ([11.5](#115-correo)); borra `MAIL_SMTP_URL` para trabajar sin correo.
+al Mailpit local ([11.5](#115-correo)); borra `MAIL_SMTP_URL` y `SIGN_UP_ENABLED` (el registro necesita correo) para trabajar sin él.
 
 Docker Compose lee el `.env` de la raíz. Créalo cuando necesites alguno de sus ajustes:
 
@@ -205,7 +205,8 @@ Para el último, el `.env` de la raíz necesita `JWT_ACCESS_SECRET`. En otra ter
   nombre del producto.
 - Roles: [how-to.md](how-to.md#add-a-role).
 - El ciclo de vida de cuentas que necesite el producto además de recuperar y cambiar la
-  contraseña: registro, verificación, MFA o SSO (docs/security.md#authentication-and-tokens).
+  contraseña y del registro público opcional (`SIGN_UP_ENABLED`): MFA o SSO
+  (docs/security.md#authentication-and-tokens).
 - Sustituye o amplía el módulo de ejemplo `users` con tu dominio; conserva `auth`, `health`,
   `common`, `observability`, `infrastructure` y `lifecycle`.
 - Los umbrales de cobertura y el presupuesto de rendimiento son mínimos; ajústalos de forma
@@ -460,7 +461,7 @@ Todo lo demás tiene un valor por defecto seguro. La tabla completa con cada reg
 | Error tracking    | `SENTRY_DSN` (sin definir: apagado), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                   |
 | Trazas y métricas | `OTEL_EXPORTER_OTLP_ENDPOINT` (sin definir: apagado), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES` |
 | Redis             | `REDIS_URL` (sin definir: apagado), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                  |
-| Correo            | `MAIL_SMTP_URL` (sin definir: apagado), `MAIL_FROM` (obligatoria con ella), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10)                                                                                                                        |
+| Correo            | `MAIL_SMTP_URL` (sin definir: apagado), `MAIL_FROM` (obligatoria con ella), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10), `SIGN_UP_ENABLED` (false; requiere correo)                                                                            |
 
 ### 6.3 Variables de la web
 
@@ -877,6 +878,15 @@ el titular recibe un aviso de que su contraseña cambió. Pruébalo en local: `p
 sesión, "Forgot your password?" con `member@example.com`, y abre el enlace desde Mailpit
 (http://localhost:8035). Sin correo el enlace no aparece y las rutas de recuperación responden 503;
 cambiarla con la sesión iniciada sigue funcionando.
+
+**Registro público (OPCIONAL).** Con `SIGN_UP_ENABLED=true` (y correo), la página de inicio de
+sesión ofrece "Create an account": la persona da un nombre, una dirección y una contraseña, recibe
+un enlace válido 24 horas y lo confirma escribiendo esa misma contraseña; solo entonces existe la
+cuenta (rol member) y queda con la sesión iniciada. Una dirección que ya tiene cuenta recibe un
+aviso en lugar de un enlace, y la página responde igual en ambos casos. `apps/api/.env.example` lo
+activa en local; en producción está apagado salvo que lo actives (las cuentas se crean entonces
+con `user:create`). Pruébalo: `pnpm dev`, "Create an account" con cualquier dirección, y abre el
+enlace desde Mailpit. El diseño y sus límites: [security.md](security.md#sign-up).
 
 ## 12. Operar en producción
 

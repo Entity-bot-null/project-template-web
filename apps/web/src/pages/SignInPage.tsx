@@ -15,7 +15,7 @@ interface FieldErrors {
 // sends the user on (back where they came from, or home).
 export function SignInPage() {
   const auth = useAuth();
-  // The link shows only where recovery works (email configured).
+  // The links show only where they work (email configured, sign-up open).
   const capabilities = useCapabilities();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -109,6 +109,11 @@ export function SignInPage() {
         {capabilities?.passwordReset === true && (
           <p>
             <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
+        )}
+        {capabilities?.signUp === true && (
+          <p>
+            New here? <Link to="/sign-up">Create an account</Link>
           </p>
         )}
       </form>

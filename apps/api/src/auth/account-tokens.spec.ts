@@ -131,11 +131,15 @@ describe('tokenOwner', () => {
 describe('AccountTokenSweep', () => {
   let sweep: AccountTokenSweep;
   const deleteMany = vi.fn(() => Promise.resolve({ count: 3 }));
+  const deleteSignUps = vi.fn(() => Promise.resolve({ count: 2 }));
 
   beforeEach(() => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    sweep = new AccountTokenSweep({ accountToken: { deleteMany } } as unknown as PrismaService);
+    sweep = new AccountTokenSweep({
+      accountToken: { deleteMany },
+      signUp: { deleteMany: deleteSignUps },
+    } as unknown as PrismaService);
   });
   afterEach(() => {
     sweep.onModuleDestroy();
@@ -144,10 +148,23 @@ describe('AccountTokenSweep', () => {
   it('deletes tokens used or expired more than a day ago, at boot and then on a timer', async () => {
     await sweep.onModuleInit();
     expect(deleteMany).toHaveBeenCalledTimes(1);
-    await expect(sweep.sweep(NOW)).resolves.toBe(3);
+    await expect(sweep.sweep(NOW)).resolves.toBe(5);
     const before = new Date(NOW - 86_400_000);
     expect(deleteMany).toHaveBeenLastCalledWith({
       where: { OR: [{ expiresAt: { lt: before } }, { usedAt: { lt: before } }] },
+    });
+  });
+
+  it('deletes sign-ups whose link expired a day ago, or whose message never went out', async () => {
+    await sweep.sweep(NOW);
+    expect(deleteSignUps).toHaveBeenLastCalledWith({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date(NOW - 86_400_000) } },
+          // Queue validity (24 hours) and a day.
+          { expiresAt: null, createdAt: { lt: new Date(NOW - 2 * 86_400_000) } },
+        ],
+      },
     });
   });
 

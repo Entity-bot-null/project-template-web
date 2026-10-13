@@ -308,8 +308,8 @@ for that).
 
 ## 9. Create the first administrator
 
-The template has no sign-up (each product decides its own account lifecycle), and the development
-seed never runs in production. The first account is created on the server with the API image, the
+Public sign-up is off by default (`SIGN_UP_ENABLED`) and only ever creates members, and the
+development seed never runs in production. The first account is created on the server with the API image, the
 password read from standard input so it never appears in the shell history or the process list:
 
 ```
