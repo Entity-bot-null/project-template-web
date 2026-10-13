@@ -38,6 +38,15 @@ describe('initialAssets', () => {
     assert.deepEqual(initialAssets(HTML), ['index-D7idpz_K.js', 'validation-CwNs7JtE.js']);
   });
 
+  test('reads tags and attributes in any letter case and quoting, as HTML does', () => {
+    const html = [
+      '<SCRIPT TYPE="module" SRC="/assets/index-a.js"></SCRIPT>',
+      "<Link Rel='modulepreload' Href='/assets/shared-b.js'>",
+      '<link rel=modulepreload href=/assets/vendor-c.js>',
+    ].join('\n');
+    assert.deepEqual(initialAssets(html), ['index-a.js', 'shared-b.js', 'vendor-c.js']);
+  });
+
   test('leaves out stylesheets, classic scripts and other origins', () => {
     const html = [
       '<link rel="stylesheet" href="/assets/index-x.css">',

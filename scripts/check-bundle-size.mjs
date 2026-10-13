@@ -27,10 +27,11 @@ const BUDGET_FILE = new URL('../apps/web/performance-budget.json', import.meta.u
  */
 export function initialAssets(html) {
   const files = new Set();
-  for (const [tag] of html.matchAll(/<(?:script|link)\b[^>]*>/g)) {
-    const isEntry = /^<script\b/.test(tag) && /\btype="module"/.test(tag);
-    const isPreload = /^<link\b/.test(tag) && /\brel="modulepreload"/.test(tag);
-    const url = /\b(?:src|href)="\/assets\/([^"/]+\.js)"/.exec(tag)?.[1];
+  // Tag and attribute names in any letter case, as HTML reads them.
+  for (const [tag] of html.matchAll(/<(?:script|link)\b[^>]*>/gi)) {
+    const isEntry = /^<script\b/i.test(tag) && /\btype=["']?module\b/i.test(tag);
+    const isPreload = /^<link\b/i.test(tag) && /\brel=["']?modulepreload\b/i.test(tag);
+    const url = /\b(?:src|href)=["']?\/assets\/([^"'/\s>]+\.js)\b/i.exec(tag)?.[1];
     if ((isEntry || isPreload) && url !== undefined) files.add(url);
   }
   return [...files];
