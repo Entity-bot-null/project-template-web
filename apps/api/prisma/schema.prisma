@@ -82,6 +82,11 @@ enum MailKind {
   password_reset
   // The password of an account was changed or reset (a security notice).
   password_changed
+  // A link to confirm a sign-up (anyone can ask for one: limited).
+  sign_up_confirmation
+  // Someone signed up with an address that already has an account: a notice
+  // to its owner instead of a link (anyone can cause one: limited).
+  sign_up_existing
 }
 
 enum MailStatus {
@@ -177,4 +182,28 @@ model AccountToken {
   // The sweep deletes expired and used tokens.
   @@index([expiresAt])
   @@map("account_tokens")
+}
+
+// A sign-up waiting for its address to be confirmed. No account exists until
+// it is: sign-in, recovery and the admin list never see an unconfirmed one.
+// One per address; a new sign-up replaces it (and its link). The link's token
+// is minted when the message is sent, only its SHA-256 stored; confirming
+// takes the token AND the password chosen here, so whoever opens a link they
+// did not ask for cannot finish someone else's sign-up
+// (docs/security.md#sign-up).
+model SignUp {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  // normalizeEmail()'d, like users.email.
+  email          String    @unique
+  name           String
+  passwordHash   String    @map("password_hash")
+  // Null until the message is sent.
+  tokenHash      String?   @unique @map("token_hash")
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(3)
+  // Wrong passwords given with the link: the sign-up is dropped at the limit.
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@map("sign_ups")
 }

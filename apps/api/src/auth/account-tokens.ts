@@ -3,6 +3,7 @@ import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@ne
 import { sha256Hex } from '../common/utils/sha256.js';
 import type { AccountTokenPurpose, Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { SIGN_UP_TTL_MS } from './auth.constants.js';
 
 // One-time tokens sent in emailed links (docs/security.md#one-time-tokens):
 // 32 random bytes (256 bits) in base64url. The database keeps only the token's
@@ -16,6 +17,11 @@ type Tx = Prisma.TransactionClient;
 
 export function hashAccountToken(token: string): string {
   return sha256Hex(token);
+}
+
+/** A new token: 32 random bytes, base64url (43 characters). Store only hashAccountToken(token). */
+export function newAccountToken(): string {
+  return randomBytes(32).toString('base64url');
 }
 
 export interface MintInput {
@@ -40,7 +46,7 @@ export async function mintAccountToken(
   await tx.accountToken.deleteMany({
     where: { userId: input.userId, purpose: input.purpose, usedAt: null },
   });
-  const token = randomBytes(32).toString('base64url');
+  const token = newAccountToken();
   await tx.accountToken.create({
     data: {
       userId: input.userId,
@@ -139,8 +145,21 @@ export class AccountTokenSweep implements OnModuleInit, OnModuleDestroy {
       const { count } = await this.prisma.accountToken.deleteMany({
         where: { OR: [{ expiresAt: { lt: before } }, { usedAt: { lt: before } }] },
       });
+      // Sign-ups whose link expired, and those whose message never went out
+      // (its queue validity is SIGN_UP_TTL_MS): nobody can finish them.
+      const signUps = await this.prisma.signUp.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: before } },
+            { expiresAt: null, createdAt: { lt: new Date(now - SIGN_UP_TTL_MS - DAY_MS) } },
+          ],
+        },
+      });
       if (count > 0) this.logger.log(`Swept ${String(count)} used or expired account tokens`);
-      return count;
+      if (signUps.count > 0) {
+        this.logger.log(`Swept ${String(signUps.count)} expired sign-ups`);
+      }
+      return count + signUps.count;
     } catch (error) {
       this.logger.warn(
         `Account token sweep failed: ${error instanceof Error ? error.message : String(error)}`,

@@ -45,6 +45,8 @@ export type AccessTokenPayload = z.infer<typeof AccessTokenPayloadSchema>;
 export const AuthCapabilitiesSchema = z.object({
   /** Email is configured: "Forgot your password?" can send a link. */
   passwordReset: z.boolean(),
+  /** Public sign-up is open (SIGN_UP_ENABLED): "Create an account". */
+  signUp: z.boolean(),
 });
 export type AuthCapabilities = z.infer<typeof AuthCapabilitiesSchema>;
 
@@ -72,3 +74,20 @@ export const ChangePasswordSchema = z.object({
   newPassword,
 });
 export type ChangePasswordDto = z.infer<typeof ChangePasswordSchema>;
+
+// The policy is checked by the service (it needs the email and the name);
+// the schema bounds the sizes. Names are trimmed, as user:create stores them.
+export const SignUpSchema = z.object({
+  email: z.string().trim().max(254).pipe(z.email()).meta({ format: 'email' }),
+  name: z.string().trim().min(1, 'Name is required').max(100),
+  password: newPassword,
+});
+export type SignUpDto = z.infer<typeof SignUpSchema>;
+
+// The password chosen at sign-up, checked against it: no policy here, only
+// the size bound.
+export const SignUpConfirmSchema = z.object({
+  token: ONE_TIME_TOKEN,
+  password: z.string().min(1, 'Password is required').max(PASSWORD_MAX_INPUT_LENGTH),
+});
+export type SignUpConfirmDto = z.infer<typeof SignUpConfirmSchema>;

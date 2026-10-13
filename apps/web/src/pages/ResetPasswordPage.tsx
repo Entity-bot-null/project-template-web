@@ -1,39 +1,26 @@
-import { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { useState } from 'react';
+import { Link } from 'react-router';
 import { api } from '../api/client';
 import { call, describeFailure } from '../api/errors';
 import { useAuth } from '../auth';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
+import { useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
 import { PasswordField } from '../components/PasswordField';
 
-const TOKEN = /^#token=([A-Za-z0-9_-]{43})$/;
-
 type Outcome = 'changed' | 'invalid-link' | null;
 
-// Chooses a new password with the link of a reset message. The token arrives
-// after # (a browser never sends that part to a server), is read once, then
-// taken out of the address bar and the history at once, so it is not left
-// on screen, in a bookmark or for the back button. It lives in this page's
-// memory only (never in browser storage) and is dropped once used. Opening
-// the link changes nothing: only the form's submit spends it, so a mail
-// client or a scanner that fetches the link does no harm.
+// Chooses a new password with the link of a reset message. The token is
+// handled by useLinkToken: out of the address bar and the history at once,
+// in memory only, dropped once used; opening the link changes nothing.
 export function ResetPasswordPage() {
   const auth = useAuth();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const [token, setToken] = useState<string | null>(() => TOKEN.exec(location.hash)?.[1] ?? null);
+  const [token, dropToken] = useLinkToken();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>(null);
-
-  useEffect(() => {
-    if (location.hash !== '') {
-      void navigate({ pathname: location.pathname, search: location.search }, { replace: true });
-    }
-  }, [location.hash, location.pathname, location.search, navigate]);
 
   async function submit(currentToken: string) {
     const problem = newPasswordError(password);
@@ -46,7 +33,7 @@ export function ResetPasswordPage() {
     );
     setSubmitting(false);
     if (result.ok) {
-      setToken(null);
+      dropToken();
       setPassword('');
       setOutcome('changed');
       // Every session of the account ended on the server. This browser's
@@ -56,7 +43,7 @@ export function ResetPasswordPage() {
       return;
     }
     if (result.failure.status === 404) {
-      setToken(null);
+      dropToken();
       setOutcome('invalid-link');
     } else if (result.failure.status === 400) {
       setError('Choose another password: this one is among the most used, or too easy to guess.');

@@ -16,6 +16,8 @@ export const WEB_VITALS_ROUTES = [
   '/sign-in',
   '/forgot-password',
   '/reset-password',
+  '/sign-up',
+  '/confirm-sign-up',
   '/account',
   '/admin/users',
   '/*',

@@ -10,7 +10,10 @@ import { renderRoute } from '../test/render';
 const SIGN_IN = 'POST /api/auth/sign-in';
 const CAPABILITIES = 'GET /api/auth/capabilities';
 const routeOf = (request: Request) => `${request.method} ${new URL(request.url).pathname}`;
-const offers = (passwordReset: boolean) => () => ok({ passwordReset });
+const offers =
+  (passwordReset: boolean, signUp = false) =>
+  () =>
+    ok({ passwordReset, signUp });
 
 beforeEach(() => {
   resetForTests();
@@ -104,11 +107,19 @@ describe('the way back into an account', () => {
     ).toBeInTheDocument();
   });
 
+  it('links to sign-up where it is open', async () => {
+    stubFetch({ [CAPABILITIES]: offers(true, true) });
+    renderRoute('/sign-in');
+    await userEvent.setup().click(await screen.findByRole('link', { name: 'Create an account' }));
+    expect(await screen.findByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
+  });
+
   it('shows no link where email is off, or while that cannot be known', async () => {
     const { calls } = stubFetch({ [CAPABILITIES]: offers(false) });
     renderRoute('/sign-in');
     await expect.poll(() => calls.length).toBe(1);
     expect(screen.queryByRole('link', { name: 'Forgot your password?' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Create an account' })).toBeNull();
   });
 
   it('asks again on the next visit after a failed answer, never caching it', async () => {

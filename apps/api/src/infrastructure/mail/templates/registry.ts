@@ -3,6 +3,8 @@ import type { ClaimedMessage, MailOptions } from '../mail.types.js';
 import type { RenderedMail } from './layout.js';
 import { passwordChangedTemplate } from './password-changed.template.js';
 import { passwordResetTemplate } from './password-reset.template.js';
+import { signUpConfirmationTemplate } from './sign-up-confirmation.template.js';
+import { signUpExistingTemplate } from './sign-up-existing.template.js';
 import { testTemplate } from './test.template.js';
 
 export interface ComposeContext {
@@ -30,6 +32,8 @@ export const MAIL_TEMPLATE_REGISTRY: MailTemplates = {
   test: testTemplate,
   password_reset: passwordResetTemplate,
   password_changed: passwordChangedTemplate,
+  sign_up_confirmation: signUpConfirmationTemplate,
+  sign_up_existing: signUpExistingTemplate,
 };
 
 /** What messages call the product: the sender's display name, else the public host. */

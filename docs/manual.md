@@ -111,7 +111,7 @@ openssl rand -hex 32
 
 Paste the printed value as `JWT_ACCESS_SECRET=` in `apps/api/.env`. That is the only value the API
 needs to start locally; the file documents every other variable. It already points email at the
-local Mailpit ([11.5](#115-email)); delete `MAIL_SMTP_URL` to run without email.
+local Mailpit ([11.5](#115-email)); delete `MAIL_SMTP_URL` and `SIGN_UP_ENABLED` (sign-up needs email) to run without it.
 
 The root `.env` is read by Docker Compose. Create it when you need one of its settings:
 
@@ -195,8 +195,8 @@ Stop it with `Ctrl+C`, then `docker compose --profile stack down`.
 
 - UI language, the design system (`apps/web/src/index.css` is a placeholder), the product name.
 - Roles: [how-to.md](how-to.md#add-a-role).
-- The account lifecycle the product needs beyond password recovery and change: sign-up,
-  verification, MFA or SSO (docs/security.md#authentication-and-tokens).
+- The account lifecycle the product needs beyond password recovery and change and the optional
+  public sign-up (`SIGN_UP_ENABLED`): MFA or SSO (docs/security.md#authentication-and-tokens).
 - Replace or extend the example `users` module with your domain; keep `auth`, `health`, `common`,
   `observability`, `infrastructure` and `lifecycle`.
 - Coverage thresholds and the performance budget stay as floors; adjust them deliberately
@@ -444,7 +444,7 @@ Everything else has a safe default. The full table with every rule: [environment
 | Error tracking      | `SENTRY_DSN` (unset: off), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                   |
 | Tracing and metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` (unset: off), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES` |
 | Redis               | `REDIS_URL` (unset: off), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                  |
-| Email               | `MAIL_SMTP_URL` (unset: off), `MAIL_FROM` (required with it), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10)                                                                                                                            |
+| Email               | `MAIL_SMTP_URL` (unset: off), `MAIL_FROM` (required with it), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10), `SIGN_UP_ENABLED` (false; requires email)                                                                                 |
 
 ### 6.3 Web variables
 
@@ -848,6 +848,15 @@ account is signed out at once, and the owner gets a "your password was changed" 
 locally: `pnpm dev`, sign out, "Forgot your password?" with `member@example.com`, and open the
 link from Mailpit (http://localhost:8035). Without email the link is not shown and the reset
 routes answer 503; changing it while signed in still works.
+
+**Public sign-up (OPTIONAL).** With `SIGN_UP_ENABLED=true` (and email), the sign-in page offers
+"Create an account": the person gives a name, an address and a password, receives a link valid for
+24 hours, and confirms it by entering that same password; only then does the account (role
+member) exist, and they are signed in. An address that already has an account gets a notice
+instead of a link, and the page answers the same either way. `apps/api/.env.example` turns it on
+locally; in production it is off unless you set it (accounts are then created with
+`user:create`). Try it: `pnpm dev`, "Create an account" with any address, and open the link from
+Mailpit. The design and its limits: [security.md](security.md#sign-up).
 
 ## 12. Running in production
 
