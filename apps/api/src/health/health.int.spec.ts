@@ -26,7 +26,7 @@ describe('Health probes (integration)', () => {
     const res = await request(t.server).get('/api/health/ready').expect(200);
     expect(envelopeOf(res).data).toEqual({
       status: 'ok',
-      checks: { database: 'ok', redis: 'disabled' },
+      checks: { database: 'ok', redis: 'disabled', mail: 'disabled' },
     });
   });
 

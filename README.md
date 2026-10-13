@@ -37,7 +37,7 @@ OpenTelemetry backend and Redis are optional and off by default.
 pnpm install
 cp apps/api/.env.example apps/api/.env      # then set JWT_ACCESS_SECRET (openssl rand -hex 32)
 pnpm db:up && pnpm db:migrate && pnpm db:seed
-pnpm dev                                    # web http://localhost:5173, API http://localhost:3000/api/docs
+pnpm dev                                    # web http://localhost:5173, API http://localhost:3000/api/docs, email http://localhost:8035
 ```
 
 Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `member-password`
@@ -47,7 +47,7 @@ Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `m
 
 | Command                                             | What it does                                                                                          |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                          | Database up, then API and web dev servers; their URLs in a box under the logs                         |
+| `pnpm dev`                                          | Database and Mailpit up, then API and web dev servers; their URLs in a box under the logs             |
 | `pnpm build`                                        | Build every app                                                                                       |
 | `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                        |
 | `pnpm format` / `pnpm format:check`                 | Prettier                                                                                              |
@@ -66,7 +66,9 @@ Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `m
 | `pnpm smoke --url <public URL> --api <API URL>`     | Read-only smoke test of a running deployment (after a rollout, a restore, an incident)                |
 | `pnpm verify`                                       | **All fast gates:** format check → lint → typecheck → tests + coverage → security → build → budget    |
 | `pnpm contract`                                     | Regenerate `openapi/openapi.json` and the web client types                                            |
+| `pnpm services:up`                                  | Database and Mailpit (the mail catcher, http://localhost:8035)                                        |
 | `pnpm db:up` / `db:down` / `db:migrate` / `db:seed` | Local database                                                                                        |
+| `pnpm --filter api mail status` / `test` / `retry`  | The email outbox: what waits or failed, a delivery check, failed messages sent again                  |
 | `docker compose --profile redis up -d`              | Optional local Redis (`REDIS_PASSWORD` in the root `.env`)                                            |
 | `docker compose --profile observability up -d`      | Optional local OpenTelemetry backend with the dashboards and alerts, Grafana at http://localhost:3001 |
 

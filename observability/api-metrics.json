@@ -6,7 +6,10 @@
       "type": "counter",
       "labels": ["cache_namespace", "cache_result"]
     },
-    "app_db_slow_queries_total": { "type": "counter", "labels": [] },
+    "app_db_slow_queries_total": {
+      "type": "counter",
+      "labels": []
+    },
     "app_degraded_operations_total": {
       "type": "counter",
       "labels": ["dependency_name", "feature"]
@@ -15,7 +18,34 @@
       "type": "histogram",
       "labels": ["dependency_name", "http_response_status_code", "outcome"]
     },
-    "app_server_errors_total": { "type": "counter", "labels": ["error_origin", "http_route"] },
+    "app_mail_deliveries_total": {
+      "type": "counter",
+      "labels": ["mail_kind", "outcome"]
+    },
+    "app_mail_delivery_duration_seconds": {
+      "type": "histogram",
+      "labels": ["mail_kind", "outcome"]
+    },
+    "app_mail_latency_seconds": {
+      "type": "histogram",
+      "labels": ["mail_kind"]
+    },
+    "app_mail_outbox_oldest_age_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "app_mail_outbox_waiting": {
+      "type": "gauge",
+      "labels": []
+    },
+    "app_mail_suppressed_total": {
+      "type": "counter",
+      "labels": ["mail_kind"]
+    },
+    "app_server_errors_total": {
+      "type": "counter",
+      "labels": ["error_origin", "http_route"]
+    },
     "app_web_vitals_cls": {
       "type": "histogram",
       "labels": ["page_route", "web_vital_navigation_type", "web_vital_rating"]
@@ -47,7 +77,10 @@
         "server_port"
       ]
     },
-    "db_client_connection_max": { "type": "gauge", "labels": ["db_client_connection_pool_name"] },
+    "db_client_connection_max": {
+      "type": "gauge",
+      "labels": ["db_client_connection_pool_name"]
+    },
     "db_client_connection_pending_requests": {
       "type": "gauge",
       "labels": ["db_client_connection_pool_name"]
@@ -88,20 +121,50 @@
         "url_scheme"
       ]
     },
-    "nodejs_eventloop_delay_max_seconds": { "type": "gauge", "labels": [] },
-    "nodejs_eventloop_delay_mean_seconds": { "type": "gauge", "labels": [] },
-    "nodejs_eventloop_delay_min_seconds": { "type": "gauge", "labels": [] },
-    "nodejs_eventloop_delay_p50_seconds": { "type": "gauge", "labels": [] },
-    "nodejs_eventloop_delay_p90_seconds": { "type": "gauge", "labels": [] },
-    "nodejs_eventloop_delay_p99_seconds": { "type": "gauge", "labels": [] },
-    "nodejs_eventloop_delay_stddev_seconds": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_delay_max_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_eventloop_delay_mean_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_eventloop_delay_min_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_eventloop_delay_p50_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_eventloop_delay_p90_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_eventloop_delay_p99_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
+    "nodejs_eventloop_delay_stddev_seconds": {
+      "type": "gauge",
+      "labels": []
+    },
     "nodejs_eventloop_time_seconds_total": {
       "type": "counter",
       "labels": ["nodejs_eventloop_state"]
     },
-    "nodejs_eventloop_utilization_ratio": { "type": "gauge", "labels": [] },
-    "process_cpu_time_seconds_total": { "type": "counter", "labels": ["cpu_mode"] },
-    "process_memory_usage_bytes": { "type": "gauge", "labels": [] },
+    "nodejs_eventloop_utilization_ratio": {
+      "type": "gauge",
+      "labels": []
+    },
+    "process_cpu_time_seconds_total": {
+      "type": "counter",
+      "labels": ["cpu_mode"]
+    },
+    "process_memory_usage_bytes": {
+      "type": "gauge",
+      "labels": []
+    },
     "redis_client_errors_total": {
       "type": "counter",
       "labels": [
@@ -114,7 +177,10 @@
         "redis_client_library"
       ]
     },
-    "v8js_gc_duration_seconds": { "type": "histogram", "labels": ["v8js_gc_type"] },
+    "v8js_gc_duration_seconds": {
+      "type": "histogram",
+      "labels": ["v8js_gc_type"]
+    },
     "v8js_memory_heap_space_available_size_bytes": {
       "type": "gauge",
       "labels": ["v8js_heap_space_name"]
@@ -123,8 +189,17 @@
       "type": "gauge",
       "labels": ["v8js_heap_space_name"]
     },
-    "v8js_memory_heap_space_size_bytes": { "type": "gauge", "labels": ["v8js_heap_space_name"] },
-    "v8js_memory_heap_used_bytes": { "type": "gauge", "labels": ["v8js_heap_space_name"] },
-    "v8js_resource_active": { "type": "gauge", "labels": ["v8js_resource_type"] }
+    "v8js_memory_heap_space_size_bytes": {
+      "type": "gauge",
+      "labels": ["v8js_heap_space_name"]
+    },
+    "v8js_memory_heap_used_bytes": {
+      "type": "gauge",
+      "labels": ["v8js_heap_space_name"]
+    },
+    "v8js_resource_active": {
+      "type": "gauge",
+      "labels": ["v8js_resource_type"]
+    }
   }
 }

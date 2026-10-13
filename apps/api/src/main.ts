@@ -34,7 +34,7 @@ for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
 const telemetry = await startTelemetry(env);
 const tracker = await startErrorTracking(env);
 logger.log(
-  `Starting release ${env.APP_RELEASE} in ${env.APP_ENVIRONMENT}: tracing and metrics ${telemetry.enabled ? 'on' : 'off'}, error tracking ${tracker.enabled ? 'on' : 'off'}, Redis ${env.REDIS_URL === undefined ? 'off' : 'on'}`,
+  `Starting release ${env.APP_RELEASE} in ${env.APP_ENVIRONMENT}: tracing and metrics ${telemetry.enabled ? 'on' : 'off'}, error tracking ${tracker.enabled ? 'on' : 'off'}, Redis ${env.REDIS_URL === undefined ? 'off' : 'on'}, email ${env.MAIL_SMTP_URL === undefined ? 'off' : 'on'}`,
   'Bootstrap',
 );
 

@@ -110,7 +110,8 @@ openssl rand -hex 32
 ```
 
 Paste the printed value as `JWT_ACCESS_SECRET=` in `apps/api/.env`. That is the only value the API
-needs to start locally; the file documents every other variable.
+needs to start locally; the file documents every other variable. It already points email at the
+local Mailpit ([11.5](#115-email)); delete `MAIL_SMTP_URL` to run without email.
 
 The root `.env` is read by Docker Compose. Create it when you need one of its settings:
 
@@ -124,6 +125,9 @@ cp .env.example .env
   (`postgresql://app:app@localhost:5443/app`).
 - **The production-like stack** ([2.7](#27-check-that-every-gate-passes)): `JWT_ACCESS_SECRET` in the
   root `.env` too (another `openssl rand -hex 32`).
+- **Ports 1035 or 8035 taken** (Mailpit's SMTP and web UI; not its usual 1025 and 8025, which
+  another project's Mailpit may hold): `MAILPIT_SMTP_PORT` and `MAILPIT_UI_PORT` in the root
+  `.env`, and the SMTP port in `MAIL_SMTP_URL` of `apps/api/.env`.
 - **Local Redis** ([11.1](#111-redis)): `REDIS_PASSWORD` in the root `.env`
   (`openssl rand -hex 24`, pasted as the value).
 
@@ -148,7 +152,8 @@ The seed prints the accounts: `admin@example.com` / `admin-password` and `member
 pnpm dev
 ```
 
-It starts the database (if stopped), then the API and the web app with live reload:
+It starts the database and Mailpit (`pnpm services:up`, if stopped), then the API and the web app
+with live reload, and prints these addresses in a box under their logs, again after every restart:
 
 | What                        | URL                                             |
 | --------------------------- | ----------------------------------------------- |
@@ -156,12 +161,14 @@ It starts the database (if stopped), then the API and the web app with live relo
 | API                         | http://127.0.0.1:3000/api                       |
 | API documentation (Swagger) | http://localhost:3000/api/docs                  |
 | API liveness / readiness    | http://127.0.0.1:3000/api/health/live, `/ready` |
+| Email the API sent          | http://localhost:8035 (Mailpit)                 |
 
 Open the web app and sign in with a seeded account. The API's first log line says what is on:
-`Starting release unversioned in development: tracing and metrics off, error tracking off, Redis off`.
+`Starting release unversioned in development: tracing and metrics off, error tracking off, Redis off, email on`.
 
-Stop with `Ctrl+C`. `pnpm db:down` removes the database container; the data stays in its Docker
-volume, and the optional services keep running until `docker compose --profile <profile> down`.
+Stop with `Ctrl+C`. `pnpm db:down` removes the database and Mailpit containers; the database's data
+stays in its Docker volume (Mailpit's messages do not), and the optional services keep running
+until `docker compose --profile <profile> down`.
 
 ### 2.7 Check that every gate passes
 
@@ -432,11 +439,12 @@ Everything else has a safe default. The full table with every rule: [environment
 | Runtime             | `NODE_ENV` (none), `HOST` (127.0.0.1; every interface in production), `PORT` (3000)                                                                                                                                                                   |
 | Database            | `DATABASE_URL` (none), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                                                |
 | Authentication      | `JWT_ACCESS_SECRET` (none), `JWT_ACCESS_SECRET_PREVIOUS` (unset), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                                                     |
-| HTTP                | `CORS_ORIGINS` (empty), `APP_ORIGIN` (unset; set it in production), `TRUST_PROXY` (loopback; required in production), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60)                                                                            |
+| HTTP                | `CORS_ORIGINS` (empty), `APP_ORIGIN` (unset; set it in production; required with email), `TRUST_PROXY` (loopback; required in production), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60)                                                       |
 | Logs and identity   | `LOG_LEVEL` (log), `LOG_FORMAT` (json in production, else text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (from the image, else unversioned)                                                                                                       |
 | Error tracking      | `SENTRY_DSN` (unset: off), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                   |
 | Tracing and metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` (unset: off), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES` |
 | Redis               | `REDIS_URL` (unset: off), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                  |
+| Email               | `MAIL_SMTP_URL` (unset: off), `MAIL_FROM` (required with it), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10)                                                                                                                            |
 
 ### 6.3 Web variables
 
@@ -451,7 +459,8 @@ Anything named `VITE_*` is compiled into the public bundle: never a secret.
 
 ### 6.4 Compose variables (root `.env`)
 
-`DB_PORT` (5442), `JWT_ACCESS_SECRET` (the stack's API), `WEB_PORT` (8080), `REDIS_PASSWORD`
+`DB_PORT` (5442), `MAILPIT_SMTP_PORT` (1035), `MAILPIT_UI_PORT` (8035), `JWT_ACCESS_SECRET` (the
+stack's API), `WEB_PORT` (8080), `REDIS_PASSWORD`
 (required by the `redis` profile only), `REDIS_PORT` (6379), `OTLP_HTTP_PORT` (4318),
 `GRAFANA_PORT` (3001), `PROMETHEUS_PORT` (9090), `APP_RELEASE` (the stack images' release, default
 `local`), and the stack's
@@ -477,7 +486,7 @@ Every command the template ships.
 | Command                                                           | What it does                                                                                                                                |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm install`                                                    | installs the workspace; runs `prepare` (installs the Git hooks) and the API's `postinstall` (`prisma generate`)                             |
-| `pnpm dev`                                                        | `pnpm db:up`, then the API (`nest start --watch`) and the web app (Vite) in parallel                                                        |
+| `pnpm dev`                                                        | `pnpm services:up`, then the API (`nest start --watch`) and the web app (Vite) in parallel; their URLs in a box under the logs              |
 | `pnpm build`                                                      | builds every app (`apps/*/dist`)                                                                                                            |
 | `pnpm lint`                                                       | ESLint on the whole repository, zero warnings allowed                                                                                       |
 | `pnpm lint:fix`                                                   | the same, applying automatic fixes                                                                                                          |
@@ -486,7 +495,7 @@ Every command the template ships.
 | `pnpm typecheck`                                                  | TypeScript in every app, the contract types check and the repository scripts                                                                |
 | `pnpm test`                                                       | unit and component tests of every app                                                                                                       |
 | `pnpm test:coverage`                                              | the same with the coverage thresholds                                                                                                       |
-| `pnpm test:integration`                                           | the API against PostgreSQL (and Redis when configured)                                                                                      |
+| `pnpm test:integration`                                           | the API against PostgreSQL (and Redis and Mailpit when configured)                                                                          |
 | `pnpm test:e2e`                                                   | Playwright on the built app                                                                                                                 |
 | `pnpm test:scripts`                                               | the tests of the repository scripts (`scripts/*.test.mjs`: Semgrep file selection, Doberman's engine)                                       |
 | `pnpm security`                                                   | `pnpm audit --audit-level=high`, then `pnpm deps:check`, then `pnpm secrets:scan`                                                           |
@@ -501,8 +510,9 @@ Every command the template ships.
 | `pnpm perf:check`                                                 | gzip size of the built web assets against `apps/web/performance-budget.json` (after `pnpm build`)                                           |
 | `pnpm smoke --url <public URL> --api <API URL> [--release <sha>]` | read-only smoke test of a running deployment ([10.3](#103-smoke-test))                                                                      |
 | `pnpm contract`                                                   | exports `openapi/openapi.json` and regenerates the web client types                                                                         |
+| `pnpm services:up`                                                | `docker compose up --detach --wait db mailpit`: the database and the mail catcher                                                           |
 | `pnpm db:up`                                                      | `docker compose up --detach --wait db`                                                                                                      |
-| `pnpm db:down`                                                    | `docker compose down`: removes the database container, keeps its data; optional services stop with their profile                            |
+| `pnpm db:down`                                                    | `docker compose down`: removes the database and Mailpit containers, keeps the database's data; optional services stop with their profile    |
 | `pnpm db:migrate [--name <name>]`                                 | creates a migration from schema changes, applies pending ones, regenerates the client (development)                                         |
 | `pnpm db:seed`                                                    | development accounts (local databases only; `--allow-remote-database` for a disposable remote one)                                          |
 | `pnpm verify`                                                     | `format:check` → `lint` → `typecheck` → `test:coverage` → `security` → `build` → `perf:check`                                               |
@@ -524,6 +534,7 @@ Every command the template ships.
 | `db:deploy`        | `prisma migrate deploy`                                                                                                                                                                                                                                                              |
 | `db:seed`          | builds and runs the seed                                                                                                                                                                                                                                                             |
 | `user:create`      | creates one account in the database of `DATABASE_URL`, any environment, the password from stdin: `printf '%s' "$PASSWORD" \| pnpm --filter api user:create --email <email> --name <name> --role admin` ([deploy-vps.md](deploy-vps.md#9-create-the-first-administrator) on a server) |
+| `mail`             | the email outbox's operator commands ([11.5](#115-email)): `mail test --to <address>` (queue a test message, wait for its delivery), `mail status [--to <address>]`, `mail retry --id <id> \| --failed [--kind <kind>]`                                                              |
 | `e2e:server`       | prepares `<db>_e2e` and runs the built API for Playwright (started by `pnpm test:e2e`)                                                                                                                                                                                               |
 
 ### 7.3 Web scripts (`pnpm --filter web <script>`)
@@ -557,12 +568,13 @@ Every command the template ships.
 | Command                                                                             | What it starts                                                                                                                                                                    |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5442}`                                                                                                                                 |
+| `pnpm services:up`                                                                  | `db`, and `mailpit`: the mail catcher, SMTP on `127.0.0.1:${MAILPIT_SMTP_PORT:-1035}`, web UI on http://localhost:8035 (`MAILPIT_UI_PORT`), messages in memory                    |
 | `docker compose --profile redis up -d`                                              | `redis`: Redis 8 with a password, `127.0.0.1:${REDIS_PORT:-6379}`, data in the volume `redis_data`                                                                                |
 | `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki and Grafana with the dashboards and rules of `observability/`; OTLP on 4318, Grafana on http://localhost:3001, Prometheus on 9090 |
 | `docker compose --profile stack up --build`                                         | `migrate` (runs once), `api`, `web`: the production images at http://localhost:8080                                                                                               |
 | `docker compose --profile stack --profile redis --profile observability up --build` | the stack with every optional service (set the `STACK_*` variables, [6.4](#64-compose-variables-root-env))                                                                        |
 | `docker compose ps`                                                                 | what runs, with health                                                                                                                                                            |
-| `docker compose logs -f <service>`                                                  | follows a service's log (`api`, `web`, `db`, `redis`, `migrate`)                                                                                                                  |
+| `docker compose logs -f <service>`                                                  | follows a service's log (`api`, `web`, `db`, `mailpit`, `redis`, `migrate`)                                                                                                       |
 | `docker compose --profile <profile> down`                                           | stops and removes those containers; volumes stay                                                                                                                                  |
 | `docker compose down -v`                                                            | **also deletes the volumes**: the development database and Redis data are gone                                                                                                    |
 | `docker compose exec db psql -U app -d app`                                         | SQL shell                                                                                                                                                                         |
@@ -587,6 +599,7 @@ commands
 | Command                                                                                                                                                   | Use                                                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness of one instance, from inside the platform                                                                                 |
+| `docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js status` (`test --to <address>`, `retry --failed`)                           | the email outbox: what waits, what failed and why; a delivery check; failed messages sent again ([11.5](#115-email))                |
 | `pnpm smoke --url <public URL> --api <API URL> --release <sha>`                                                                                           | after a deployment, a restore, an incident                                                                                          |
 | `docker run --rm -e DATABASE_URL=<url> <api-migrate image>`                                                                                               | refuses a database whose applied migrations were edited, then applies the pending ones                                              |
 | `docker run --rm -e DATABASE_URL=<url> <api-migrate image> node node_modules/prisma/build/index.js migrate status`                                        | which migrations an environment has                                                                                                 |
@@ -723,6 +736,7 @@ to check one side only.
 ## 11. Optional infrastructure
 
 Off by default; turning each on is configuration. Nothing here is needed to develop, test or deploy.
+Email is the one on by default locally, against Mailpit ([11.5](#115-email)).
 
 ### 11.1 Redis
 
@@ -782,6 +796,49 @@ docker compose --profile stack --profile redis --profile observability up --buil
 Web at http://localhost:8080, Grafana at http://localhost:3001. Stop with
 `docker compose --profile stack --profile redis --profile observability down`.
 
+### 11.5 Email
+
+The API sends email through an outbox: a feature writes the message in the same transaction as the
+change it reports, and a worker inside every API instance delivers it over SMTP, with retries
+([architecture.md](architecture.md#email)). Without `MAIL_SMTP_URL` email is off: nothing is
+queued, readiness says `checks.mail: "disabled"`, and the rest of the API works.
+
+**Locally**, `pnpm dev` starts Mailpit, a mail catcher: the API sends to it
+(`MAIL_SMTP_URL=smtp://localhost:1035`, in `apps/api/.env.example`), nothing leaves the machine,
+and every message is at http://localhost:8035. The box `pnpm dev` prints shows it on its `Mail`
+row, with what readiness says (`ok`, `degraded`). Check the whole path:
+
+```
+pnpm --filter api mail test --to you@example.test   # queued, then sent by the running API
+```
+
+and the message appears in Mailpit. Messages live in Mailpit's memory: `pnpm db:down` clears them.
+
+**In production**, any provider's SMTP server works (Amazon SES, Postmark, Resend, Brevo...). In
+the API's environment ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server) on a server):
+
+```
+MAIL_SMTP_URL=smtps://<user>:<password, percent-encoded>@<provider host>:465
+MAIL_FROM="<Product> <no-reply@<your domain>>"
+APP_ORIGIN=https://<your domain>
+```
+
+or `smtp://...:587`: production requires STARTTLS on it and refuses a server without TLS (Mailpit
+among them). `APP_ORIGIN` is where links in messages point: never a request's Host. Before the
+first message, authenticate the sending domain at the provider (SPF, DKIM, DMARC): without them
+messages land in spam or are refused. Then, from the API image:
+
+```
+docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <you>
+```
+
+**Operating it:** `mail status` shows what waits, what failed and why (never an address: messages
+are named by id; `--to <address>` finds one address's messages); `mail retry --failed` sends failed
+messages again once the cause is fixed. Alerts `ApiMailBacklog` and `ApiMailDeliveryFailed`, and
+the runbook: [incident-response.md](incident-response.md#16-email-not-delivered). To rotate the SMTP
+credentials, create the new ones at the provider, update `MAIL_SMTP_URL`, redeploy, then revoke the
+old ones; messages waiting meanwhile go out with their next attempt.
+
 ## 12. Running in production
 
 | Before and while running               | Where                                                         |
@@ -836,6 +893,7 @@ first:
 | `port is already allocated` on `pnpm db:up`                        | `DB_PORT=5443` in the root `.env` and in `DATABASE_URL`                                                                                 |
 | `Environment variable JWT_ACCESS_SECRET is invalid`                | `openssl rand -hex 32` into `apps/api/.env`                                                                                             |
 | `Cannot reach PostgreSQL at localhost:5442` (integration tests)    | `pnpm db:up`                                                                                                                            |
+| No email in Mailpit (http://localhost:8035)                        | the `Mail` row of the `pnpm dev` box: `off` (set `MAIL_SMTP_URL`), or a warning about its port ([11.5](#115-email))                     |
 | `Executable doesn't exist ... playwright install`                  | `pnpm exec playwright install chromium`                                                                                                 |
 | `pre-push: Direct pushes to "main" are not allowed`                | push a branch and open a pull request                                                                                                   |
 | `Could not start Docker` from `pnpm sast` or `pnpm lint:workflows` | start Docker                                                                                                                            |
@@ -850,6 +908,8 @@ first:
 | 3000 | API (development)                          | `pnpm dev`                                     |
 | 5173 | web app (development)                      | `pnpm dev`                                     |
 | 5442 | PostgreSQL (`DB_PORT`)                     | `pnpm db:up`                                   |
+| 1035 | Mailpit SMTP (`MAILPIT_SMTP_PORT`)         | `pnpm services:up` (and `pnpm dev`)            |
+| 8035 | Mailpit web UI (`MAILPIT_UI_PORT`)         | `pnpm services:up` (and `pnpm dev`)            |
 | 3100 | API (end-to-end tests)                     | `pnpm test:e2e`                                |
 | 4173 | web app (end-to-end tests, `vite preview`) | `pnpm test:e2e`, `pnpm --filter web preview`   |
 | 8080 | production-like stack (`WEB_PORT`)         | `docker compose --profile stack up`            |

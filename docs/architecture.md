@@ -114,6 +114,7 @@ a code change, and feature code never depends on the provider (ESLint keeps `@re
 | Locks, idempotency claims | in process                             | Redis, across instances                            | `REDIS_URL`                    |
 | Error tracking            | logs only                              | Sentry                                             | `SENTRY_DSN`, `WEB_SENTRY_DSN` |
 | Traces and metrics        | not loaded                             | OpenTelemetry → OTLP                               | `OTEL_EXPORTER_OTLP_ENDPOINT`  |
+| Email                     | off: nothing queued                    | an outbox in PostgreSQL, delivered over SMTP       | `MAIL_SMTP_URL`                |
 | Job queues                | not included (integration point below) | BullMQ or a managed queue, when a project needs it | code                           |
 
 ### Redis
@@ -165,6 +166,10 @@ stalled (it never stops the boot):
 
 Each fallback is logged once and counted (`app.degraded.operations`); readiness shows it.
 
+Email has its own: while the SMTP server is unreachable or refuses the credentials, messages wait
+in the outbox and are retried with backoff (readiness 200 `degraded`, `checks.mail`), and requests
+that queue them are not slowed: they only write a row ([Email](#email)).
+
 ### Cache
 
 `CacheService` (`infrastructure/cache/`), explicit and opt-in: nothing is cached unless a service
@@ -212,6 +217,54 @@ instances run it).
   paused owner can lose its lease). **Payments and anything that must happen exactly once** use the
   database: an idempotency key with a unique constraint, written in the same transaction as the
   effect. Without `REDIS_URL` they hold within one process only.
+
+### Email
+
+`infrastructure/mail/`, OPTIONAL (`MAIL_SMTP_URL`; ADR [0003](adr/0003-transactional-email-outbox.md)).
+A transactional outbox in PostgreSQL, delivered over SMTP by a worker inside every API instance:
+
+```
+feature transaction ─┬─ the business change (a token, an account...)
+                     └─ MailOutboxService.enqueue(tx, { kind, to, userId, payload: ids only })
+                                │ a row of mail_messages: kind, address, ids; no body, no secret
+                                ▼
+MailWorker (every instance) ── claim one due row (lease 2 min, FOR UPDATE SKIP LOCKED)
+                             ── render it in a short transaction (a link's token is minted here,
+                                only its hash stored) ── SMTP, no transaction open ── record the
+                                outcome, fenced by the claim
+```
+
+- **Atomic with the change:** the message exists if and only if the transaction that called for it
+  committed. After the commit, `notifyQueued()` wakes this instance's worker at once; otherwise
+  every worker polls every 5 seconds.
+- **Several instances:** one atomic `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`
+  claims one message for one worker; every later transition requires the same claim (status
+  `sending`, same attempt), so a worker whose lease ran out cannot overwrite another's outcome.
+- **Retries:** the SMTP reply decides: 4xx and connection failures are retried (30 s doubling to
+  an hour, equal jitter, at most `MAIL_MAX_ATTEMPTS`), 5xx fails the message at once; refused
+  credentials or TLS are retried and reported to the error tracker. Every attempt is counted when
+  claimed, so a message that kills its worker runs out of attempts too. A message past its kind's
+  validity (`expiresAt`: 30 minutes for a password reset) is dropped unsent, never delivered late.
+- **Delivery is at least once:** if the process dies after the SMTP server accepted a message and
+  before the outcome is recorded, the lease runs out and another worker sends it again, with the
+  same `Message-ID`. SMTP has no exactly-once; links stay single-use whatever the copies.
+- **What is stored:** no body and no token, ever: the worker renders the message when it sends it
+  and a link's token is minted then (its hash in the database, the token itself only in the
+  message in flight). The address is kept while the message may need it (pending, sending,
+  failed), then only its keyed hash; CHECK constraints enforce it. Retention: finished rows are
+  deleted after 30 days, the address of a failed one is cleared after 7.
+- **Limits per address:** the kinds anyone can request (a password reset, a confirmation) are held
+  back past one message a minute and `MAIL_DAILY_LIMIT_PER_ADDRESS` a day per address, counted in
+  the database, so every instance shares them; an advisory lock on the address serializes
+  concurrent requests. Security notices are never held back. The caller answers the same either
+  way: what was queued is never told to a client.
+- **Without configuration:** nothing is queued (no token is ever minted that cannot be
+  delivered), the worker never starts, readiness says `checks.mail: "disabled"`.
+- **Operating it:** `pnpm --filter api mail status | test | retry`
+  ([manual](manual.md#115-email)); metrics `app.mail.*`, alerts `ApiMailBacklog` and
+  `ApiMailDeliveryFailed`, runbook [incident-response.md](incident-response.md#16-email-not-delivered).
+  Locally and in CI, Mailpit catches every message.
+- **Adding a message:** [the recipe](how-to.md#send-an-email).
 
 ### Job queues
 

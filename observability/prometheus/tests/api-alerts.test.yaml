@@ -266,3 +266,64 @@ tests:
               description: 'p99 event loop delay: 350ms, for more than 15 minutes (CPU starvation or blocking work).'
               runbook_url: docs/incident-response.md#7-memory-or-cpu-pressure
               dashboard_uid: app-api
+
+  # The queue's oldest message ages a minute a minute: nothing leaves it.
+  - name: an email backlog that lasts warns
+    interval: 1m
+    input_series:
+      - series: 'app_mail_outbox_oldest_age_seconds{job="api", deployment_environment_name="production", instance="i-1"}'
+        values: '0+60x40'
+      - series: 'app_mail_outbox_oldest_age_seconds{job="api", deployment_environment_name="production", instance="i-2"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ApiMailBacklog
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: ApiMailBacklog
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+            exp_annotations:
+              summary: 'Email waits in the outbox (api, production)'
+              description: 'The oldest message waiting to be sent is 30m 0s old, for more than 10 minutes. Links in password resets and confirmations expire before they arrive.'
+              runbook_url: docs/incident-response.md#16-email-not-delivered
+              dashboard_uid: app-api
+
+  # A queue that drains, even slowly, does not warn.
+  - name: a short email backlog does not warn
+    interval: 1m
+    input_series:
+      - series: 'app_mail_outbox_oldest_age_seconds{job="api", deployment_environment_name="production", instance="i-1"}'
+        values: '0+60x10 0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ApiMailBacklog
+        exp_alerts: []
+
+  - name: email given up on warns
+    interval: 1m
+    input_series:
+      - series: 'app_mail_deliveries_total{job="api", deployment_environment_name="production", instance="i-1", mail_kind="test", outcome="failed"}'
+        values: '0x5 1 2 3x30'
+      - series: 'app_mail_deliveries_total{job="api", deployment_environment_name="production", instance="i-1", mail_kind="test", outcome="sent"}'
+        values: '0+5x40'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ApiMailDeliveryFailed
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ApiMailDeliveryFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: api
+              deployment_environment_name: production
+              mail_kind: test
+            exp_annotations:
+              summary: 'test email was given up on (api, production)'
+              description: '3 message(s) failed for good in the last 30 minutes (refused by the SMTP server, or out of attempts).'
+              runbook_url: docs/incident-response.md#16-email-not-delivered
+              dashboard_uid: app-api

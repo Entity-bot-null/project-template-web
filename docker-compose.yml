@@ -1,5 +1,5 @@
-# Local development: `pnpm db:up` starts PostgreSQL, and the API and the web
-# app run on the host (`pnpm dev`). Nothing else is needed.
+# Local development: `pnpm dev` starts PostgreSQL and Mailpit (`pnpm services:up`),
+# then the API and the web app on the host. `pnpm db:up` starts PostgreSQL alone.
 #
 # Optional services, started only when asked for (docs/architecture.md):
 #   docker compose --profile redis up -d           Redis (REDIS_PASSWORD in the root .env)
@@ -31,6 +31,32 @@ services:
       timeout: 3s
       retries: 20
       start_period: 20s
+
+  # Development mail catcher (docs/manual.md#115-email): every
+  # message the API sends locally lands here, nothing leaves the machine. Its
+  # web UI lists them; the integration specs read them through its API.
+  # Published on loopback only, and never part of a deployment: it accepts
+  # mail from anyone who can reach it, without authentication or TLS, so the
+  # API refuses an SMTP server without TLS in production (MAIL_SMTP_URL).
+  # Messages live in memory: they are gone after `docker compose down`.
+  # Chaos (MP_ENABLE_CHAOS) only arms Mailpit's API to inject SMTP errors on
+  # demand (the outbox specs do, then disarm it); nothing fails until asked.
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_ENABLE_CHAOS: 'true'
+      MP_SMTP_DISABLE_RDNS: 'true'
+    ports:
+      - '127.0.0.1:${MAILPIT_SMTP_PORT:-1035}:1025'
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8035}:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
 
   migrate:
     profiles: [stack]

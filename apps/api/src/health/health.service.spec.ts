@@ -1,5 +1,6 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MailHealth, MailWorker } from '../infrastructure/mail/mail-worker.service.js';
 import type { RedisHealth, RedisService } from '../infrastructure/redis/redis.service.js';
 import { ShutdownState } from '../lifecycle/shutdown.js';
 import type { PrismaService } from '../prisma/prisma.service.js';
@@ -10,17 +11,21 @@ function healthWith({
   redis = () => Promise.resolve('disabled'),
   required = false,
   shutdown = new ShutdownState(),
+  mail = 'disabled',
 }: {
   database?: () => Promise<unknown>;
   redis?: () => Promise<RedisHealth>;
   required?: boolean;
   shutdown?: ShutdownState;
+  mail?: MailHealth;
 } = {}) {
   const fakeRedis = { health: redis, required } as unknown as RedisService;
+  const fakeMail = { health: () => mail } as unknown as MailWorker;
   return new HealthService(
     { $queryRaw: database } as unknown as PrismaService,
     fakeRedis,
     shutdown,
+    fakeMail,
   );
 }
 
@@ -59,7 +64,7 @@ describe('HealthService', () => {
   it('is ready when the database answers and Redis is not configured', async () => {
     await expect(healthWith().ready()).resolves.toEqual({
       status: 'ok',
-      checks: { database: 'ok', redis: 'disabled' },
+      checks: { database: 'ok', redis: 'disabled', mail: 'disabled' },
     });
   });
 
@@ -71,7 +76,18 @@ describe('HealthService', () => {
   it('stays ready, degraded, when an optional Redis is down', async () => {
     await expect(healthWith({ redis: redisIs('unavailable') }).ready()).resolves.toEqual({
       status: 'degraded',
-      checks: { database: 'ok', redis: 'unavailable' },
+      checks: { database: 'ok', redis: 'unavailable', mail: 'disabled' },
+    });
+  });
+
+  it('reports email: ok while delivering, degraded with a 200 when deliveries fail, never a 503', async () => {
+    await expect(healthWith({ mail: 'ok' }).ready()).resolves.toEqual({
+      status: 'ok',
+      checks: { database: 'ok', redis: 'disabled', mail: 'ok' },
+    });
+    await expect(healthWith({ mail: 'degraded' }).ready()).resolves.toEqual({
+      status: 'degraded',
+      checks: { database: 'ok', redis: 'disabled', mail: 'degraded' },
     });
   });
 
@@ -107,7 +123,7 @@ describe('HealthService', () => {
     await vi.advanceTimersByTimeAsync(3_000);
     expect(optional()).toEqual({
       status: 'degraded',
-      checks: { database: 'ok', redis: 'unavailable' },
+      checks: { database: 'ok', redis: 'unavailable', mail: 'disabled' },
     });
     expect(required()).toMatchObject({ message: 'Redis unreachable' });
   });

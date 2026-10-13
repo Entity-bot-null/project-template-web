@@ -10,7 +10,8 @@
   },
   "scripts": {
     "prepare": "husky",
-    "dev": "pnpm db:up && node scripts/dev.mjs",
+    "dev": "pnpm services:up && node scripts/dev.mjs",
+    "services:up": "docker compose up --detach --wait db mailpit",
     "build": "pnpm --recursive build",
     "lint": "pnpm --filter api exec prisma generate && eslint . --max-warnings=0",
     "lint:fix": "pnpm --filter api exec prisma generate && eslint . --fix",

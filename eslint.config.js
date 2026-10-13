@@ -193,6 +193,7 @@ export default defineConfig(
       'apps/api/src/openapi/export.ts',
       'apps/api/src/seed/run.ts',
       'apps/api/src/users/create-user.cli.ts',
+      'apps/api/src/infrastructure/mail/mail.cli.ts',
       'apps/api/test/**',
       'apps/api/scripts/**',
       'apps/api/*.config.ts',

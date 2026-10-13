@@ -42,10 +42,17 @@ await admin.end();
 
 // The seed and the API both validate their environment, and CI has no .env:
 // everything they need is set here. The signing secret is throwaway, one per run.
+// Email is off, as in CI, whatever apps/api/.env says (the API loads it outside
+// tests, and its development values, an http APP_ORIGIN among them, are not
+// valid in production): an empty value is unset, and the file never overrides
+// a variable that is set.
 const runEnv = {
   ...process.env,
   DATABASE_URL: url.toString(),
   JWT_ACCESS_SECRET: randomBytes(32).toString('hex'),
+  MAIL_SMTP_URL: '',
+  MAIL_FROM: '',
+  APP_ORIGIN: '',
 };
 execSync('pnpm exec prisma migrate deploy', { cwd: API_DIR, env: runEnv, stdio: 'inherit' });
 

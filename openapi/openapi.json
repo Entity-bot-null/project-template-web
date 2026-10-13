@@ -755,11 +755,20 @@
                                 "unavailable",
                                 "disabled"
                               ]
+                            },
+                            "mail": {
+                              "type": "string",
+                              "enum": [
+                                "ok",
+                                "degraded",
+                                "disabled"
+                              ]
                             }
                           },
                           "required": [
                             "database",
-                            "redis"
+                            "redis",
+                            "mail"
                           ],
                           "additionalProperties": false
                         }

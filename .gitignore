@@ -46,6 +46,11 @@ logs/
 # the code, local .env values included. Never committed.
 repomix-output.*
 
+# Local state of code-intelligence tools (Serena's project index and memories,
+# codebase-memory's persisted graph): per machine, never committed.
+.serena/
+.codebase-memory/
+
 # OS and editors (the shared VS Code settings are committed)
 .DS_Store
 Thumbs.db
