@@ -168,7 +168,7 @@ services:
   # evaluates the rules (docs/observability.md#dashboards-and-alerts-as-code).
   otel-lgtm:
     profiles: [observability]
-    image: grafana/otel-lgtm:0.34.0@sha256:b966ea107831d526d9eb8fe4d2d86c9e5731392fad9dce8296bcf2072031f07c
+    image: grafana/otel-lgtm:0.36.0@sha256:57c04cbd8e7022f32bb84c4ac005d79baf8b08e2c5be44facf11f5f1f9944ba2
     ports:
       - '127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318'
       - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
