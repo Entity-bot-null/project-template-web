@@ -180,10 +180,19 @@ function start(script, args, env = {}) {
   });
 }
 
-/** Resolves once docker.log has a line starting with `prefix`. */
-async function logged(/** @type {string} */ prefix) {
+/**
+ * Resolves once docker.log has a line starting with `prefix`, among the lines
+ * after the first `from` ones: a script started after earlier runs logged the
+ * same line waits for its own.
+ */
+async function logged(/** @type {string} */ prefix, from = 0) {
   for (let i = 0; i < 200; i++) {
-    if (calls().some((line) => line.startsWith(prefix))) return;
+    if (
+      calls()
+        .slice(from)
+        .some((line) => line.startsWith(prefix))
+    )
+      return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.fail(`never logged: ${prefix}`);
@@ -354,8 +363,11 @@ describe('rollback.sh', { skip: SKIP }, () => {
   test('is refused while a deployment runs', async () => {
     run('deploy.sh', A);
     run('deploy.sh', B);
+    // The first deployment of A logged the same pull: wait for this one's,
+    // made once it holds the lock.
+    const before = calls().length;
     const deployment = start('deploy.sh', A, { FAKE_SECONDS: '1' });
-    await logged(`pull ${A[0]}`);
+    await logged(`pull ${A[0]}`, before);
     const rollback = run('rollback.sh');
     assert.equal(rollback.status, 1);
     assert.match(rollback.stderr, /another deployment or rollback is running/);
