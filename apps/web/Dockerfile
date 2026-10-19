@@ -28,7 +28,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 RUN pnpm --filter web build
 
 # Runs as an unprivileged user on port 8080.
-FROM ghcr.io/nginx/nginx-unprivileged:1.31-alpine@sha256:b9241c6e7b8e9a862f129d8d4199ab64b10390949a78bdd5603379b32c844083 AS runtime
+FROM ghcr.io/nginx/nginx-unprivileged:1.31-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS runtime
 # Operating system fixes published after the base image was built (the image
 # scan in CI fails on a fixable HIGH or CRITICAL advisory). The day of those
 # fixes (CI passes today's date) is part of the cache key of the upgrade: a
