@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/Entity-bot-null/project-template-web/compare/v1.2.0...v1.2.1) (2026-10-20)
+
+
+### Bug fixes
+
+* **security:** keep Doberman's run directories private ([#58](https://github.com/Entity-bot-null/project-template-web/issues/58)) ([f0c83f8](https://github.com/Entity-bot-null/project-template-web/commit/f0c83f853748710668f62d1af6543b177a0c9861))
+
 ## [1.2.0](https://github.com/Entity-bot-null/project-template-web/compare/v1.1.2...v1.2.0) (2026-10-13)
 
 
