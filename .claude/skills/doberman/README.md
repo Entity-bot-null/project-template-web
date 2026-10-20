@@ -65,8 +65,9 @@ an environment limitation, never a PASS; a PASS or FAIL must match the `DOBERMAN
 line that ends the gate's log, so a gate that never finished cannot pass.
 
 Everything a run produces outside the temporary tests goes to a run directory in the system
-temporary folder (`doberman/<repo>-<time>`, or under `DOBERMAN_TMP`): `context.json`,
-`snapshot.json`, `logs/`, `coverage.json`, `result.json`, `clean.json`, `verdict.json`.
+temporary folder (`doberman/<repo>-<time>-<random>`, private to you, or under `DOBERMAN_TMP`):
+`context.json`, `snapshot.json`, `logs/`, `coverage.json`, `result.json`, `clean.json`,
+`verdict.json`.
 `node scripts/doberman.mjs status --run <dir>` says where an interrupted run stopped;
 `node scripts/doberman.mjs help` lists the commands. An option a command does not accept stops it
 before it writes anything.
