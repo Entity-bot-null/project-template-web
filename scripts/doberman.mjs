@@ -40,10 +40,15 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import {
+  closeSync,
+  constants,
   copyFileSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -285,12 +290,27 @@ function sha256(data) {
   return createHash('sha256').update(data).digest('hex');
 }
 
-/** @param {string} path */
+/**
+ * The digest of a file, read through the descriptor its type was checked on
+ * (no window for the path to change between the two). Non-blocking: a FIFO
+ * opens at once, and is not a file.
+ * @param {string} path
+ */
 function fileHash(path) {
+  let fd;
   try {
-    return statSync(path).isFile() ? sha256(readFileSync(path)) : 'not-a-file';
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    return /** @type {NodeJS.ErrnoException} */ (error).code === 'EISDIR'
+      ? 'not-a-file'
+      : 'missing';
+  }
+  try {
+    return fstatSync(fd).isFile() ? sha256(readFileSync(fd)) : 'not-a-file';
   } catch {
     return 'missing';
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -450,6 +470,23 @@ function isInside(path, parent) {
 
 function runsRoot() {
   return resolve(process.env.DOBERMAN_TMP ?? join(tmpdir(), 'doberman'));
+}
+
+/**
+ * The runs' parent directory, created private: refused when it is a link,
+ * belongs to someone else, or others may write into it (the system's
+ * temporary directory is shared).
+ */
+function privateRunsRoot() {
+  const dir = runsRoot();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stats = lstatSync(dir);
+  const mine = typeof process.getuid !== 'function' || stats.uid === process.getuid();
+  const sharedWrite = process.platform !== 'win32' && (stats.mode & 0o022) !== 0;
+  if (!stats.isDirectory() || !mine || sharedWrite) {
+    fail(`${dir} is not a private directory of yours: set DOBERMAN_TMP to one.`);
+  }
+  return dir;
 }
 
 /** @param {Options} opts */
@@ -1330,14 +1367,10 @@ async function start(opts) {
       ? []
       : discoverGates(root, prScope.files, effectiveMode, probes, prScope.unborn);
 
-  // A new directory every time: never write into one that already exists.
-  mkdirSync(runsRoot(), { recursive: true });
+  // A new private directory every time (mkdtemp: created by this call, mode
+  // 0700): never one that already exists or someone else prepared.
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  let runDir = join(runsRoot(), `${basename(root)}-${stamp}`);
-  for (let attempt = 1; existsSync(runDir); attempt += 1) {
-    runDir = join(runsRoot(), `${basename(root)}-${stamp}-${attempt}`);
-  }
-  mkdirSync(runDir);
+  const runDir = mkdtempSync(join(privateRunsRoot(), `${basename(root)}-${stamp}-`));
   mkdirSync(join(runDir, 'logs'));
 
   const totals = prScope.files.reduce(

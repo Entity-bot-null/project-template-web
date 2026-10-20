@@ -16,6 +16,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -605,6 +606,25 @@ describe('cleanup', () => {
     const second = start(dir);
     assert.notEqual(first.runDir, second.runDir);
   });
+
+  test('a run directory is private to its user', { skip: process.platform === 'win32' }, () => {
+    const { runDir } = start(makeRepo());
+    assert.equal(statSync(runDir).mode & 0o777, 0o700);
+  });
+
+  test(
+    'a runs directory others may write into is refused before anything is written',
+    { skip: process.platform === 'win32' },
+    () => {
+      const shared = join(ROOT, 'shared-runs');
+      mkdirSync(shared);
+      chmodSync(shared, 0o777);
+      const run = engine(makeRepo(), ['start'], { DOBERMAN_TMP: shared });
+      assert.notEqual(run.status, 0);
+      assert.match(run.stderr, /is not a private directory of yours/);
+      assert.deepEqual(readdirSync(shared), []);
+    },
+  );
 });
 
 describe('verdict', () => {
