@@ -82,8 +82,8 @@ updates:
     commit-message:
       prefix: ci
 
-  # docker-compose.yml, and the reference server deployment's Caddy image
-  # (deploy/vps/compose.yaml).
+  # docker-compose.yml, and the reference server deployment's pinned images:
+  # Caddy, PostgreSQL and Redis (deploy/vps/compose.yaml).
   - package-ecosystem: docker-compose
     directories:
       - /
@@ -94,7 +94,9 @@ updates:
       default-days: 7
     ignore:
       # Majors by hand, with the CI images above: a PostgreSQL data directory
-      # (the local volume) does not start under the next major.
+      # (the development volume, and a server's that runs the database) does
+      # not start under the next major; it is dumped and restored
+      # (docs/ci-cd.md#postgresql-and-redis).
       - dependency-name: postgres
         update-types: [version-update:semver-major]
       - dependency-name: redis

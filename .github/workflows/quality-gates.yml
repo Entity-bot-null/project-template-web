@@ -90,9 +90,10 @@ jobs:
           persist-credentials: false
       # infra/terraform: fmt, validate and tests, TFLint, Trivy, the server's
       # cloud-init against its schema, the database roles script on
-      # PostgreSQL, with the pinned images of .github/tool-images/Dockerfile
-      # (docs/ci-cd.md#infrastructure-as-code). No cloud account, no token,
-      # no install needed.
+      # PostgreSQL; and deploy/vps/db-init.sh, the roles of a server that runs
+      # its own database, in PostgreSQL's entrypoint. With the pinned images
+      # of .github/tool-images/Dockerfile (docs/ci-cd.md#infrastructure-as-code).
+      # No cloud account, no token, no install needed.
       - run: node scripts/check-iac.mjs
 
   sast:

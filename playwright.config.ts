@@ -3,8 +3,9 @@ import { LANDING_URL } from './e2e/support/landing.js';
 
 // End-to-end suite (e2e/*.e2e.ts): a real browser against the built web app,
 // the built landing and the built API on their own ports, the API on its own database
-// (`<db>_e2e`, reseeded every run). Needs `pnpm build` and the database
-// (`pnpm db:up`) first, and the browser once: `pnpm exec playwright install chromium`.
+// (`<db>_e2e`, reseeded every run). Needs `pnpm build` and the development
+// services (`pnpm services:up`: the database, and Mailpit for the email flows)
+// first, and the browser once: `pnpm exec playwright install chromium`.
 const CI = process.env.CI !== undefined;
 const API_PORT = 3100;
 const WEB_URL = 'http://localhost:4173';

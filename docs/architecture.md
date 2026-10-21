@@ -124,6 +124,12 @@ a code change, and feature code never depends on the provider (ESLint keeps `@re
 | Email                     | off: nothing queued                    | an outbox in PostgreSQL, delivered over SMTP       | `MAIL_SMTP_URL`                |
 | Job queues                | not included (integration point below) | BullMQ or a managed queue, when a project needs it | code                           |
 
+Redis is OPTIONAL for the application, not in the template's own setups: development
+(`pnpm services:up`) and the reference server (`deploy/vps`) run it, with `RATE_LIMIT_STORE=redis`,
+`CACHE_STORE=redis` and `REDIS_REQUIRED=true`, as a deployment of more than one instance needs.
+Without `REDIS_URL` everything above still runs in process. Decision record:
+[ADR 0006](adr/0006-postgresql-and-redis-on-the-server.md).
+
 ### Redis
 
 `infrastructure/redis/redis.service.ts` owns the one connection (node-redis). Only the adapters in
@@ -149,12 +155,13 @@ a code change, and feature code never depends on the provider (ESLint keeps `@re
   `app:ratelimit:{default:<hash>}:hits`, `app:lock:jobs:report`. One prefix per application and
   environment when they share a Redis. Every key the template writes has a TTL (cache generations
   excepted: a few bytes per namespace).
-- **ACL for production:** a user limited to `~<prefix>*` and the commands the adapters run:
+- **ACL for production** (`deploy/vps/compose.yaml` writes this one): a user limited to
+  `~<prefix>*` and the commands the adapters run:
   `+get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zrange +zremrangebyscore`
   (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake).
-- **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development uses
-  `redis:8-alpine` (`docker compose --profile redis up -d`); production settings:
-  [docs/security.md#redis](security.md#redis).
+- **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development
+  (`pnpm services:up`) and the reference server (`deploy/vps/compose.yaml`) run `redis:8-alpine`,
+  pinned by digest; production settings: [docs/security.md#redis](security.md#redis).
 
 ### Degradation
 

@@ -25,20 +25,20 @@ and lists every command (en español: [docs/manual.es.md](docs/manual.es.md)).
 | Security                 | helmet/CSP, CSRF guard, httpOnly refresh cookies with rotation and theft detection, RBAC + ownership checks, rate limits, password policy (NIST SP 800-63B-4), password recovery by one-time link and change with immediate sign-out of other sessions, optional public sign-up confirmed by email, change of email confirmed from the new address and undoable from the previous one, invitations by administrators; SAST (Semgrep, CodeQL opt-in), workflow audit (zizmor), DAST (OWASP ZAP), pnpm audit, dependency and license policy, secretlint, gitleaks, image scanning (Trivy) |
 | Delivery                 | GitHub Actions (reusable gates, least privilege, pinned), Dependabot, release-please (SemVer, changelog, SBOM), Docker images (API, migrations, nginx web) with provenance                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Observability            | JSON logs with automatic redaction and request/trace correlation, health probes, graceful shutdown, error classification; optional: Sentry (API + web), OpenTelemetry traces and metrics (OTLP), local Grafana backend; dashboards, SLOs and alert rules as tested code                                                                                                                                                                                                                                                                                                                 |
-| Optional infrastructure  | Redis (shared rate limits, cache, locks, idempotency) behind adapters with in-process fallbacks; transactional email (outbox over SMTP, Mailpit locally); none required to run, test or deploy                                                                                                                                                                                                                                                                                                                                                                                          |
+| Optional infrastructure  | Redis (shared rate limits, cache, locks, idempotency) behind adapters with in-process fallbacks, on in development and on the reference server; transactional email (outbox over SMTP, Mailpit locally); none required to run, test or deploy                                                                                                                                                                                                                                                                                                                                           |
 
 ## Requirements
 
 Node.js 24 (`.nvmrc`), pnpm (`corepack enable`; from Node.js 25, which ships no Corepack,
-`npm install -g corepack` first), Docker. No external account: Sentry, an
-OpenTelemetry backend and Redis are optional and off by default.
+`npm install -g corepack` first), Docker. No external account: Sentry and an OpenTelemetry backend
+are optional and off by default, and Redis runs in Docker with the database.
 
 ## Quick start
 
 ```
 pnpm install
 cp apps/api/.env.example apps/api/.env      # then set JWT_ACCESS_SECRET (openssl rand -hex 32)
-pnpm db:up && pnpm db:migrate && pnpm db:seed
+pnpm services:up && pnpm db:migrate && pnpm db:seed
 pnpm dev                                    # site http://localhost:4321 (the app at /app/), API http://localhost:3000/api/docs, email http://localhost:8035
 ```
 
@@ -47,32 +47,31 @@ Follow **Sign in** on the landing and sign in with `admin@example.com` / `admin-
 
 ## Commands
 
-| Command                                             | What it does                                                                                           |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `pnpm dev`                                          | Database and Mailpit up, then the API, web and landing dev servers; their URLs in a box under the logs |
-| `pnpm build`                                        | Build every app                                                                                        |
-| `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                         |
-| `pnpm format` / `pnpm format:check`                 | Prettier                                                                                               |
-| `pnpm typecheck`                                    | TypeScript in every app, plus the contract types check                                                 |
-| `pnpm test`                                         | Unit and component tests                                                                               |
-| `pnpm test:coverage`                                | The same, with coverage thresholds                                                                     |
-| `pnpm test:integration`                             | API against PostgreSQL (`pnpm db:up` first)                                                            |
-| `pnpm test:e2e`                                     | Browser tests on the built stack (`pnpm build` first)                                                  |
-| `pnpm security`                                     | Dependency audit (high and critical fail), dependency policy and secret scan                           |
-| `pnpm deps:check`                                   | Dependency policy: registry sources, licenses, install settings, release-delay exemptions              |
-| `pnpm sast` / `pnpm lint:workflows`                 | Semgrep / actionlint + zizmor, the pinned images CI runs (need Docker)                                 |
-| `pnpm observability:check`                          | Dashboards and alert rules of `observability/`: metric names, runbooks, promtool tests (Docker)        |
-| `pnpm iac:check`                                    | Terraform checks and tests, TFLint, Trivy, cloud-init, database roles (`infra/`, needs Docker)         |
-| `pnpm sbom:generate`                                | CycloneDX SBOM of the production dependencies in `dist/sbom/`                                          |
-| `pnpm perf:check`                                   | Web and landing asset sizes against their budgets (after `pnpm build`)                                 |
-| `pnpm smoke --url <public URL> --api <API URL>`     | Read-only smoke test of a running deployment (after a rollout, a restore, an incident)                 |
-| `pnpm verify`                                       | **All fast gates:** format check → lint → typecheck → tests + coverage → security → build → budget     |
-| `pnpm contract`                                     | Regenerate `openapi/openapi.json` and the web client types                                             |
-| `pnpm services:up`                                  | Database and Mailpit (the mail catcher, http://localhost:8035)                                         |
-| `pnpm db:up` / `db:down` / `db:migrate` / `db:seed` | Local database                                                                                         |
-| `pnpm --filter api mail status` / `test` / `retry`  | The email outbox: what waits or failed, a delivery check, failed messages sent again                   |
-| `docker compose --profile redis up -d`              | Optional local Redis (`REDIS_PASSWORD` in the root `.env`)                                             |
-| `docker compose --profile observability up -d`      | Optional local OpenTelemetry backend with the dashboards and alerts, Grafana at http://localhost:3001  |
+| Command                                             | What it does                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm dev`                                          | Database and Mailpit up, then the API, web and landing dev servers; their URLs in a box under the logs                               |
+| `pnpm build`                                        | Build every app                                                                                                                      |
+| `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                                                       |
+| `pnpm format` / `pnpm format:check`                 | Prettier                                                                                                                             |
+| `pnpm typecheck`                                    | TypeScript in every app, plus the contract types check                                                                               |
+| `pnpm test`                                         | Unit and component tests                                                                                                             |
+| `pnpm test:coverage`                                | The same, with coverage thresholds                                                                                                   |
+| `pnpm test:integration`                             | API against PostgreSQL, Redis and Mailpit (`pnpm services:up` first)                                                                 |
+| `pnpm test:e2e`                                     | Browser tests on the built stack (`pnpm build` first)                                                                                |
+| `pnpm security`                                     | Dependency audit (high and critical fail), dependency policy and secret scan                                                         |
+| `pnpm deps:check`                                   | Dependency policy: registry sources, licenses, install settings, release-delay exemptions                                            |
+| `pnpm sast` / `pnpm lint:workflows`                 | Semgrep / actionlint + zizmor, the pinned images CI runs (need Docker)                                                               |
+| `pnpm observability:check`                          | Dashboards and alert rules of `observability/`: metric names, runbooks, promtool tests (Docker)                                      |
+| `pnpm iac:check`                                    | Terraform checks and tests, TFLint, Trivy, cloud-init, both database roles scripts (`infra/`, `deploy/vps/db-init.sh`; needs Docker) |
+| `pnpm sbom:generate`                                | CycloneDX SBOM of the production dependencies in `dist/sbom/`                                                                        |
+| `pnpm perf:check`                                   | Web and landing asset sizes against their budgets (after `pnpm build`)                                                               |
+| `pnpm smoke --url <public URL> --api <API URL>`     | Read-only smoke test of a running deployment (after a rollout, a restore, an incident)                                               |
+| `pnpm verify`                                       | **All fast gates:** format check → lint → typecheck → tests + coverage → security → build → budget                                   |
+| `pnpm contract`                                     | Regenerate `openapi/openapi.json` and the web client types                                                                           |
+| `pnpm services:up`                                  | Database, Redis and Mailpit (the mail catcher, http://localhost:8035)                                                                |
+| `pnpm db:up` / `db:down` / `db:migrate` / `db:seed` | Local database                                                                                                                       |
+| `pnpm --filter api mail status` / `test` / `retry`  | The email outbox: what waits or failed, a delivery check, failed messages sent again                                                 |
+| `docker compose --profile observability up -d`      | Optional local OpenTelemetry backend with the dashboards and alerts, Grafana at http://localhost:3001                                |
 
 ## Layout
 

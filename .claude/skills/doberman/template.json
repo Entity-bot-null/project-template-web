@@ -136,7 +136,7 @@
     {
       "id": "iac:check",
       "script": "iac:check",
-      "name": "Infrastructure as code (Terraform fmt, validate and tests, TFLint, Trivy, cloud-init schema, database roles script)",
+      "name": "Infrastructure as code (Terraform fmt, validate and tests, TFLint, Trivy, cloud-init schema, the database roles scripts of Terraform and of the server)",
       "command": "pnpm iac:check",
       "source": ".github/workflows/quality-gates.yml › Infrastructure as code (Terraform)",
       "required": true,
@@ -144,6 +144,7 @@
       "paths": [
         "infra/**",
         ".github/tool-images/**",
+        "deploy/vps/db-init.sh",
         "scripts/check-iac.mjs",
         "scripts/iac-database.mjs"
       ],
@@ -195,7 +196,7 @@
       "when": "always",
       "requires": ["database"],
       "tags": ["tests"],
-      "note": "Runs on <db>_test, never the development database. The Redis adapter specs run only with REDIS_TEST_URL (required in CI, skipped locally without it: say so)."
+      "note": "Runs on <db>_test, never the development database. The Redis adapter specs and the outbox specs run against the development Redis and Mailpit (REDIS_URL and MAIL_SMTP_URL of apps/api/.env, or REDIS_TEST_URL and MAIL_TEST_SMTP_URL), each under its own key prefix or mailbox; required in CI, skipped locally without a URL: say so."
     },
     {
       "id": "test:e2e",
@@ -239,10 +240,10 @@
   ],
   "services": {
     "database": {
-      "start": "pnpm db:up",
-      "stop": "docker compose stop db",
+      "start": "pnpm services:up",
+      "stop": "docker compose stop db redis mailpit",
       "needs": ["docker"],
-      "note": "The template's PostgreSQL (docker-compose.yml, service db). The suites use <db>_test and <db>_e2e on it."
+      "note": "The template's development services (docker-compose.yml): PostgreSQL, where the suites use <db>_test and <db>_e2e, and the Redis and Mailpit the integration specs reach through apps/api/.env."
     }
   },
   "environment": {
@@ -383,8 +384,13 @@
         ".github/workflows/deploy.yml",
         ".github/workflows/docker-images.yml"
       ],
-      "focus": "non-root images, pinned digests, migrations before the new version, no secrets in images or compose files, docs/deploy-vps.md and both step-by-step guides updated; Terraform (infra/terraform) reproduces docs/deploy-vps.md: no secret with a default or in a non-sensitive output, firewalls as narrow as the guide, the lock file and the pinned versions updated together",
-      "docs": ["docs/deploy-vps.md", "docs/ci-cd.md", "docs/security.md"]
+      "focus": "non-root images, pinned digests, migrations before the new version, no secrets in images or compose files, docs/deploy-vps.md and both step-by-step guides updated; the server's data tier (deploy/vps: db, backup, redis) on the internal network only and never published, its roles (db-init.sh) and the Redis ACL no wider than docs/security.md, deploy.sh starting it before the migration, its backups restorable as docs/disaster-recovery.md says; Terraform (infra/terraform) reproduces docs/deploy-vps.md: no secret with a default or in a non-sensitive output, firewalls as narrow as the guide, the lock file and the pinned versions updated together",
+      "docs": [
+        "docs/deploy-vps.md",
+        "docs/ci-cd.md",
+        "docs/security.md",
+        "docs/disaster-recovery.md"
+      ]
     },
     {
       "id": "dependencies",

@@ -6,6 +6,7 @@ import { stripVTControlCharacters, styleText } from 'node:util';
 import {
   DEFAULT_DB_PORT,
   DEFAULT_MAILPIT_SMTP_PORT,
+  DEFAULT_REDIS_PORT,
   DEFAULT_MAILPIT_UI_PORT,
   devSettings,
   renderBanner,
@@ -28,6 +29,7 @@ describe('devSettings', () => {
         api: 'http://127.0.0.1:3000/api',
         docs: 'http://127.0.0.1:3000/api/docs',
         database: `localhost:${DEFAULT_DB_PORT}/app`,
+        redis: 'off (in-process stores; set REDIS_URL in apps/api/.env)',
         mail: 'off (set MAIL_SMTP_URL in apps/api/.env)',
         warnings: [],
       },
@@ -90,8 +92,10 @@ describe('devSettings', () => {
       compose.includes(`'127.0.0.1:\${MAILPIT_SMTP_PORT:-${DEFAULT_MAILPIT_SMTP_PORT}}:1025'`),
     );
     assert.ok(compose.includes(`'127.0.0.1:\${MAILPIT_UI_PORT:-${DEFAULT_MAILPIT_UI_PORT}}:8025'`));
+    assert.ok(compose.includes(`'127.0.0.1:\${REDIS_PORT:-${DEFAULT_REDIS_PORT}}:6379'`));
     const example = readFileSync(new URL('../apps/api/.env.example', import.meta.url), 'utf8');
     assert.ok(example.includes(`@localhost:${DEFAULT_DB_PORT}/app`));
+    assert.ok(example.includes(`REDIS_URL=redis://:app@localhost:${DEFAULT_REDIS_PORT}`));
     assert.ok(example.includes(`MAIL_SMTP_URL=smtp://localhost:${DEFAULT_MAILPIT_SMTP_PORT}`));
   });
 
@@ -127,6 +131,53 @@ describe('devSettings', () => {
     );
   });
 
+  test('Redis: host and port only, a local one on the port Compose publishes', () => {
+    const local = devSettings({
+      api: { REDIS_URL: `redis://:secret@localhost:${DEFAULT_REDIS_PORT}` },
+      compose: {},
+    });
+    assert.equal(local.redis, `localhost:${DEFAULT_REDIS_PORT}`);
+    assert.deepEqual(local.warnings, [
+      'DATABASE_URL is not set: copy apps/api/.env.example to apps/api/.env',
+    ]);
+    assert.ok(!JSON.stringify(local).includes('secret'));
+    const remote = devSettings({
+      api: { REDIS_URL: 'rediss://app:secret@cache.example.com:6380' },
+      compose: {},
+    });
+    assert.equal(remote.redis, 'cache.example.com:6380');
+  });
+
+  test('Redis: a local port that is not the one Compose publishes is pointed out', () => {
+    // The usual case: 6379, Redis's own port, from an older .env.
+    const settings = devSettings({
+      api: { REDIS_URL: 'redis://:app@127.0.0.1:6379' },
+      compose: {},
+    });
+    assert.match(
+      settings.warnings.join('\n'),
+      /REDIS_URL uses port 6379, but pnpm services:up publishes Redis on 6389/,
+    );
+    assert.deepEqual(
+      devSettings({
+        api: { REDIS_URL: 'redis://:app@localhost:7000' },
+        compose: { REDIS_PORT: '7000' },
+      }).warnings.filter((warning) => warning.startsWith('REDIS_URL')),
+      [],
+    );
+  });
+
+  test('Redis: off, or an unreadable URL, is said as much', () => {
+    assert.equal(
+      devSettings({ api: {}, compose: {} }).redis,
+      'off (in-process stores; set REDIS_URL in apps/api/.env)',
+    );
+    assert.equal(
+      devSettings({ api: { REDIS_URL: 'not a url' }, compose: {} }).redis,
+      'invalid REDIS_URL',
+    );
+  });
+
   test('mail: off, or an unreadable URL, is said as much', () => {
     assert.equal(
       devSettings({ api: {}, compose: {} }).mail,
@@ -157,6 +208,7 @@ describe('renderBanner', () => {
       settings.api,
       settings.docs,
       settings.database ?? '',
+      settings.redis,
       settings.mail,
     ]) {
       assert.ok(text.includes(value), value);

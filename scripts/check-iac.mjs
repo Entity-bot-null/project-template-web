@@ -1,5 +1,6 @@
 // `pnpm iac:check` and the CI job "Infrastructure as code (Terraform)": the
-// checks of infra/terraform (docs/ci-cd.md#infrastructure-as-code). Needs
+// checks of infra/terraform and of the database a server runs itself
+// (deploy/vps/db-init.sh) (docs/ci-cd.md#infrastructure-as-code). Needs
 // Docker; every tool is a pinned image of .github/tool-images/Dockerfile, and
 // the repository is mounted read-only. Nothing is created in any cloud and no
 // token is used. Any finding fails.
@@ -15,10 +16,21 @@
 //      its runcmd script through shellcheck, and Docker's apt key by
 //      fingerprint;
 //   5. database/roles.sql on PostgreSQL, as an administrator that is not a
-//      superuser (DigitalOcean's doadmin), twice, then the roles it leaves.
+//      superuser (DigitalOcean's doadmin), twice, then the roles it leaves;
+//   6. deploy/vps/db-init.sh in PostgreSQL's own entrypoint, as a server that
+//      runs its database gets it, then the roles it leaves and a backup as
+//      app_backup; and that it refuses a short password.
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +38,7 @@ import { rolesScript } from './iac-database.mjs';
 import { ensureImage, pullableImage, toolImage } from './tool-image.mjs';
 
 const INFRA = fileURLToPath(new URL('../infra/terraform', import.meta.url));
+const DB_INIT = fileURLToPath(new URL('../deploy/vps/db-init.sh', import.meta.url));
 
 // Docker's release key, as docs.docker.com publishes it: the one apt may
 // trust for Docker's repository (cloud-init.yaml.tftpl).
@@ -231,6 +244,68 @@ echo 'app owned by app_migrator; app_runtime: data only, 50 connections; passwor
         ...passwords,
         POSTGRES_PASSWORD: randomBytes(24).toString('hex'),
         POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256 --auth-local=trust',
+      },
+    ),
+  );
+
+  const serverPasswords = {
+    APP_MIGRATOR_PASSWORD: randomBytes(24).toString('hex'),
+    APP_RUNTIME_PASSWORD: randomBytes(24).toString('hex'),
+    APP_BACKUP_PASSWORD: randomBytes(24).toString('hex'),
+  };
+  copyFileSync(DB_INIT, join(work, 'db-init.sh'));
+  check('deploy/vps/db-init.sh on PostgreSQL', () =>
+    inContainer(
+      'postgres',
+      `set -eu
+fail() { echo "FAILED: $1" >&2; exit 1; }
+echo '--- a short password stops it, naming the variable'
+if APP_BACKUP_PASSWORD=short sh /out/db-init.sh > /tmp/short.log 2>&1; then fail 'a short password was accepted'; fi
+grep -q 'APP_BACKUP_PASSWORD in db.env must be' /tmp/short.log || { cat /tmp/short.log >&2; fail 'the refusal does not name the variable'; }
+echo '--- in the entrypoint, as compose.yaml mounts it, on an empty data directory'
+cp /out/db-init.sh /docker-entrypoint-initdb.d/10-roles.sh
+chmod 755 /docker-entrypoint-initdb.d/10-roles.sh
+docker-entrypoint.sh postgres > /tmp/postgres.log 2>&1 &
+tries=0
+until pg_isready -q -h 127.0.0.1 -U postgres; do
+  tries=$((tries + 1))
+  if [ "$tries" -gt 90 ]; then cat /tmp/postgres.log >&2; exit 1; fi
+  sleep 1
+done
+grep -q 'db-init: created the database app' /tmp/postgres.log || { cat /tmp/postgres.log >&2; fail 'db-init.sh did not run'; }
+# The superuser through the socket, as the entrypoint does; the roles through
+# the container's own address, as the API and the backup reach it from the
+# network data: the image trusts loopback and asks for a password elsewhere.
+address=$(hostname -i | awk '{ print $1 }')
+case "$address" in '' | 127.*) fail "the container has no address besides loopback: $address" ;; esac
+as_admin() { psql -X -q -tA -v ON_ERROR_STOP=1 -h /var/run/postgresql -U postgres -d app "$@"; }
+psql_as() { role=$1 password=$2; shift 2; PGPASSWORD=$password psql -X -q -tA -w -v ON_ERROR_STOP=1 -h "$address" -U "$role" -d app "$@"; }
+echo '--- what it leaves'
+[ "$(as_admin -c "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'app'")" = app_migrator ] || fail 'app is not owned by app_migrator'
+[ "$(as_admin -c "SELECT rolconnlimit FROM pg_roles WHERE rolname = 'app_runtime'")" = 50 ] || fail 'app_runtime has no connection limit of 50'
+[ "$(as_admin -c "SELECT rolconnlimit FROM pg_roles WHERE rolname = 'app_backup'")" = 2 ] || fail 'app_backup has no connection limit of 2'
+[ "$(as_admin -c "SELECT count(*) FROM pg_roles WHERE rolname IN ('app_migrator', 'app_runtime', 'app_backup') AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls) AND rolcanlogin")" = 3 ] || fail 'a role has more than LOGIN'
+[ "$(as_admin -c "SELECT pg_has_role('app_backup', 'pg_read_all_data', 'MEMBER')")" = t ] || fail 'app_backup cannot read all data'
+echo '--- from another container: a password, and the right one'
+if psql_as app_runtime wrong-password -c 'SELECT 1' > /dev/null 2>&1; then fail 'a wrong password was accepted'; fi
+if psql_as postgres '' -c 'SELECT 1' > /dev/null 2>&1; then fail 'the superuser got in without its password'; fi
+psql_as app_migrator "$APP_MIGRATOR_PASSWORD" -c 'CREATE TABLE iac_check (id int PRIMARY KEY, note text)' || fail 'app_migrator cannot create a table'
+psql_as app_runtime "$APP_RUNTIME_PASSWORD" -c "INSERT INTO iac_check VALUES (1, 'a')" -c "UPDATE iac_check SET note = 'b'" -c 'SELECT count(*) FROM iac_check' > /dev/null || fail 'app_runtime cannot read and write the tables app_migrator creates'
+for statement in 'CREATE TABLE iac_other (id int)' 'ALTER TABLE iac_check ADD COLUMN extra int' 'DROP TABLE iac_check' 'TRUNCATE iac_check'; do
+  if psql_as app_runtime "$APP_RUNTIME_PASSWORD" -c "$statement" > /dev/null 2>&1; then fail "app_runtime may run: $statement"; fi
+done
+[ "$(psql_as app_backup "$APP_BACKUP_PASSWORD" -c 'SELECT note FROM iac_check')" = b ] || fail 'app_backup cannot read'
+for statement in "INSERT INTO iac_check VALUES (2, 'c')" 'DELETE FROM iac_check' 'CREATE TABLE iac_other (id int)'; do
+  if psql_as app_backup "$APP_BACKUP_PASSWORD" -c "$statement" > /dev/null 2>&1; then fail "app_backup may run: $statement"; fi
+done
+PGPASSWORD=$APP_BACKUP_PASSWORD pg_dump -w -h "$address" -U app_backup -d app --format=custom --no-owner --no-privileges --file=/tmp/app.dump || fail 'pg_dump as app_backup failed'
+pg_restore --list /tmp/app.dump | grep -q 'TABLE DATA public iac_check' || fail 'the backup has not the data'
+echo 'app owned by app_migrator; app_runtime: data only, 50 connections; app_backup: reads only, and dumps'
+`,
+      {
+        ...serverPasswords,
+        POSTGRES_PASSWORD: randomBytes(24).toString('hex'),
+        POSTGRES_DB: 'postgres',
       },
     ),
   );

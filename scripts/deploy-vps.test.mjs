@@ -2,9 +2,10 @@
 // scripts/deploy-vps.test.mjs`): the real scripts, run with sh in a copy of
 // the server's directory, against a stand-in for the Docker CLI that records
 // every call and keeps what "runs" in a file. What they prove: the order
-// (pull, migrate, roll out), the release pointers, the way back after a failed
-// migration or rollout, readiness after a rollback, and one deployment or
-// rollback at a time on a server.
+// (pull, data services, migrate, roll out), the database on the server or
+// managed, the release pointers, the way back after a failed migration or
+// rollout, readiness after a rollback, and one deployment or rollback at a
+// time on a server.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -45,7 +46,9 @@ const SKIP =
 // The Docker CLI as the scripts use it. Each call is a line in docker.log;
 // "running" holds the api and web images that run; images listed in
 // failing-images break their migration or their rollout, those in not-ready
-// start but never answer readiness. FAKE_SECONDS slows migrate and up down.
+// start but never answer readiness; failing-data stops the data services from
+// starting. `config --services` lists PostgreSQL and its backup when an env
+// file sets COMPOSE_PROFILES=db. FAKE_SECONDS slows migrate and up down.
 const FAKE_DOCKER = `#!/bin/sh
 log="$FAKE_DIR/docker.log"
 case "$1" in
@@ -75,16 +78,38 @@ value() {
 listed() { [ -f "$FAKE_DIR/$1" ] && grep -qxF "$2" "$FAKE_DIR/$1"; }
 command=$1
 shift
+services=""
+for argument in "$@"; do
+  case "$argument" in
+    -*) ;;
+    *[!a-z]*) ;;
+    *) services="$services $argument" ;;
+  esac
+done
+data=false
+case " $services " in *" redis "* | *" db "* | *" backup "*) data=true ;; esac
 case "$command" in
+  config)
+    echo "proxy"; echo "api"; echo "web"; echo "redis"
+    case ",$(value COMPOSE_PROFILES)," in *,db,*) echo "db"; echo "backup" ;; esac ;;
   pull)
-    echo "pull $(value API_IMAGE)" >> "$log"
-    [ ! -f "$FAKE_DIR/failing-pull" ] ;;
+    if $data; then
+      echo "pull data$services" >> "$log"
+    else
+      echo "pull $(value API_IMAGE)" >> "$log"
+      [ ! -f "$FAKE_DIR/failing-pull" ]
+    fi ;;
   run)
     image=$(value MIGRATE_IMAGE)
     echo "migrate $image" >> "$log"
     sleep "\${FAKE_SECONDS:-0}"
     ! listed failing-images "$image" ;;
   up)
+    if $data; then
+      echo "up data$services" >> "$log"
+      [ ! -f "$FAKE_DIR/failing-data" ]
+      exit
+    fi
     api=$(value API_IMAGE)
     echo "up $api $(value APP_RELEASE)" >> "$log"
     sleep "\${FAKE_SECONDS:-0}"
@@ -125,7 +150,7 @@ beforeEach(() => {
   mkdirSync(srv);
   mkdirSync(join(root, 'bin'));
   for (const file of ['deploy.sh', 'rollback.sh']) copyFileSync(join(VPS, file), join(srv, file));
-  for (const file of ['server.env', 'api.env', 'migrate.env', 'web.env']) {
+  for (const file of ['server.env', 'api.env', 'migrate.env', 'web.env', 'redis.env']) {
     writeFileSync(join(srv, file), '');
   }
   writeFileSync(join(root, 'bin', 'docker'), FAKE_DOCKER);
@@ -215,10 +240,16 @@ const A = release('a');
 const B = release('b');
 
 describe('deploy.sh', { skip: SKIP }, () => {
-  test('first deployment: pulls, migrates, then rolls out, and records the release', () => {
+  test('first deployment: pulls, starts Redis, migrates, then rolls out, and records the release', () => {
     const result = run('deploy.sh', A);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(calls(), [`pull ${A[0]}`, `migrate ${A[1]}`, `up ${A[0]} ${A[3]}`]);
+    assert.deepEqual(calls(), [
+      `pull ${A[0]}`,
+      'pull data redis',
+      'up data redis',
+      `migrate ${A[1]}`,
+      `up ${A[0]} ${A[3]}`,
+    ]);
     assert.equal(running(), A[0]);
     assert.equal(pointer('release.env'), A[3]);
     assert.equal(pointer('release.previous.env'), null);
@@ -247,7 +278,12 @@ describe('deploy.sh', { skip: SKIP }, () => {
     const result = run('deploy.sh', B);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /the migration failed; the running release keeps serving/);
-    assert.deepEqual(calls().slice(-2), [`pull ${B[0]}`, `migrate ${B[1]}`]);
+    assert.deepEqual(calls().slice(-4), [
+      `pull ${B[0]}`,
+      'pull data redis',
+      'up data redis',
+      `migrate ${B[1]}`,
+    ]);
     assert.equal(running(), A[0]);
     assert.equal(pointer('release.env'), A[3]);
     // Nothing of the failed release stays behind for a later command to pick up.
@@ -286,6 +322,49 @@ describe('deploy.sh', { skip: SKIP }, () => {
     assert.equal(pointer('release.env'), A[3]);
   });
 
+  test('with the database on the server: PostgreSQL and its backup start with Redis, before the migration', () => {
+    writeFileSync(join(srv, 'server.env'), 'APP_DOMAIN=app.example.com\nCOMPOSE_PROFILES=db\n');
+    for (const file of ['db.env', 'backup.env']) writeFileSync(join(srv, file), '');
+    const result = run('deploy.sh', A);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(calls(), [
+      `pull ${A[0]}`,
+      'pull data redis db backup',
+      'up data redis db',
+      'up data backup',
+      `migrate ${A[1]}`,
+      `up ${A[0]} ${A[3]}`,
+    ]);
+  });
+
+  test('with the database on the server, refuses to deploy without its settings files', () => {
+    writeFileSync(join(srv, 'server.env'), 'COMPOSE_PROFILES=db\n');
+    writeFileSync(join(srv, 'db.env'), '');
+    const result = run('deploy.sh', A);
+    assert.equal(result.status, 2);
+    assert.match(
+      result.stderr,
+      /backup\.env is missing next to compose\.yaml \(COMPOSE_PROFILES=db/,
+    );
+    assert.deepEqual(calls(), []);
+    assert.equal(pointer('release.next.env'), null);
+  });
+
+  test('data services that do not start stop the deployment before the migration', () => {
+    run('deploy.sh', A);
+    writeFileSync(join(root, 'failing-data'), '');
+    const result = run('deploy.sh', B);
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      /the data services did not start; the running release keeps serving/,
+    );
+    assert.deepEqual(calls().slice(-1), ['up data redis']);
+    assert.equal(running(), A[0]);
+    assert.equal(pointer('release.env'), A[3]);
+    assert.equal(pointer('release.next.env'), null);
+  });
+
   test('refuses an image not pinned by digest, and a missing settings file', () => {
     const tagged = run('deploy.sh', ['ghcr.io/acme/app/api:1.0', A[1], A[2], A[3]]);
     assert.equal(tagged.status, 2);
@@ -294,12 +373,17 @@ describe('deploy.sh', { skip: SKIP }, () => {
     const missing = run('deploy.sh', A);
     assert.equal(missing.status, 2);
     assert.match(missing.stderr, /migrate\.env is missing/);
+    writeFileSync(join(srv, 'migrate.env'), '');
+    rmSync(join(srv, 'redis.env'));
+    const noRedis = run('deploy.sh', A);
+    assert.equal(noRedis.status, 2);
+    assert.match(noRedis.stderr, /redis\.env is missing/);
     assert.deepEqual(calls(), []);
   });
 
   test('logs in for the pull only, and logs out even when the pull fails', () => {
     assert.equal(run('deploy.sh', A, { REGISTRY_TOKEN: 'synthetic' }).status, 0);
-    assert.deepEqual(calls().slice(0, 3), ['login', `pull ${A[0]}`, 'logout']);
+    assert.deepEqual(calls().slice(0, 4), ['login', `pull ${A[0]}`, 'pull data redis', 'logout']);
     // A pull refused (a digest the registry's content does not match, a
     // registry down) changes nothing on the server.
     writeFileSync(join(root, 'failing-pull'), '');
@@ -338,6 +422,42 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(running(), A[0]);
     assert.equal(pointer('release.env'), A[3]);
     assert.equal(pointer('release.failed.env'), B[3]);
+  });
+
+  test('starts the data services first, or leaves them running', () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const result = run('rollback.sh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(calls().slice(before), ['up data redis', `up ${A[0]} ${A[3]}`]);
+  });
+
+  test('with the database on the server: PostgreSQL and its backup too', () => {
+    writeFileSync(join(srv, 'server.env'), 'APP_DOMAIN=app.example.com\nCOMPOSE_PROFILES=db\n');
+    for (const file of ['db.env', 'backup.env']) writeFileSync(join(srv, file), '');
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const result = run('rollback.sh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(calls().slice(before), [
+      'up data redis db',
+      'up data backup',
+      `up ${A[0]} ${A[3]}`,
+    ]);
+  });
+
+  test('data services that do not start stop it before the release changes', () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    writeFileSync(join(root, 'failing-data'), '');
+    const result = run('rollback.sh');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /rollback: the data services did not start/);
+    assert.equal(running(), B[0]);
+    assert.equal(pointer('release.env'), B[3]);
+    assert.equal(pointer('release.previous.env'), A[3]);
   });
 
   test('refuses when no previous release is recorded', () => {

@@ -192,9 +192,11 @@ The plan comes from `doberman.mjs start` (`verify` in `package.json`, plus the C
   security, build, performance budget. Run them one by one so each gets its own result.
 - `pnpm test:integration` needs PostgreSQL: `DATABASE_URL` from the environment or `apps/api/.env`
   (without it: `SKIPPED — REQUIRES CONFIGURATION`; never create the file), and the server running.
-  The plan's `services` says when to start it (`pnpm db:up`) and how to stop it
-  (`docker compose stop db`). The Redis adapter specs only run with `REDIS_TEST_URL`: report them
-  as not run locally.
+  The plan's `services` says when to start the development services (`pnpm services:up`:
+  PostgreSQL, Redis and Mailpit) and how to stop them (`docker compose stop db redis mailpit`). The
+  Redis adapter specs and the outbox specs use `REDIS_URL` and `MAIL_SMTP_URL` of `apps/api/.env`
+  (or `REDIS_TEST_URL` and `MAIL_TEST_SMTP_URL`); without a URL they are skipped locally: report
+  them as not run.
 - `pnpm test:e2e` after `pnpm build`; Playwright starts the API (`<db>_e2e`) and the web preview by
   itself, and needs Chromium installed (never install it on the user's behalf).
 - Images: only when the change touches what goes into them (paths in the plan); build with the
@@ -202,8 +204,9 @@ The plan comes from `doberman.mjs start` (`verify` in `package.json`, plus the C
   images.
 - `pnpm test:scripts` (CI only, outside `verify`): the tests of the repository's own scripts, the
   Doberman engine and Semgrep's file selection. On Windows the POSIX signal test is skipped.
-- `pnpm iac:check` (Docker and the network) only when the change touches `infra/`, the tool images
-  or its scripts: Terraform checks, TFLint, Trivy, cloud-init and the roles script. Never a real
+- `pnpm iac:check` (Docker and the network) only when the change touches `infra/`,
+  `deploy/vps/db-init.sh`, the tool images or its scripts: Terraform checks, TFLint, Trivy,
+  cloud-init and the two roles scripts (Terraform's and the server's). Never a real
   `terraform plan` or `apply`: they need a DigitalOcean account and token.
 - `pnpm sast` and `pnpm lint:workflows` need Docker; `pnpm security` needs the network. gitleaks
   needs commits; on Windows (Git Bash) the plan's `commandWindows` passes a Windows path to Docker.
