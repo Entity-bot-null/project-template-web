@@ -304,6 +304,7 @@ which the gate enforces.
 | Terraform providers (`infra/terraform`)                                                                                                                                | exact version in `versions.tf`, checksums in `.terraform.lock.hcl` | Dependabot (`terraform`), version and checksums together |
 | Node.js                                                                                                                                                                | the major in `.nvmrc` (CI, hooks); the base images above           | the major by hand ([below](#nodejs))                     |
 | pnpm                                                                                                                                                                   | `packageManager` in `package.json`, recorded in `pnpm-lock.yaml`   | by hand ([below](#pnpm))                                 |
+| The runners (`runs-on` of every job)                                                                                                                                   | `ubuntu-24.04`, the servers' Ubuntu                                | by hand ([below](#ubuntu))                               |
 
 The Dockerfiles' base images come from registries without Docker Hub's anonymous pull limit, which
 CI runners share and hit: the same images, with the same digests, as on Docker Hub.
@@ -343,15 +344,16 @@ Dependabot's pull requests are the weekly routine ([Dependency updates](#depende
 it never proposes is moved by a person, on its own branch, with the full CI on its pull request
 (the images are built and scanned there too):
 
-| Part                | Dependabot proposes                                                   | Moved by hand                                                                      |
-| ------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| npm packages        | minors and patches (grouped), majors (one per pull request)           | merging a major, after its release notes; [TypeScript](#typescript)                |
-| Node.js             | the base image's new digest within the major, weekly                  | [the major](#nodejs), and `@types/node`'s with it                                  |
-| pnpm                | nothing: it never edits `packageManager`                              | [a new version](#pnpm)                                                             |
-| GitHub Actions      | new SHA and version comment, in the workflows and `.github/actions/*` | merging: the auto-merge never merges a change to a workflow or an action           |
-| Tool images         | tag and digest together                                               | a Terraform minor also needs `required_version` ([above](#infrastructure-as-code)) |
-| PostgreSQL, Redis   | the new digest within the major (CI images); Compose tags within it   | [the major](#postgresql-and-redis)                                                 |
-| Terraform providers | version and lock-file checksums together                              | nothing                                                                            |
+| Part                | Dependabot proposes                                                      | Moved by hand                                                                      |
+| ------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| npm packages        | minors and patches (grouped), majors (one per pull request)              | merging a major, after its release notes; [TypeScript](#typescript)                |
+| Node.js             | the base image's new digest within the major, weekly                     | [the major](#nodejs), and `@types/node`'s with it                                  |
+| pnpm                | nothing: it never edits `packageManager`                                 | [a new version](#pnpm)                                                             |
+| GitHub Actions      | new SHA and version comment, in the workflows and `.github/actions/*`    | merging: the auto-merge never merges a change to a workflow or an action           |
+| Tool images         | tag and digest together                                                  | a Terraform minor also needs `required_version` ([above](#infrastructure-as-code)) |
+| PostgreSQL, Redis   | the new digest within the major (CI images); Compose tags within it      | [the major](#postgresql-and-redis)                                                 |
+| Terraform providers | version and lock-file checksums together                                 | nothing                                                                            |
+| Ubuntu              | nothing: neither a runner label nor the servers' release is a dependency | [the next LTS](#ubuntu), everywhere at once                                        |
 
 ### Node.js
 
@@ -400,6 +402,17 @@ Dependabot proposes TypeScript like any package, a major in its own pull request
 supports a range of TypeScript versions (`pnpm view typescript-eslint peerDependencies`:
 `>=4.8.4 <6.1.0` with typescript-eslint 8.71, so neither 6.1 nor 7 yet): a version outside it is not
 merged until typescript-eslint supports it. Then `pnpm typecheck`, `pnpm lint` and the tests.
+
+### Ubuntu
+
+CI's runners and the servers run the same Ubuntu LTS, 24.04: `runs-on: ubuntu-24.04` in every
+workflow, the servers' release ([deploy-vps.md](deploy-vps.md#1-what-you-need); `droplet_image` in
+`infra/terraform/digitalocean`) and the `ubuntu` tool image of the cloud-init check. CI does not use
+`ubuntu-latest`: GitHub moves that label to a new release on its own schedule (Ubuntu 26.04, from
+October 2026), which would change the system of every job without a commit. The next LTS moves all
+of them in one pull request with the full CI, once what the jobs install on the runner supports it
+(Playwright's browser dependencies, `playwright install --with-deps`) and the servers' guides have
+been followed on it.
 
 ### PostgreSQL and Redis
 

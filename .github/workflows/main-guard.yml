@@ -16,7 +16,7 @@ permissions: {}
 jobs:
   pull-requests-only:
     name: Pushed through pull requests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read # the pushed commits
