@@ -24,7 +24,8 @@ When this file and those disagree, they win; say so in the report.
 
 pnpm workspace: `apps/api` (NestJS, Prisma + PostgreSQL, Zod DTOs, optional Redis behind
 adapters, OpenTelemetry and Sentry behind `observability/`), `apps/web` (React + Vite SPA,
-openapi-fetch client, React Router), OpenAPI contract first (`pnpm contract` writes
+openapi-fetch client, React Router), `apps/landing` (Astro + Tailwind CSS public site, static
+pages in English and Spanish, no client JavaScript), OpenAPI contract first (`pnpm contract` writes
 `openapi/openapi.json` and `apps/web/src/api/schema.d.ts`), TypeScript strict, Vitest (unit,
 component, integration with supertest), Playwright (E2E), Docker images scanned by Trivy, VPS
 deployment (`deploy/vps`).
@@ -86,6 +87,19 @@ replay of an already rotated refresh token (outside the race leeway) → the who
   errors come from `ApiFailure` messages; nothing renders untrusted HTML.
 - Role-gated routes in the router are a convenience: the API decides.
 
+**Landing** (`apps/landing/**`)
+
+- Every visible text comes from the dictionaries (`src/i18n/en.ts`, `es.ts`), written in both
+  languages in the same change; a page exists in every language (`src/pages/`, `src/pages/es/`).
+- Static HTML and CSS only: no client script, no inline `style` attribute or `<style>` tag
+  rendered into a page (the web server's Content-Security-Policy refuses them), no font or asset
+  from another origin; the JavaScript budget of `apps/landing/performance-budget.json` is 0 kB.
+- One `h1` per page, a heading on every section, landmarks, the skip link, `lang` on the page and
+  on each language link; a picture of the app (`data-ui`) carries `role="img"` and a label in the
+  page's language.
+- Links into the app through `src/lib/links.ts` (`appPath`), never a hard-coded origin; canonical
+  and alternate links, the sitemap and robots.txt from the build's `site`.
+
 **API authorization and input** (`apps/api/src/**`)
 
 - `@Auth(...)` on every non-public route (no roles = any signed-in user); a public route has a
@@ -132,7 +146,8 @@ replay of an already rotated refresh token (outside the race leeway) → the who
 **Gates and supply chain**
 
 - No threshold (`vitest.config.ts`, `vite.config.ts`), lint rule, budget
-  (`apps/web/performance-budget.json`), ignore file, supply-chain setting (`pnpm-workspace.yaml`),
+  (`apps/web/performance-budget.json`, `apps/landing/performance-budget.json`), ignore file,
+  supply-chain setting (`pnpm-workspace.yaml`),
   dependency policy or workflow permission weakened; `nosemgrep`/`eslint-disable` carry their reason.
 - Dependencies go to the app that uses them; the root only gets repository tooling.
 - A deployment change updates docs/deploy-vps.md and both step-by-step guides; the manual and the

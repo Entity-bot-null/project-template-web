@@ -1,0 +1,38 @@
+---
+// The home page, the same in every language: the page files only say which
+// language (pages/index.astro, pages/es/index.astro).
+import { messages, type Locale } from '../i18n';
+import Base from '../layouts/Base.astro';
+import { SITE_NAME } from '../lib/site';
+import CallToAction from './CallToAction.astro';
+import Capabilities from './Capabilities.astro';
+import Footer from './Footer.astro';
+import GettingIn from './GettingIn.astro';
+import Header from './Header.astro';
+import Hero from './Hero.astro';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = messages(locale);
+---
+
+<Base
+  locale={locale}
+  title={`${SITE_NAME} · ${t.home.title}`}
+  description={t.home.description}
+  path="/"
+>
+  <div class="absolute inset-x-0 top-0 px-(--margin) pt-6">
+    <Header locale={locale} path="/" />
+  </div>
+  <main id="content">
+    <Hero locale={locale} />
+    <Capabilities locale={locale} />
+    <GettingIn locale={locale} />
+    <CallToAction locale={locale} />
+  </main>
+  <Footer locale={locale} path="/" />
+</Base>

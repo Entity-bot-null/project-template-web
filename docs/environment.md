@@ -13,14 +13,15 @@
 
 ## Files
 
-| File                       | Read by                                                                                    | Committed |
-| -------------------------- | ------------------------------------------------------------------------------------------ | --------- |
-| `apps/api/.env`            | the API and the Prisma CLI, development                                                    | no        |
-| `apps/api/.env.example`    | documentation of every API variable                                                        | yes       |
-| `.env` (root)              | `docker compose` (ports, stack secret, `REDIS_PASSWORD`)                                   | no        |
-| `.env.example` (root)      | documentation of the compose variables                                                     | yes       |
-| `apps/web/.env.example`    | the web app's optional settings                                                            | yes       |
-| `deploy/vps/*.env.example` | the server's container settings ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)) | yes       |
+| File                        | Read by                                                                                    | Committed |
+| --------------------------- | ------------------------------------------------------------------------------------------ | --------- |
+| `apps/api/.env`             | the API and the Prisma CLI, development                                                    | no        |
+| `apps/api/.env.example`     | documentation of every API variable                                                        | yes       |
+| `.env` (root)               | `docker compose` (ports, stack secret, `REDIS_PASSWORD`)                                   | no        |
+| `.env.example` (root)       | documentation of the compose variables                                                     | yes       |
+| `apps/web/.env.example`     | the web app's optional settings                                                            | yes       |
+| `apps/landing/.env.example` | the landing's one build setting ([below](#landing-variables))                              | yes       |
+| `deploy/vps/*.env.example`  | the server's container settings ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)) | yes       |
 
 ## API variables
 
@@ -91,6 +92,18 @@ variable). A malformed `API_UPSTREAM` fails nginx's own configuration test.
 In development the Vite dev and preview servers serve `/app-config.json` from their own
 environment (same names). `API_PROXY_TARGET` (development only) moves the dev and preview proxy.
 Anything named `VITE_*` is compiled into the public bundle: never a secret.
+
+## Landing variables
+
+The landing is built into static files and reads nothing when it runs. One variable, read from the
+environment of the build (nothing reads an `apps/landing/.env`; `apps/landing/.env.example` lists
+it):
+
+| Variable     | Default                 | Purpose                                                                                                                                                                                                   |
+| ------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL` | `http://localhost:4321` | The public origin of the site (scheme, host and port, no path): its canonical and alternate links, the sitemap and robots.txt. A value with a path, or not a URL, stops the build and names the variable. |
+
+Everything the landing builds is public: never a secret in a landing variable.
 
 ## Per environment
 

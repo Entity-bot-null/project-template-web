@@ -5,6 +5,8 @@
     "editorconfig.editorconfig",
     "vitest.explorer",
     "ms-playwright.playwright",
-    "prisma.prisma"
+    "prisma.prisma",
+    "astro-build.astro-vscode",
+    "bradlc.vscode-tailwindcss"
   ]
 }

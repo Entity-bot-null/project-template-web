@@ -1,0 +1,29 @@
+---
+// A picture of the app once signed in: the frame of every screen
+// (apps/web/src/components/AppLayout.tsx) around the home page
+// (apps/web/src/pages/HomePage.tsx), for a member.
+interface Props {
+  label: string;
+}
+
+const { label } = Astro.props;
+---
+
+<div data-ui role="img" aria-label={label} class="ui w-full max-w-190">
+  <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-panel-line px-5 py-3 sm:px-6">
+    <span class="flex gap-5">
+      <span class="font-semibold underline decoration-2 underline-offset-[0.35em]">Home</span>
+      <span>Account</span>
+    </span>
+    <span class="flex min-w-0 items-center gap-4">
+      <span class="truncate text-panel-muted">ada@example.com</span>
+      <span class="ui-button min-h-9 px-3">Sign out</span>
+    </span>
+  </div>
+  <div class="px-5 pt-10 pb-16 sm:px-6 sm:pb-20">
+    <p class="text-[2rem] leading-tight font-bold tracking-tight">Welcome, Ada Lovelace</p>
+    <p class="mt-3">
+      Signed in as <strong>ada@example.com</strong> (member).
+    </p>
+  </div>
+</div>

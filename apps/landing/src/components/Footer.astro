@@ -1,0 +1,64 @@
+---
+// The designed close: the name across the width first, then the ways in and
+// the languages, then the legal line.
+import { LOCALES, localePath, messages, type Locale } from '../i18n';
+import { appPath } from '../lib/links';
+import { SITE_NAME } from '../lib/site';
+
+interface Props {
+  locale: Locale;
+  /** This page's address in the default language, for the language links. */
+  path: string;
+}
+
+const { locale, path } = Astro.props;
+const t = messages(locale);
+// The year of the build: the site is rebuilt with every release.
+const year = new Date().getFullYear();
+---
+
+<footer class="overflow-x-clip bg-field px-(--margin) pt-[clamp(4rem,10vh,7rem)] pb-8 text-field-ink">
+  <p class="settle origin-bottom-left text-display font-extrabold text-balance">{SITE_NAME}</p>
+  <div class="mt-18 grid gap-12 md:grid-cols-12 md:gap-x-(--gutter)">
+    <ul class="flex flex-col gap-3 text-lead font-semibold md:col-span-5" role="list">
+      <li>
+        <a href={appPath()} class="link">
+          {t.footer.openApp}
+        </a>
+      </li>
+      <li>
+        <a href={appPath('sign-in')} class="link">
+          {t.header.signIn}
+        </a>
+      </li>
+    </ul>
+    <nav aria-labelledby="footer-languages" class="md:col-span-5 md:col-start-8">
+      <p id="footer-languages" class="font-semibold">
+        {t.footer.languages}
+      </p>
+      <ul class="mt-3 flex flex-col gap-2" role="list">
+        {LOCALES.map((other) => (
+          <li>
+            <a
+              href={localePath(other, path)}
+              hreflang={other}
+              lang={other}
+              aria-current={other === locale ? 'true' : undefined}
+              class="link"
+            >
+              {messages(other).languageName}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  </div>
+  <div class="mt-24 flex flex-col gap-3 text-small text-field-muted sm:flex-row sm:items-baseline sm:justify-between">
+    <p>
+      © {year} {SITE_NAME}. {t.footer.rights}
+    </p>
+    <a href="#top" class="link">
+      {t.footer.backToTop}
+    </a>
+  </div>
+</footer>

@@ -50,6 +50,14 @@ allowBuilds:
   # Telemetry only.
   '@scarf/scarf': false
 
+# Optional dependencies that are never installed. sharp is the raster image
+# optimizer Astro offers (apps/landing): the landing uses vector images only,
+# with Astro's no-op image service (apps/landing/astro.config.mjs), and the
+# libvips binaries sharp brings are LGPL-3.0-or-later, outside the license
+# policy (scripts/dependency-policy.json).
+ignoredOptionalDependencies:
+  - sharp
+
 # Security overrides: transitive versions forced past a published advisory
 # until the dependency that pins them ships the fix. Each entry names the
 # advisory; delete it once `pnpm why <package>` shows a fixed version without

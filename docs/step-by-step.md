@@ -168,17 +168,20 @@ git init -b main
 
 Open the project in your editor (`code .`) and change:
 
-| File                              | Change                                                                       |
-| --------------------------------- | ---------------------------------------------------------------------------- |
-| `package.json` (root)             | `"name"` → `REPO`, `"description"` → one sentence about the product          |
-| `README.md`                       | the title and the first paragraph                                            |
-| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (your UI language) |
-| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                            |
-| `SECURITY.md`                     | `security@example.com` → your security contact                               |
-| `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`          |
-| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours     |
+| File                              | Change                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `package.json` (root)             | `"name"` → `REPO`, `"description"` → one sentence about the product                               |
+| `README.md`                       | the title and the first paragraph                                                                 |
+| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (your UI language)                      |
+| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                                                 |
+| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → the product's name, as the public site shows it                                     |
+| `apps/landing/public/`            | `favicon.svg` and `og.png` (1200 × 630) → your product's icon and the picture a shared link shows |
+| `SECURITY.md`                     | `security@example.com` → your security contact                                                    |
+| `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`                               |
+| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours                          |
 
-The packages `apps/api` and `apps/web` keep their names (`api`, `web`): they are private.
+The packages `apps/api`, `apps/web` and `apps/landing` keep their names (`api`, `web`,
+`landing`): they are private.
 
 **Check:** searching the project for `example.com` finds only examples and placeholders for later:
 the `.env.example` files (those of `deploy/vps` too), tests, the development seed accounts, comments
@@ -249,14 +252,15 @@ pnpm dev
 
 **Check**, in your browser:
 
-| Open                                                          | You should see                           |
-| ------------------------------------------------------------- | ---------------------------------------- |
-| http://localhost:5173                                         | the sign-in page                         |
-| sign in as `admin@example.com` / `admin-password`             | the app, signed in as Admin              |
-| sign out, sign in as `member@example.com` / `member-password` | the app as Member, without admin screens |
-| http://localhost:3000/api/docs                                | the API documentation (Swagger)          |
-| http://127.0.0.1:3000/api/health/ready                        | a JSON answer with `"status":"ok"`       |
-| http://localhost:8035                                         | Mailpit, where the app's email lands     |
+| Open                                                          | You should see                                                                       |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| http://localhost:4321                                         | the landing, the public site; its language links switch to Spanish (`/es/`) and back |
+| http://localhost:5173                                         | the sign-in page                                                                     |
+| sign in as `admin@example.com` / `admin-password`             | the app, signed in as Admin                                                          |
+| sign out, sign in as `member@example.com` / `member-password` | the app as Member, without admin screens                                             |
+| http://localhost:3000/api/docs                                | the API documentation (Swagger)                                                      |
+| http://127.0.0.1:3000/api/health/ready                        | a JSON answer with `"status":"ok"`                                                   |
+| http://localhost:8035                                         | Mailpit, where the app's email lands                                                 |
 
 The terminal shows the API's first line:
 `Starting release unversioned in development: … error tracking off, Redis off, email on`, and a
@@ -294,7 +298,7 @@ pnpm test:e2e
 
 **Check:** both report their tests passed (`passed`, no `failed`); the integration run also lists
 the Redis adapter suite as skipped, which runs where `REDIS_TEST_URL` is set (CI). The end-to-end
-tests use ports 3100 and 4173: stop `pnpm dev` first.
+tests use ports 3100, 4173 and 4321: stop `pnpm dev` first.
 
 ### 4.3 The Docker-based checks
 
@@ -445,7 +449,9 @@ From here on, every change follows [the daily loop](#phase-11-the-daily-loop): a
 request, CI, review, merge. The first ones usually are:
 
 1. **Design and language.** `apps/web/src/index.css` holds placeholder styles; the copy of the
-   screens is in `apps/web/src`. Replace them with the product's.
+   screens is in `apps/web/src`. Replace them with the product's. The public site has example
+   copy, in English and Spanish, in `apps/landing/src/i18n/`, and its look in
+   `apps/landing/src/styles/global.css`: write your own ([how-to.md](how-to.md#change-the-landing)).
 2. **Your domain.** Add your tables and API modules next to `users`, following the recipes:
    [how-to.md](how-to.md) (add a table, an API module, an endpoint, a screen, a role, an
    environment variable).
