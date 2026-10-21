@@ -3,7 +3,9 @@
 # commands run (pnpm sast, pnpm lint:workflows), pinned by tag for readers and
 # by digest for the runner: a moved tag cannot change what runs with the
 # repository checked out. Written as a Dockerfile so Dependabot (the docker
-# entry in .github/dependabot.yml) proposes tag and digest updates together.
+# entry in .github/dependabot.yml) proposes tag and digest updates together;
+# kept outside .github/, where Dependabot may change files for GitHub Actions
+# only.
 # scripts/tool-image.mjs reads it: one `FROM <image> AS <name>` per tool.
 #
 # Where an image is published outside Docker Hub with the same digest, it is

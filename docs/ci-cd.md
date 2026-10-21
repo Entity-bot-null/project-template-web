@@ -78,7 +78,7 @@ produce findings that need judgment.
 production Redis are not needed by any job: unit and E2E suites run with them off (the default),
 the telemetry and error tracking specs use in-process collectors and a stubbed transport, and the
 Redis adapters run against a throwaway Redis service in the integration job (pinned in
-`.github/tool-images/Dockerfile`; a missing one fails those specs in CI instead of skipping them).
+`scripts/tool-images/Dockerfile`; a missing one fails those specs in CI instead of skipping them).
 
 Nothing else gates a merge: style preferences beyond the linters, Semgrep's informational
 registry, and ZAP warnings are for review, not for the pipeline. Promote an advisory check to
@@ -164,6 +164,10 @@ major update, an update to the workflows, or a pull request the workflow decline
 why) is merged by hand, after reading its release notes. An update that changes `deploy/vps`
 also needs the files copied to the server
 ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
+
+Dependabot may change files under `.github/` only for GitHub Actions, so the tool images CI runs
+live in `scripts/tool-images/Dockerfile`: under `.github/`, it refused every update of them
+([dependabot-core#15237](https://github.com/dependabot/dependabot-core/issues/15237)).
 
 ## Releases
 
@@ -297,7 +301,7 @@ which the gate enforces.
 | What                                                                                                                                                                   | Pinned by                                                          | Updated by                                               |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
 | GitHub Actions (`uses:`)                                                                                                                                               | commit SHA, tag in comment                                         | Dependabot (`github-actions`)                            |
-| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, Terraform, TFLint, Ubuntu, ZAP, promtool) and the CI PostgreSQL, Redis and Mailpit services | tag and digest in `.github/tool-images/Dockerfile`                 | Dependabot (`docker`), tag and digest together           |
+| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, Terraform, TFLint, Ubuntu, ZAP, promtool) and the CI PostgreSQL, Redis and Mailpit services | tag and digest in `scripts/tool-images/Dockerfile`                 | Dependabot (`docker`), tag and digest together           |
 | Base images in the Dockerfiles (Node.js from ECR Public's mirror of Docker's official images, nginx from NGINX's GHCR)                                                 | tag and digest                                                     | Dependabot (`docker`), tag and digest together           |
 | Compose images                                                                                                                                                         | tag                                                                | Dependabot (`docker-compose`)                            |
 | npm packages                                                                                                                                                           | `pnpm-lock.yaml` (integrity hashes)                                | Dependabot (`npm`), `pnpm update`                        |
@@ -419,7 +423,7 @@ been followed on it.
 Their majors move by hand, together, so CI keeps testing what runs:
 
 1. `docker-compose.yml` (`db`, `redis`), `deploy/vps/compose.yaml` (`db`, `backup`, `redis`) and
-   `.github/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
+   `scripts/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
    Dependabot proposes their minor updates (digests) in all three.
 2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure, then
    `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the accepted

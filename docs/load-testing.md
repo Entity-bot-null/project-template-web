@@ -93,7 +93,7 @@ environment sizes, data volume, scenario, results, the bottleneck found and what
 ## Example (reference only)
 
 k6 is one common choice; it is not part of the template. If a project adopts it, its image goes in
-`.github/tool-images/Dockerfile` pinned by digest like the other tools. A read scenario at a
+`scripts/tool-images/Dockerfile` pinned by digest like the other tools. A read scenario at a
 constant rate, with the token obtained once per run:
 
 ```js
