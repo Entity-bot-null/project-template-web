@@ -465,10 +465,11 @@ other platform, implement the release job in this order (the VPS target follows 
    (docs/incident-response.md#10-failed-database-migration).
 4. **Roll out `api`, then `web`**, letting the platform wait for readiness
    (`GET /api/health/ready` on the API itself; the web server does not expose it).
-5. **Smoke test:** `node scripts/smoke-test.mjs --url <public URL> --api <API URL inside the
-platform> --release <sha>` checks the public side (web server, the landing in both languages
-   with its links on the deployment's origin, the not-found page, the app shell under `/app/` and
-   its security headers, the redirect of links emailed before `/app/`, runtime configuration of the
+5. **Smoke test:**
+   `node scripts/smoke-test.mjs --url <public URL> --api <API URL inside the platform> --release <sha>`
+   checks the public side (web server, the landing in both languages with its links and share
+   picture on the deployment's origin, the not-found page, the app shell under `/app/` and its
+   security headers, the redirect of links emailed before `/app/`, runtime configuration of the
    expected release, the API through the proxy, probes not public) and the API's liveness and
    readiness. Read-only: it signs nobody in.
 6. **On failure, roll back** to the digests recorded in step 2.

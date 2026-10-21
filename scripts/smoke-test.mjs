@@ -8,7 +8,9 @@
 // Through the public URL (--url), what users get:
 //   GET /healthz             200: the web server serves
 //   GET /                    200 HTML with the security headers: the landing,
-//                            its links on this deployment's origin
+//                            its links and share picture on this deployment's
+//                            origin
+//   GET /og.png              200 PNG: that picture
 //   GET /es/                 200: the landing in Spanish
 //   GET /<unknown>           404 with the not-found page and the headers
 //   GET /app/                200: the app shell, deep links too
@@ -123,7 +125,18 @@ if (site !== undefined) {
     if (body.includes('public-origin.invalid')) throw new Error('links on the build placeholder');
     const canonical = /<link rel="canonical" href="([^"]+)"/.exec(body)?.[1];
     if (canonical === undefined) throw new Error('no canonical link');
+    const picture = /<meta property="og:image" content="([^"]+)"/.exec(body)?.[1];
+    if (picture === undefined) throw new Error('no share picture (og:image)');
+    if (new URL(picture).origin !== new URL(canonical).origin) {
+      throw new Error(`share picture on another origin: ${picture}`);
+    }
     return `canonical ${canonical}`;
+  });
+
+  await expect('share picture', `${site}/og.png`, (response) => {
+    status(response, 200);
+    const type = response.headers.get('content-type') ?? '';
+    if (!type.startsWith('image/png')) throw new Error(`content-type ${type}, expected image/png`);
   });
 
   await expect('landing in Spanish', `${site}/es/`, (response, body) => {

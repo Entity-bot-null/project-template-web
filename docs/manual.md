@@ -747,17 +747,18 @@ release tag, a branch or a commit SHA on `main`). Staging first; verify; then th
 pnpm smoke --url https://<public host> --api http://<api inside the platform>:3000 --release <sha>
 ```
 
-| Check                           | Passes when                                                                                                                                    |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| web server health               | `/healthz` answers 200                                                                                                                         |
-| landing                         | `/` is the landing, its links on this deployment's origin (`APP_ORIGIN`), with the CSP and `X-Content-Type-Options` headers; `/es/` in Spanish |
-| not-found page                  | an unknown address answers 404 with the not-found page                                                                                         |
-| app shell                       | `/app/` and a deep link under it are the app                                                                                                   |
-| emailed links of before `/app/` | `/reset-password` redirects to `/app/reset-password`                                                                                           |
-| runtime configuration           | `/app/app-config.json` answers, with the expected release when `--release` is given                                                            |
-| API through the web server      | an unknown `/api/...` route answers the API's JSON 404 with a request id                                                                       |
-| probes not public               | `/api/health/ready` answers 404 through the public URL                                                                                         |
-| API liveness and readiness      | 200 on the API itself (`degraded` is reported, not a failure)                                                                                  |
+| Check                           | Passes when                                                                                                                                                      |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| web server health               | `/healthz` answers 200                                                                                                                                           |
+| landing                         | `/` is the landing, its links and share picture on this deployment's origin (`APP_ORIGIN`), with the CSP and `X-Content-Type-Options` headers; `/es/` in Spanish |
+| share picture                   | `/og.png` answers 200 as a PNG                                                                                                                                   |
+| not-found page                  | an unknown address answers 404 with the not-found page                                                                                                           |
+| app shell                       | `/app/` and a deep link under it are the app                                                                                                                     |
+| emailed links of before `/app/` | `/reset-password` redirects to `/app/reset-password`                                                                                                             |
+| runtime configuration           | `/app/app-config.json` answers, with the expected release when `--release` is given                                                                              |
+| API through the web server      | an unknown `/api/...` route answers the API's JSON 404 with a request id                                                                                         |
+| probes not public               | `/api/health/ready` answers 404 through the public URL                                                                                                           |
+| API liveness and readiness      | 200 on the API itself (`degraded` is reported, not a failure)                                                                                                    |
 
 It signs nobody in and writes nothing; any failure exits with status 1. Either URL can be left out
 to check one side only.
