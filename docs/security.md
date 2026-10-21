@@ -667,13 +667,17 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   manager: npm, corepack and yarn are removed from the Node.js base (unused attack surface with
   advisories of their own); the operating system's package manager stays (apt in the Debian base,
   apk in the Alpine one; a distroless base would remove it too, OPCIONAL). The runtime image holds
-  the production dependencies and the compiled API; the migration image the production
-  dependencies (the Prisma CLI is one), the CLI's schema engine and the migrations, with no source
-  code and no development tools. Every image applies the operating system fixes published after
-  its base was built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web
-  image), so a fixed advisory in the base does not wait for the next base release. CI passes the
-  day as `OS_UPGRADE_DATE`, part of that step's cache key: the build cache replays an upgrade for
-  one day at most, never until the base digest changes.
+  the production dependencies and the compiled API; the migration image the production dependencies
+  (the Prisma CLI is one), the CLI's schema engine and the migrations, with no source code and no
+  development tools. That engine is the one built for OpenSSL 3 and links Debian's `libssl3`, so the
+  TLS of the migrations gets the system's fixes and the image scan sees it (the engine Prisma picks
+  on a system without OpenSSL carries its own copy, out of reach of both: the build refuses it). The
+  Prisma CLI's update check and usage data are off there (`CHECKPOINT_DISABLE=1`), in the image
+  builds and in CI. Every image applies the operating system fixes published after its base was
+  built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web image), so a
+  fixed advisory in the base does not wait for the next base release. CI passes the day as
+  `OS_UPGRADE_DATE`, part of that step's cache key: the build cache replays an upgrade for one day
+  at most, never until the base digest changes.
 - The files of an image belong to root: the user it runs as can read and run them, never change
   them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
   - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`,
