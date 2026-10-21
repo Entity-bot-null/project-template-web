@@ -12,6 +12,8 @@ export interface MailOptions {
   from: MailAddress | undefined;
   /** The public origin links in messages point to (APP_ORIGIN). */
   appOrigin: string | undefined;
+  /** Where the web app is served under that origin (APP_BASE_PATH): /app, or / at the root. */
+  appBasePath: string;
   maxAttempts: number;
   dailyLimitPerAddress: number;
   /** Production refuses an unencrypted connection: STARTTLS is required on smtp://. */

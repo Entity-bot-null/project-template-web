@@ -41,7 +41,7 @@ function txWith({
   return { tx, client: tx as unknown as Prisma.TransactionClient };
 }
 
-const context = { product: 'Acme', appOrigin: 'https://app.acme.test' };
+const context = { product: 'Acme', appUrl: 'https://app.acme.test/app' };
 
 describe('the sign-up confirmation message', () => {
   it('mints its token when it is sent, after # in a link to the configured origin, only its hash stored', async () => {
@@ -52,7 +52,7 @@ describe('the sign-up confirmation message', () => {
       message: message(),
       ...context,
     });
-    const token = /https:\/\/app\.acme\.test\/confirm-sign-up#token=([A-Za-z0-9_-]{43})/.exec(
+    const token = /https:\/\/app\.acme\.test\/app\/confirm-sign-up#token=([A-Za-z0-9_-]{43})/.exec(
       rendered?.text ?? '',
     )?.[1];
     expect(token).toBeDefined();
@@ -98,7 +98,7 @@ describe('the notice to an existing account', () => {
     });
     expect(rendered?.subject).toBe('Your Acme account already exists');
     expect(rendered?.text).toContain('No new account was created.');
-    expect(rendered?.text).toContain('https://app.acme.test/sign-in');
+    expect(rendered?.text).toContain('https://app.acme.test/app/sign-in');
     expect(rendered?.text).not.toMatch(/token=/);
     expect(signUpExistingTemplate.limited).toBe(true);
   });

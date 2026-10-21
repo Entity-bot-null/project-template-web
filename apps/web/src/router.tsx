@@ -8,6 +8,17 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { RouteErrorPage } from './pages/RouteErrorPage';
 import { SignInPage } from './pages/SignInPage';
 
+/** A build's base (`/app/`) as a router basename (`/app`); `/` stays `/`. */
+export function basenameFrom(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '') || '/';
+}
+
+/**
+ * Where the app is served on the site's origin: the build's base (/app/ in
+ * vite.config.ts; the specs run at /). Every route below is relative to it.
+ */
+export const BASENAME = basenameFrom(import.meta.env.BASE_URL);
+
 // Every route, guarded as a layout route. Add a screen by placing its route
 // under the guard it needs; the matching API routes need @Auth() as well, and
 // its pattern goes in the API's Web Vitals pages (WEB_VITALS_ROUTES, in

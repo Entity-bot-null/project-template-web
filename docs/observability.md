@@ -184,8 +184,8 @@ before it leaves (`scrubEvent`), with the same redaction as the logs.
    keep their quotas and permissions apart.
 2. API: `SENTRY_DSN` (and optionally `SENTRY_SAMPLE_RATE`), from the platform's secret store.
 3. Web: `WEB_SENTRY_DSN` on the web container (public by design: it only allows sending events).
-   The web server serves it to the app in `/app-config.json` and adds Sentry's ingest origin to the
-   CSP `connect-src`, nothing else.
+   The web server serves it to the app in `/app/app-config.json` and adds Sentry's ingest origin to
+   the CSP `connect-src`, nothing else.
 4. Set `APP_ENVIRONMENT` on both, and deploy images built by CI (the release is baked in).
 
 | Environment | API                                                                 | Web                                                  |

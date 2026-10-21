@@ -26,6 +26,11 @@ matches() {
   printf '%s' "$1" | grep -Eq "$2"
 }
 
+# Required: the site's public origin, written into the landing's absolute
+# links (canonical and alternate links, sitemap, robots.txt) as they are
+# served. A wrong one sends search engines elsewhere, so no default.
+matches "${APP_ORIGIN:-}" '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$' ||
+  fail APP_ORIGIN 'the public origin of the site, such as https://app.example.com: no path, no trailing slash'
 matches "${APP_ENVIRONMENT:-}" '^[a-z][a-z0-9-]{0,31}$' ||
   fail APP_ENVIRONMENT 'lowercase letters, digits and "-", starting with a letter'
 matches "${APP_RELEASE:-}" '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$' ||

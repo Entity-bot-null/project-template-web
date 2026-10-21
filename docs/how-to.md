@@ -738,7 +738,7 @@ Check: `pnpm --filter landing test`, `pnpm verify` and `pnpm build && pnpm test:
    environment or the platform's secret store, never in a committed file). A new **required**
    variable stops the API at boot until it is set: deploy the configuration first.
 
-The web app's deployment settings are set on the web container and served as `/app-config.json`
+The web app's deployment settings are set on the web container and served as `/app/app-config.json`
 (docs/environment.md#web-variables); a `VITE_*` variable is public (compiled into the bundle).
 
 ## Add a role
@@ -974,7 +974,7 @@ the transaction of the change it reports, never send it from the request.
 2. API: `SENTRY_DSN` from the secret store. Web: `WEB_SENTRY_DSN` on the web container (or in the
    environment of `pnpm dev` to try it locally). `APP_ENVIRONMENT` on both.
 3. Deploy images built by CI: their release is the commit SHA.
-4. Check: the API logs `error tracking on` at boot; in the browser, `/app-config.json` shows the
+4. Check: the API logs `error tracking on` at boot; in the browser, `/app/app-config.json` shows the
    DSN and the CSP header allows Sentry's ingest host. Then set alert rules in Sentry
    (docs/observability.md#alerting).
 

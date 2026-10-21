@@ -11,7 +11,7 @@ import type { MailTemplate } from './registry.js';
 export const passwordResetTemplate: MailTemplate = {
   limited: true,
   ttlMs: PASSWORD_RESET_TTL_MS,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     if (message.userId === null) return null;
     const user = await tx.user.findUnique({
       where: { id: message.userId },
@@ -36,7 +36,7 @@ export const passwordResetTemplate: MailTemplate = {
         ],
         action: {
           label: 'Choose a new password',
-          url: `${appOrigin}/reset-password#token=${token}`,
+          url: `${appUrl}/reset-password#token=${token}`,
         },
         footer: ['If you did not ask for this, ignore this message: your password stays as it is.'],
       },

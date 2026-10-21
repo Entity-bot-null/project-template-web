@@ -262,7 +262,7 @@ pnpm dev
 | Abre                                                                          | Deberías ver                                                                               |
 | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | http://localhost:4321                                                         | la landing, el sitio público; sus enlaces de idioma cambian a español (`/es/`) y de vuelta |
-| http://localhost:5173                                                         | la página de inicio de sesión                                                              |
+| **Iniciar sesión** en la landing                                              | la página de inicio de sesión, en http://localhost:4321/app/sign-in                        |
 | inicia sesión como `admin@example.com` / `admin-password`                     | la app, con la sesión iniciada como Admin                                                  |
 | cierra la sesión, inicia sesión como `member@example.com` / `member-password` | la app como Member, sin las pantallas de administración                                    |
 | http://localhost:3000/api/docs                                                | la documentación de la API (Swagger)                                                       |
@@ -340,9 +340,10 @@ En una segunda terminal:
 pnpm smoke --url http://localhost:8080
 ```
 
-**Comprueba:** el smoke test termina con `Smoke test passed (public URL only).` y
-http://localhost:8080 muestra la app. El stack usa la base de datos de desarrollo (el mismo servicio
-`db` y su volumen), así que las cuentas de 3.3 también inician sesión ahí.
+**Comprueba:** el smoke test termina con `Smoke test passed (public URL only).`,
+http://localhost:8080 muestra la landing y http://localhost:8080/app/ la app. El stack usa la base
+de datos de desarrollo (el mismo servicio `db` y su volumen), así que las cuentas de 3.3 también
+inician sesión ahí.
 
 Páralo: `Ctrl+C`, y después `docker compose --profile stack down`.
 
@@ -766,8 +767,8 @@ Tarda 15–25 minutos la primera vez. Los jobs, en orden: Resolve the commit →
 api / api-migrate / web → Release to staging (server).
 
 **Comprueba:** la ejecución termina en verde; su resumen lista los tres digests de las imágenes; el
-último paso imprime `Smoke test passed (public URL only).`; https://staging.acme.com abre la página
-de inicio de sesión con un certificado válido (el candado).
+último paso imprime `Smoke test passed (public URL only).`; https://staging.acme.com abre la landing
+con un certificado válido (el candado).
 
 **Si falla:**
 
@@ -787,8 +788,9 @@ de inicio de sesión con un certificado válido (el candado).
 
 ### 8.2 Míralo
 
-Abre https://staging.acme.com. La página de inicio de sesión carga; nadie puede iniciar sesión
-todavía: las bases de datos de producción no tienen cuentas.
+Abre https://staging.acme.com: la landing, en inglés, y en español en `/es/`. Su **Iniciar sesión**
+lleva a https://staging.acme.com/app/sign-in; nadie puede iniciar sesión todavía: las bases de datos
+de producción no tienen cuentas.
 
 ### 8.3 Publica la primera release y despliégala en producción
 
@@ -813,7 +815,7 @@ todavía: las bases de datos de producción no tienen cuentas.
 
 **Comprueba:** las dos ejecuciones terminan en verde; producción no construye nada (su resumen lista
 los tres digests de la ejecución de staging, "built and scanned by run <su id>");
-https://app.acme.com abre la página de inicio de sesión.
+https://app.acme.com abre la landing y https://app.acme.com/app/ la página de inicio de sesión.
 
 ### 8.4 Crea el primer administrador
 
@@ -851,7 +853,7 @@ cd /srv/app
 ```
 
 **Comprueba:** imprime `rollback: running <commit de 8.1>`;
-https://staging.acme.com/app-config.json muestra ese commit como `release`; el sitio sigue
+https://staging.acme.com/app/app-config.json muestra ese commit como `release`; el sitio sigue
 funcionando.
 
 Después devuelve staging a la release con el workflow, como cualquier despliegue:
@@ -880,17 +882,17 @@ gh run watch
    docker compose --env-file server.env --env-file release.env up -d --wait api web
    ```
 
-**Comprueba:** `https://app.acme.com/app-config.json` muestra el DSN de la web; la línea de log de
-la API muestra `Starting release … error tracking on`
-(`docker compose --env-file server.env --env-file release.env logs api | head`).
-En Sentry, define las reglas de alerta: [alerting.md](alerting.md).
+**Comprueba:** `https://app.acme.com/app/app-config.json` muestra el DSN de la web; la línea de log
+de la API muestra `Starting release … error tracking on` (`docker compose --env-file server.env
+--env-file release.env logs api | head`). En Sentry, define las reglas de alerta:
+[alerting.md](alerting.md).
 
 ### 9.2 Uptime
 
 En tu monitor de uptime, añade dos checks, cada minuto y desde varias regiones:
 
 - `https://app.acme.com/healthz` (el servidor web),
-- `https://app.acme.com/app-config.json` (se sirve la configuración de la app).
+- `https://app.acme.com/app/app-config.json` (se sirve la configuración de la app).
 
 Envía las alertas a las personas de 0.1 (email y una notificación en el teléfono).
 

@@ -29,6 +29,15 @@ const originList = z
   )
   .pipe(z.array(origin));
 
+// A URL path of plain segments: "/" alone, or "/app", "/portal/v2", without a
+// trailing slash, a query, "." or ".." segments, or anything to escape.
+const urlPath = z
+  .string()
+  .regex(
+    /^\/$|^(?:\/[A-Za-z0-9][A-Za-z0-9._~-]*)+$/,
+    'must be "/" or a path such as /app, without a trailing slash',
+  );
+
 // Express "trust proxy": a hop count, or addresses/subnets/names.
 const trustProxy = z
   .string()
@@ -134,6 +143,11 @@ export const EnvSchema = z
     // behind a proxy that does not pass the client's Host (the web image),
     // nothing else tells the API its public origin.
     APP_ORIGIN: optional(origin),
+    // Where the web app is served under APP_ORIGIN: links in emails are
+    // APP_ORIGIN + APP_BASE_PATH + the screen. The web image serves the app
+    // at /app/ (apps/web: Vite's base, the router's basename, nginx): change
+    // them together. "/" for an app served at the root of its origin.
+    APP_BASE_PATH: emptyAsUnset(urlPath.default('/app')),
     // Which proxy hops may set X-Forwarded-For (client IP for rate limits and
     // logs). Required in production, where the right value depends on the
     // topology and a wrong one lets clients choose their own IP; loopback

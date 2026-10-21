@@ -16,7 +16,7 @@ export type SignUpConfirmationPayload = z.infer<typeof SignUpConfirmationPayload
 export const signUpConfirmationTemplate: MailTemplate = {
   limited: true,
   ttlMs: SIGN_UP_TTL_MS,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     const payload = SignUpConfirmationPayloadSchema.safeParse(message.payload);
     if (!payload.success) return null;
     const signUp = await tx.signUp.findUnique({
@@ -47,7 +47,7 @@ export const signUpConfirmationTemplate: MailTemplate = {
         ],
         action: {
           label: 'Confirm my account',
-          url: `${appOrigin}/confirm-sign-up#token=${token}`,
+          url: `${appUrl}/confirm-sign-up#token=${token}`,
         },
         footer: [
           'If you did not ask for this, ignore this message: no account is created without the password chosen at sign-up.',

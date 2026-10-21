@@ -31,7 +31,7 @@ import type { MailTransport, MailTransportFactory } from './mail.transport.js';
 import type { ClaimedMessage, MailOptions, OutgoingMail } from './mail.types.js';
 import { retryDelayMs } from './retry-delay.js';
 import { classifyDeliveryError, type DeliveryFailure } from './smtp-errors.js';
-import { type MailTemplates, productName } from './templates/registry.js';
+import { appUrl, type MailTemplates, productName } from './templates/registry.js';
 
 /** disabled: not configured. ok: delivering. degraded: deliveries failing, or a backlog. */
 export type MailHealth = 'ok' | 'degraded' | 'disabled';
@@ -240,8 +240,9 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     if (appOrigin === undefined) throw new Error('APP_ORIGIN is not set');
     const template = this.templates[claimed.kind];
     const product = productName(this.options);
+    const url = appUrl(appOrigin, this.options.appBasePath);
     const rendered = await this.store.inTransaction((tx) =>
-      template.compose({ tx, message: claimed, product, appOrigin }),
+      template.compose({ tx, message: claimed, product, appUrl: url }),
     );
     return rendered === null ? null : { id: claimed.id, to: claimed.recipient, ...rendered };
   }

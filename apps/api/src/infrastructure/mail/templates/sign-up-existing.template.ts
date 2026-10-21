@@ -9,7 +9,7 @@ import type { MailTemplate } from './registry.js';
 export const signUpExistingTemplate: MailTemplate = {
   limited: true,
   ttlMs: 24 * 60 * 60_000,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     if (message.userId === null) return null;
     const user = await tx.user.findUnique({
       where: { id: message.userId },
@@ -25,7 +25,7 @@ export const signUpExistingTemplate: MailTemplate = {
           `Someone tried to create an account on ${product} with this address, which already has one. No new account was created.`,
           'To get in, sign in with your password; if you forgot it, choose "Forgot your password?" on the sign-in page.',
         ],
-        action: { label: 'Sign in', url: `${appOrigin}/sign-in` },
+        action: { label: 'Sign in', url: `${appUrl}/sign-in` },
         footer: ['If you did not try to sign up, ignore this message: your account is unchanged.'],
       },
       product,

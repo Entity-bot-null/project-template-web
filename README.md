@@ -39,11 +39,11 @@ OpenTelemetry backend and Redis are optional and off by default.
 pnpm install
 cp apps/api/.env.example apps/api/.env      # then set JWT_ACCESS_SECRET (openssl rand -hex 32)
 pnpm db:up && pnpm db:migrate && pnpm db:seed
-pnpm dev                                    # landing http://localhost:4321, web http://localhost:5173, API http://localhost:3000/api/docs, email http://localhost:8035
+pnpm dev                                    # site http://localhost:4321 (the app at /app/), API http://localhost:3000/api/docs, email http://localhost:8035
 ```
 
-Sign in with `admin@example.com` / `admin-password` or `member@example.com` / `member-password`
-(development seed only).
+Follow **Sign in** on the landing and sign in with `admin@example.com` / `admin-password` or
+`member@example.com` / `member-password` (development seed only).
 
 ## Commands
 

@@ -28,7 +28,7 @@ a share of users degraded (CRITICAL or persistent WARNING); SEV3 = minor, no use
 1. **Acknowledge** the alert and open an incident record: time, who, the alert, the link to the
    dashboard. Every later step goes in it with its time.
 2. **What changed?** The latest deployments (Deploy workflow runs; the `release` field of the log
-   lines and `/app-config.json` say which commit is running), configuration or secret changes,
+   lines and `/app/app-config.json` say which commit is running), configuration or secret changes,
    migrations, provider maintenance.
 3. **How big?** Readiness of each instance, the 5xx rate by `error.origin` and `http.route`, uptime
    checks, Sentry's users per issue.
@@ -44,7 +44,7 @@ a share of users degraded (CRITICAL or persistent WARNING); SEV3 = minor, no use
 | Is the public side up?        | `pnpm smoke --url <public URL>` (read-only; add `--api <API URL>` from inside the platform)                                                |
 | What happened to one request? | The `X-Request-Id` the client got: the log lines with that `requestId`, its Sentry report (`request_id` tag), its trace (`app.request_id`) |
 | Where do the 5xx come from?   | `app_server_errors_total` by `error_origin` and `http_route`; the error line `METHOD /path -> 5xx (request <id>, <origin>)`                |
-| Which version is running?     | `release` on the log lines and spans (`service.version`), `release` in `/app-config.json` for the web image                                |
+| Which version is running?     | `release` on the log lines and spans (`service.version`), `release` in `/app/app-config.json` for the web image                            |
 | Is the database the problem?  | Readiness `Database unreachable`, `error.origin=database`, `db_client_connection_*` pool metrics, `Slow query` warnings                    |
 | Is Redis the problem?         | Readiness `checks.redis`, `Redis unavailable`, `Redis is not answering` and the matching recovery lines, `app_degraded_operations_total`   |
 | The overall picture?          | Grafana → Application: "API service" (traffic, errors by origin, runtime, database, Redis, dependencies), "API SLOs" (budget, burn rates)  |
@@ -424,10 +424,10 @@ time`) on the routes that call a provider; 5xx lines ending `dependency: <name>)
 - **Impact:** slower, less usable pages for a quarter or more of their visits, and lower search
   ranking if it lasts; nothing is down.
 - **First checks:** on the "Web Vitals" dashboard, which pages and since when; whether it started
-  with a release (`release` in `/app-config.json`); the navigation types (a cold `navigate` versus
-  `back-forward-cache`); LCP together with TTFB and FCP: a high TTFB is the server or the network
-  (the API's latency on the "API service" dashboard, nginx), a high FCP with a normal TTFB is
-  render-blocking JavaScript or CSS (`pnpm perf:check`, the bundle budget), a late LCP alone is
+  with a release (`release` in `/app/app-config.json`); the navigation types (a cold `navigate`
+  versus `back-forward-cache`); LCP together with TTFB and FCP: a high TTFB is the server or the
+  network (the API's latency on the "API service" dashboard, nginx), a high FCP with a normal TTFB
+  is render-blocking JavaScript or CSS (`pnpm perf:check`, the bundle budget), a late LCP alone is
   the page's main content (an API call it waits for, a large image).
 - **Immediate actions:** none urgent. If it started with a release and is severe, roll back.
 - **Mitigation:** INP: long tasks in event handlers (split the work, defer what is not visible);

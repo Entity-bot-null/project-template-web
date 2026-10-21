@@ -18,7 +18,7 @@ export type PasswordChangedPayload = z.infer<typeof PasswordChangedPayloadSchema
 export const passwordChangedTemplate: MailTemplate = {
   limited: false,
   ttlMs: 24 * 60 * 60_000,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     if (message.userId === null) return null;
     const user = await tx.user.findUnique({ where: { id: message.userId }, select: { id: true } });
     if (user === null) return null;
@@ -35,7 +35,7 @@ export const passwordChangedTemplate: MailTemplate = {
         subject: `Your ${product} password was changed`,
         heading: 'Your password was changed',
         paragraphs: [`The password of your ${product} account was changed ${when}.`, sessions],
-        action: { label: 'Not you? Reset your password', url: `${appOrigin}/forgot-password` },
+        action: { label: 'Not you? Reset your password', url: `${appUrl}/forgot-password` },
         footer: [
           'If you made this change, there is nothing to do.',
           'If you did not, reset your password with the button above right away, then review your account.',

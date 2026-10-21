@@ -2,8 +2,9 @@
 // (`node --test scripts/validate-runtime-config.test.mjs`): the real script,
 // run with sh as the web image's entrypoint runs it, against valid and invalid
 // runtime settings. The values end up inside JSON in nginx's `return 200 '…'`
-// (default.conf.template): a newline, a quote, a backslash or a `$` must stop
-// the container with the variable's name, never pass.
+// and inside nginx strings (default.conf.template): a newline, a quote, a
+// backslash or a `$` must stop the container with the variable's name, never
+// pass.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -25,8 +26,9 @@ function findShell() {
 }
 const SH = findShell();
 
-/** What the image sets, plus what 15-local-resolvers.envsh exports. */
+/** What the image sets, a deployment's APP_ORIGIN, and what 15-local-resolvers.envsh exports. */
 const VALID = {
+  APP_ORIGIN: 'https://app.example.com',
   APP_ENVIRONMENT: 'production',
   APP_RELEASE: '3f2c1a9',
   WEB_SENTRY_DSN: '',
@@ -65,8 +67,11 @@ function assertRefused(name, value) {
 }
 
 describe('18-validate-runtime-config.sh', () => {
-  test('accepts the image defaults and well-formed values', () => {
+  test('accepts the image defaults with an origin, and well-formed values', () => {
     assert.deepEqual(validate(), { status: 0, stderr: '' });
+    for (const origin of ['http://localhost:8080', 'https://www.example.co.uk:8443']) {
+      assert.equal(validate({ APP_ORIGIN: origin }).status, 0, origin);
+    }
     assert.equal(
       validate({
         APP_ENVIRONMENT: 'staging-eu',
@@ -88,6 +93,7 @@ describe('18-validate-runtime-config.sh', () => {
     assertRefused('WEB_SENTRY_SAMPLE_RATE', '1\nevil');
     assertRefused('WEB_VITALS_SAMPLE_RATE', '0.5\nevil');
     assertRefused('APP_RELEASE', 'abc\revil');
+    assertRefused('APP_ORIGIN', 'https://app.example.com\nevil');
   });
 
   test('refuses quotes, backslashes and $ that would break the JSON or the nginx string', () => {
@@ -97,6 +103,22 @@ describe('18-validate-runtime-config.sh', () => {
       assertRefused('WEB_SENTRY_DSN', `https://0123abcd@o42.ingest.sentry.io/4504${character}evil`);
       assertRefused('WEB_SENTRY_SAMPLE_RATE', `1${character}`);
       assertRefused('WEB_VITALS_SAMPLE_RATE', `1${character}`);
+      assertRefused('APP_ORIGIN', `https://app.example.com${character}evil`);
+    }
+  });
+
+  test('refuses to start without the public origin, or with more than an origin', () => {
+    // The image's default: a deployment must say where the site is.
+    assertRefused('APP_ORIGIN', '');
+    for (const value of [
+      'app.example.com',
+      'ftp://app.example.com',
+      'https://app.example.com/',
+      'https://app.example.com/app',
+      'https://app.example.com?evil',
+      'https://user@app.example.com',
+    ]) {
+      assertRefused('APP_ORIGIN', value);
     }
   });
 

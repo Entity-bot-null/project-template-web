@@ -1,6 +1,6 @@
 # Reference deployment on one Linux server with Docker (docs/deploy-vps.md):
 # Caddy terminates TLS (automatic certificates) and forwards to the web image,
-# which serves the app and forwards /api to the API. The database is a managed
+# which serves the landing at /, the app at /app/ and forwards /api to the API. The database is a managed
 # PostgreSQL outside this file (backups, point-in-time recovery).
 #
 # The images come from the registry by digest, written by deploy.sh into
@@ -97,6 +97,9 @@ services:
     env_file: web.env
     environment:
       API_UPSTREAM: http://api:3000
+      # The public origin, written into the landing's absolute links (its
+      # canonical and alternate links, sitemap and robots.txt).
+      APP_ORIGIN: https://${APP_DOMAIN}
     volumes:
       # The client address comes from Caddy's X-Forwarded-For (the realip
       # module), not from the connection: otherwise every user would look

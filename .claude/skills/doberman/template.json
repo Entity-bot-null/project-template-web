@@ -212,13 +212,14 @@
     {
       "id": "images",
       "name": "Container images (build + Trivy scan)",
-      "command": "per .github/workflows/docker-images.yml: docker build of apps/api/Dockerfile (targets runtime and migrate) and apps/web/Dockerfile (target runtime), tagged doberman-scan/<image>, then the Trivy scan of each with `node scripts/tool-image.mjs trivy` and the workflow's flags; remove the doberman-scan images afterwards",
+      "command": "per .github/workflows/docker-images.yml: docker build of apps/api/Dockerfile (targets runtime and migrate) and apps/web/Dockerfile (target runtime: the landing and the app), tagged doberman-scan/<image>, then the Trivy scan of each with `node scripts/tool-image.mjs trivy` and the workflow's flags; remove the doberman-scan images afterwards",
       "source": ".github/workflows/docker-images.yml (called by quality-gates.yml › Images)",
       "required": true,
       "when": "paths",
       "paths": [
         "apps/*/Dockerfile",
         "apps/web/nginx/**",
+        "apps/landing/**",
         ".dockerignore",
         "package.json",
         "apps/*/package.json",

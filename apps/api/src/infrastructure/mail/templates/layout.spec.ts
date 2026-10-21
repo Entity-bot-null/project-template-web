@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Prisma } from '../../../prisma/generated/client.js';
 import type { ClaimedMessage } from '../mail.types.js';
 import { escapeHtml, renderMail } from './layout.js';
-import { productName } from './registry.js';
+import { appUrl, productName } from './registry.js';
 import { testTemplate } from './test.template.js';
 
 const content = {
@@ -75,6 +75,16 @@ describe('productName', () => {
   });
 });
 
+describe('appUrl', () => {
+  it("is the web app's address: its origin, then its path when it has one", () => {
+    expect(appUrl('https://app.acme.test', '/app')).toBe('https://app.acme.test/app');
+    expect(appUrl('https://app.acme.test:8443', '/portal/v2')).toBe(
+      'https://app.acme.test:8443/portal/v2',
+    );
+    expect(appUrl('https://app.acme.test', '/')).toBe('https://app.acme.test');
+  });
+});
+
 describe('the test template', () => {
   it('names the message and the product, links nowhere, and is not limited (an operator sends it)', async () => {
     const message: ClaimedMessage = {
@@ -92,7 +102,7 @@ describe('the test template', () => {
       tx: {} as Prisma.TransactionClient,
       message,
       product: 'Acme',
-      appOrigin: 'https://app.acme.test',
+      appUrl: 'https://app.acme.test/app',
     });
     expect(rendered?.subject).toBe('Test message from Acme');
     expect(rendered?.text).toContain(message.id);
