@@ -1,7 +1,7 @@
 {
   "$comment": "What doberman knows about this template: how to recognize it, its gates, its risk areas. scripts/doberman.mjs reads it; keep it in step with package.json, .github/workflows/quality-gates.yml and docs/testing.md.",
   "template": "WEB",
-  "displayName": "Golden Template Web (NestJS API + React SPA)",
+  "displayName": "Golden Template Web (NestJS API, React SPA and Astro landing)",
   "detection": {
     "required": [
       {
@@ -30,6 +30,10 @@
       {
         "dependency": "openapi-fetch",
         "package": "apps/web/package.json"
+      },
+      {
+        "dependency": "astro",
+        "package": "apps/landing/package.json"
       },
       {
         "dependency": "zod",
@@ -85,7 +89,7 @@
       "tags": ["static"]
     },
     "typecheck": {
-      "name": "Typecheck (web contract types check included)",
+      "name": "Typecheck (web contract types check and astro check included)",
       "tags": ["static"]
     },
     "test:coverage": {
@@ -98,11 +102,11 @@
       "requires": ["network"]
     },
     "build": {
-      "name": "Build (API + web)",
+      "name": "Build (API, web and landing)",
       "tags": ["build"]
     },
     "perf:check": {
-      "name": "Performance budget",
+      "name": "Performance budgets (web and landing)",
       "tags": ["build"]
     }
   },
@@ -203,7 +207,7 @@
       "when": "always",
       "requires": ["database", "browser"],
       "tags": ["tests"],
-      "note": "Playwright starts the API (e2e:server, on <db>_e2e) and the web preview itself. Installing the browser is the developer's decision: without it, SKIPPED — REQUIRES CONFIGURATION (`pnpm exec playwright install chromium`)."
+      "note": "Playwright starts the API (e2e:server, on <db>_e2e), the web preview and the landing preview itself. Installing the browser is the developer's decision: without it, SKIPPED — REQUIRES CONFIGURATION (`pnpm exec playwright install chromium`)."
     },
     {
       "id": "images",
@@ -309,6 +313,12 @@
       "docs": ["docs/architecture.md", "docs/error-handling.md"]
     },
     {
+      "id": "landing",
+      "paths": ["apps/landing/**"],
+      "focus": "every text in both dictionaries (src/i18n), a page per language; static HTML and CSS only (no client script, no inline style, nothing from another origin: the CSP refuses them; 0 kB JavaScript budget); one h1, headings, landmarks, lang attributes, labelled pictures of the app; links into the app through src/lib/links.ts; canonical, hreflang, sitemap and robots.txt from the build site",
+      "docs": ["docs/architecture.md", "docs/how-to.md"]
+    },
+    {
       "id": "config",
       "paths": [
         "apps/api/src/env/**",
@@ -398,6 +408,9 @@
         "apps/*/vitest.config*.ts",
         "apps/web/vite.config.ts",
         "apps/web/performance-budget.json",
+        "apps/landing/performance-budget.json",
+        "apps/landing/astro.config.mjs",
+        "apps/landing/scripts/**",
         "playwright.config.ts",
         ".semgrepignore",
         ".secretlintrc.json",
@@ -428,11 +441,14 @@
   "artifacts": [
     "apps/api/coverage",
     "apps/web/coverage",
+    "apps/landing/coverage",
     "playwright-report",
     "test-results",
     "blob-report",
     "apps/api/dist",
     "apps/web/dist",
+    "apps/landing/dist",
+    "apps/landing/.astro",
     "dist"
   ],
   "coverage": {
@@ -444,9 +460,18 @@
       {
         "file": "apps/web/coverage/lcov.info",
         "base": "apps/web"
+      },
+      {
+        "file": "apps/landing/coverage/lcov.info",
+        "base": "apps/landing"
       }
     ],
-    "include": ["apps/api/src/**/*.ts", "apps/web/src/**/*.ts", "apps/web/src/**/*.tsx"],
+    "include": [
+      "apps/api/src/**/*.ts",
+      "apps/web/src/**/*.ts",
+      "apps/web/src/**/*.tsx",
+      "apps/landing/src/**/*.ts"
+    ],
     "exclude": [
       "apps/**/*.spec.ts",
       "apps/**/*.spec.tsx",
@@ -458,8 +483,8 @@
   },
   "reproduction": {
     "fileSuffix": ".doberman.spec.ts(x) for unit and component tests, .doberman.int.spec.ts for API integration",
-    "location": "next to the code under test: apps/web/src/** or apps/api/src/** (each runner only collects its app's src/)",
-    "runOne": "web: pnpm --filter web exec vitest run --coverage=false <path from apps/web> · API unit: pnpm --filter api exec vitest run <path from apps/api> · API integration (database): pnpm --filter api exec vitest run --config vitest.config.int.ts <path from apps/api>",
+    "location": "next to the code under test: apps/web/src/**, apps/landing/src/** (not src/pages, where a file becomes a page) or apps/api/src/** (each runner only collects its app's src/)",
+    "runOne": "web: pnpm --filter web exec vitest run --coverage=false <path from apps/web> · landing: pnpm --filter landing exec vitest run --coverage=false <path from apps/landing> · API unit: pnpm --filter api exec vitest run <path from apps/api> · API integration (database): pnpm --filter api exec vitest run --config vitest.config.int.ts <path from apps/api>",
     "guide": "reference/reproduction.md"
   }
 }

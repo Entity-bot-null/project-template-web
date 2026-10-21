@@ -1,0 +1,36 @@
+---
+// A two-line headline whose lines rise into place, each from behind its own
+// baseline: on load for the first screen, as it scrolls in further down. The
+// lines are the dictionary's, so they break where the words read best in
+// each language.
+import type { TwoLines } from '../i18n';
+
+interface Props {
+  lines: TwoLines;
+  /** The heading level: one h1 per page, h2 below it. */
+  as: 'h1' | 'h2';
+  id?: string;
+  /** When the lines rise: on load (the first screen) or as they scroll in. */
+  motion?: 'load' | 'scroll';
+  class?: string;
+}
+
+const { lines, as: Tag, id, motion = 'load', class: className } = Astro.props;
+---
+
+<Tag
+  id={id}
+  class:list={[
+    'text-display font-extrabold text-balance',
+    { 'reveal-lines': motion === 'scroll' },
+    className,
+  ]}
+>
+  <span class="-mb-[0.08em] block overflow-clip pb-[0.08em]">
+    <span class="reveal-line block [--i:0]">{lines[0]}</span>
+  </span>
+  {/* A space between the lines, for screen readers and copied text. */}{' '}
+  <span class="-mb-[0.08em] block overflow-clip pb-[0.08em]">
+    <span class="reveal-line block [--i:1]">{lines[1]}</span>
+  </span>
+</Tag>

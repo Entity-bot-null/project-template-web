@@ -21,6 +21,8 @@
 # /apps/api/src/app.module.ts    @your-org/security-reviewers
 # /apps/web/src/auth/            @your-org/security-reviewers
 # /apps/web/nginx/               @your-org/security-reviewers
+# The public site: its copy, in both languages, and its look.
+# /apps/landing/                 @your-org/frontend
 # Schema and migrations.
 # /apps/api/prisma/              @your-org/backend
 # /openapi/                      @your-org/backend @your-org/frontend

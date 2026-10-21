@@ -7,8 +7,9 @@ dist/
 dist-dev/
 *.tsbuildinfo
 
-# Generated at install/build time (prisma generate)
+# Generated at install/build time (prisma generate, astro sync)
 apps/api/src/prisma/generated/
+.astro/
 
 # Test output and reports
 coverage/

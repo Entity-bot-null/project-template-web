@@ -1,0 +1,10 @@
+{
+  // Astro's strict settings (its module resolution, .astro files), then the
+  // repository's TypeScript rules (tsconfig.base.json), the same in every app.
+  "extends": ["astro/tsconfigs/strict", "../../tsconfig.base.json"],
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist", "coverage"]
+}

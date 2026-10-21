@@ -1,0 +1,29 @@
+{
+  "name": "landing",
+  "version": "1.2.1",
+  "private": true,
+  "description": "Public website: Astro and Tailwind CSS, in English and Spanish, built to static files.",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/astro.mjs dev",
+    "build": "node scripts/astro.mjs check --minimumFailingSeverity warning && node scripts/astro.mjs build",
+    "preview": "node scripts/astro.mjs preview",
+    "typecheck": "node scripts/astro.mjs check --minimumFailingSeverity warning",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@astrojs/sitemap": "^3.7.4",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.19.2",
+    "@vitest/coverage-v8": "^5.0.4",
+    "astro": "^7.3.8",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.4"
+  }
+}

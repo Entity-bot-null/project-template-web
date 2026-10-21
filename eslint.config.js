@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import prettier from 'eslint-config-prettier/flat';
+import astro from 'eslint-plugin-astro';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
@@ -33,6 +34,8 @@ export default defineConfig(
     'test-results/',
     'apps/api/src/prisma/generated/',
     'apps/web/src/api/schema.d.ts',
+    // Types Astro generates (astro sync).
+    '**/.astro/',
   ]),
 
   js.configs.recommended,
@@ -175,6 +178,26 @@ export default defineConfig(
     rules: { 'no-restricted-imports': 'off' },
   },
 
+  // Landing: Astro components, rendered to HTML at build time in Node.js.
+  // Their markup is checked for accessibility (jsx-a11y rules); their types
+  // by `astro check` (pnpm typecheck), since the TypeScript project service
+  // that type-aware rules need does not read .astro files.
+  ...astro.configs['flat/recommended'],
+  ...astro.configs['flat/jsx-a11y-recommended'],
+  {
+    files: ['**/*.astro'],
+    extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    files: ['apps/landing/**/*.{ts,astro}'],
+    languageOptions: { globals: globals.node },
+    rules: {
+      // role="list" on a list without bullets is deliberate: Safari drops the
+      // list semantics of a <ul> or <ol> styled with list-style: none.
+      'astro/jsx-a11y/no-redundant-roles': ['error', { ul: ['list'], ol: ['list'] }],
+    },
+  },
+
   // Tests: mocks and fixtures need some latitude.
   {
     files: ['**/*.spec.{ts,tsx}', 'apps/api/test/**', 'e2e/**'],
@@ -199,6 +222,8 @@ export default defineConfig(
       'apps/api/*.config.ts',
       'apps/web/vite.config.ts',
       'apps/web/scripts/**',
+      'apps/landing/astro.config.mjs',
+      'apps/landing/scripts/**',
       'scripts/**',
       'e2e/**',
       'playwright.config.ts',
