@@ -35,9 +35,10 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      // The built SPA, with /api forwarded to the API above: one origin, as in production.
+      // The built SPA under /app/, with /api forwarded to the API above: one
+      // origin, as in production. The specs open /app/... on it.
       command: 'pnpm --filter web preview',
-      url: WEB_URL,
+      url: `${WEB_URL}/app/`,
       env: { API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}` },
       timeout: 60_000,
       reuseExistingServer: false,

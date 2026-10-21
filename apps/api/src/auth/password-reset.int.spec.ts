@@ -84,7 +84,7 @@ describe.skipIf(skipWithoutMailpit)('password reset (PostgreSQL + Mailpit)', () 
     const [message] = await messagesTo(ada.email);
     const { text } = await readMessage(message?.ID ?? '');
     // The link points at the configured public origin, never at a request's Host.
-    expect(text).toContain(`https://app.example.com/reset-password#token=${token}`);
+    expect(text).toContain(`https://app.example.com/app/reset-password#token=${token}`);
     expect(JSON.stringify(await t.prisma.mailMessage.findMany())).not.toContain(token);
     expect(JSON.stringify(await t.prisma.accountToken.findMany())).not.toContain(token);
 

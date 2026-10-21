@@ -20,7 +20,7 @@ test.afterEach(async () => {
 });
 
 async function signIn(page: Page, email: string, password: string) {
-  await page.goto('/sign-in');
+  await page.goto('/app/sign-in');
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -45,7 +45,7 @@ test.describe('with email', () => {
     page,
   }) => {
     const ada = account('Adeline Byron');
-    await page.goto('/sign-in');
+    await page.goto('/app/sign-in');
     await page.getByRole('link', { name: 'Forgot your password?' }).click();
     // Loaded when opened: the sign-in page stays on screen until it is.
     await expect(page.getByRole('heading', { name: 'Forgot your password?' })).toBeVisible();
@@ -54,7 +54,9 @@ test.describe('with email', () => {
     await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
 
     const text = await waitForMessage(ada.email, 'Reset your App password');
-    const link = /http:\/\/localhost:4173\/reset-password#token=[A-Za-z0-9_-]{43}/.exec(text)?.[0];
+    const link = /http:\/\/localhost:4173\/app\/reset-password#token=[A-Za-z0-9_-]{43}/.exec(
+      text,
+    )?.[0];
     expect(link, 'the reset link in the message').toBeDefined();
 
     await page.goto(link ?? '');
@@ -113,7 +115,7 @@ test('offers no recovery and no sign-up where email is off', async ({ page }) =>
     }),
   );
   const answered = page.waitForResponse('**/api/auth/capabilities');
-  await page.goto('/sign-in');
+  await page.goto('/app/sign-in');
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await answered;
   await expect(page.getByRole('link', { name: 'Forgot your password?' })).toHaveCount(0);

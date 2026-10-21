@@ -9,20 +9,23 @@ import { gzipSync } from 'node:zlib';
 
 /**
  * Each app with a budget: its build folder, the folder of hashed assets
- * inside it (also their URL path from the site root) and its budget file.
- * @type {{ name: string; dist: URL; assets: string; budget: URL }[]}
+ * inside it, that folder's URL path on the site (the web app is served under
+ * /app/) and its budget file.
+ * @type {{ name: string; dist: URL; assets: string; assetsPath: string; budget: URL }[]}
  */
 const APPS = [
   {
     name: 'web',
     dist: new URL('../apps/web/dist/', import.meta.url),
     assets: 'assets/',
+    assetsPath: '/app/assets/',
     budget: new URL('../apps/web/performance-budget.json', import.meta.url),
   },
   {
     name: 'landing',
     dist: new URL('../apps/landing/dist/', import.meta.url),
     assets: '_astro/',
+    assetsPath: '/_astro/',
     budget: new URL('../apps/landing/performance-budget.json', import.meta.url),
   },
 ];
@@ -125,7 +128,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       files: readdirSync(assets),
       html: readFileSync(new URL('index.html', app.dist), 'utf8'),
       gzipBytes: (file) => gzipSync(readFileSync(new URL(file, assets))).length,
-      assetsPath: `/${app.assets}`,
+      assetsPath: app.assetsPath,
     });
     for (const { ok, line } of result.lines) (ok ? console.log : console.error)(`  ${line}`);
     failed ||= result.failed;

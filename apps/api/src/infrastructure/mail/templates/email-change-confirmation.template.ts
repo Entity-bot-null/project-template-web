@@ -13,7 +13,7 @@ import type { MailTemplate } from './registry.js';
 export const emailChangeConfirmationTemplate: MailTemplate = {
   limited: true,
   ttlMs: EMAIL_CHANGE_TTL_MS,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     if (message.userId === null) return null;
     const user = await tx.user.findUnique({
       where: { id: message.userId },
@@ -45,7 +45,7 @@ export const emailChangeConfirmationTemplate: MailTemplate = {
         ],
         action: {
           label: 'Use this address',
-          url: `${appOrigin}/confirm-email-change#token=${token}`,
+          url: `${appUrl}/confirm-email-change#token=${token}`,
         },
         footer: [
           'If you did not ask for this, ignore this message: the account stays at its current address.',

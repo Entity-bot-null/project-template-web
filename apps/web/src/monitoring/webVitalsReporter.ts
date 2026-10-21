@@ -1,7 +1,7 @@
 import { matchRoutes, type RouteObject } from 'react-router';
 import { type MetricType, onCLS, onFCP, onINP, onLCP, onTTFB } from 'web-vitals';
 import type { paths } from '../api/schema';
-import { routes } from '../router';
+import { BASENAME, routes } from '../router';
 
 // The lazy half of Web Vitals (webVitals.ts loads it): measures with the
 // web-vitals library, queues the values, and sends them in one request when
@@ -25,10 +25,17 @@ export const MAX_BATCH = 10;
 /**
  * The route pattern a path matches ("/admin/users", "/" for the index, "/*"
  * for the not-found page): the page label, so ids and tokens in a path never
- * leave the browser.
+ * leave the browser. `pathname` is the document's, under `basename` (the
+ * app's /app); a path outside it is no page of the app: "/*".
  */
-export function routePattern(pathname: string, routeList: RouteObject[] = routes): string {
-  const segments = (matchRoutes(routeList, pathname) ?? [])
+export function routePattern(
+  pathname: string,
+  routeList: RouteObject[] = routes,
+  basename = '/',
+): string {
+  const matches = matchRoutes(routeList, pathname, basename);
+  if (matches === null) return '/*';
+  const segments = matches
     .map(({ route }) => route.path?.replace(/^\/+|\/+$/g, '') ?? '')
     .filter((segment) => segment !== '');
   return `/${segments.join('/')}`;
@@ -102,7 +109,7 @@ export function createReporter(route: PageRoute, transport: (body: string) => vo
 /** Measures this page load and reports it, labelled with the route pattern of `pathname`. */
 export function reportWebVitals(pathname: string, transport: (body: string) => void = send): void {
   // Every route of the app is one the API accepts (webVitalsReporter.spec.ts).
-  const reporter = createReporter(routePattern(pathname) as PageRoute, transport);
+  const reporter = createReporter(routePattern(pathname, routes, BASENAME) as PageRoute, transport);
   for (const observe of [onCLS, onFCP, onINP, onLCP, onTTFB]) observe(reporter.add);
   // A listener on the document runs after the library's own (window, capture
   // phase), which report CLS, INP and LCP on this same event: the batch then

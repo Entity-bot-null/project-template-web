@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
-# Web image: the built SPA behind nginx, which also forwards /api to the API so
-# the browser sees one origin (same-origin refresh cookie, no CORS). The build
-# context is the repository root:
+# Web image: the site behind nginx, one origin for the browser (same-origin
+# refresh cookie, no CORS): the landing at / (apps/landing), the web app at
+# /app/ (apps/web), and /api forwarded to the API. The build context is the
+# repository root:
 #   docker build -f apps/web/Dockerfile -t web .
-# API_UPSTREAM (default http://api:3000) is where /api goes; the other runtime
-# variables are optional (docs/environment.md#web-variables).
+# APP_ORIGIN (the site's public origin) is required; API_UPSTREAM (default
+# http://api:3000) is where /api goes; the other runtime variables are
+# optional (docs/environment.md#web-variables).
 #
 # Base images by tag and digest, so a build is reproducible and a moved tag
 # changes nothing; Dependabot proposes tag and digest together. Node.js 24
@@ -24,8 +26,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --offline --frozen-lockfile --filter web
+    pnpm install --offline --frozen-lockfile --filter web --filter landing
 RUN pnpm --filter web build
+# The landing is built for a placeholder origin (the .invalid domain is
+# reserved, RFC 2606): nginx writes the deployment's APP_ORIGIN in its place
+# as it serves the pages (nginx/default.conf.template), so this one image
+# serves every environment.
+RUN PUBLIC_URL=https://public-origin.invalid pnpm --filter landing build
 
 # Runs as an unprivileged user on port 8080.
 FROM ghcr.io/nginx/nginx-unprivileged:1.31-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS runtime
@@ -41,10 +48,13 @@ USER 101
 # The build this image holds (CI passes the commit SHA): reported with every
 # error, so a regression points at its release.
 ARG APP_RELEASE=unversioned
-# Runtime settings, all with safe defaults (docs/environment.md#web-variables):
-# error tracking stays off until WEB_SENTRY_DSN is set at deployment; every
-# page load reports its Web Vitals to the API (0 turns that off).
+# Runtime settings (docs/environment.md#web-variables): APP_ORIGIN has no
+# default, so a deployment that forgets it stops at start with the variable's
+# name; the others are safe as they are: error tracking stays off until
+# WEB_SENTRY_DSN is set; every page load reports its Web Vitals to the API (0
+# turns that off).
 ENV API_UPSTREAM=http://api:3000 \
+    APP_ORIGIN="" \
     NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
     APP_ENVIRONMENT=production \
     APP_RELEASE=${APP_RELEASE} \
@@ -54,7 +64,8 @@ ENV API_UPSTREAM=http://api:3000 \
 COPY --chmod=0755 apps/web/nginx/18-validate-runtime-config.sh /docker-entrypoint.d/18-validate-runtime-config.sh
 COPY apps/web/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY apps/web/nginx/default.conf.template /etc/nginx/templates/default.conf.template
-COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
+COPY --from=build /repo/apps/landing/dist /usr/share/nginx/html
+COPY --from=build /repo/apps/web/dist /usr/share/nginx/html/app
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
