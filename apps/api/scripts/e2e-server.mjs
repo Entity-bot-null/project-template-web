@@ -54,6 +54,13 @@ const runEnv = {
   APP_ORIGIN: process.env.APP_ORIGIN ?? '',
   // Public sign-up needs email: open whenever Mailpit is there.
   SIGN_UP_ENABLED: mailpit === undefined ? 'false' : 'true',
+  // No Redis, as in CI, whatever apps/api/.env sets: the suite checks the
+  // user flows on the in-process stores; the integration suite checks the
+  // Redis adapters.
+  REDIS_URL: '',
+  REDIS_REQUIRED: 'false',
+  RATE_LIMIT_STORE: 'memory',
+  CACHE_STORE: 'memory',
 };
 execSync('pnpm exec prisma migrate deploy', { cwd: API_DIR, env: runEnv, stdio: 'inherit' });
 
