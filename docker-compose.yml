@@ -13,7 +13,7 @@
 # deployment: no TLS, local credentials, nothing published beyond loopback.
 services:
   db:
-    # Pinned by digest, the same as CI's (.github/tool-images/Dockerfile);
+    # Pinned by digest, the same as CI's (scripts/tool-images/Dockerfile);
     # Dependabot proposes updates.
     image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     restart: unless-stopped

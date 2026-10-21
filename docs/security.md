@@ -642,7 +642,7 @@ the pull request that stops using it.
 **Dependabot** opens the update pull requests (`.github/dependabot.yml`): weekly, grouped
 (production minor/patch, development minor/patch, actions, tool images), each with the full CI.
 It covers npm, GitHub Actions (SHA pins and their version comments), the Dockerfiles' base images,
-Docker Compose, the tool images (`.github/tool-images/Dockerfile`, tag and digest) and the Terraform
+Docker Compose, the tool images (`scripts/tool-images/Dockerfile`, tag and digest) and the Terraform
 providers (`infra/terraform`, version and lock-file checksums together). Version updates wait the
 same seven days as pnpm; **security updates** (Dependabot alerts) are not delayed.
 Majors arrive one per pull request, with their release notes to read. A person still approves every
