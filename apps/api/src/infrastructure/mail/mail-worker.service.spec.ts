@@ -19,6 +19,7 @@ const options: MailOptions = {
   smtpUrl: 'smtp://localhost:1035',
   from: { name: 'Acme', address: 'no-reply@acme.test' },
   appOrigin: 'https://app.acme.test',
+  appBasePath: '/app',
   maxAttempts: 3,
   dailyLimitPerAddress: 10,
   production: false,
@@ -166,6 +167,27 @@ describe('MailWorker', () => {
     );
     real.worker.onApplicationBootstrap();
     expect(logs.warn).not.toHaveBeenCalled();
+  });
+
+  it("points a message's links at the web app: APP_ORIGIN and APP_BASE_PATH", async () => {
+    const compose = vi.fn(() => Promise.resolve({ subject: 's', text: 't', html: 'h' }));
+    await started(tracked(setup({ queue: [message()], compose })));
+    expect(compose).toHaveBeenCalledWith(
+      expect.objectContaining({ product: 'Acme', appUrl: 'https://app.acme.test/app' }),
+    );
+    const atRoot = vi.fn(() => Promise.resolve({ subject: 's', text: 't', html: 'h' }));
+    await started(
+      tracked(
+        setup({
+          queue: [message()],
+          compose: atRoot,
+          workerOptions: { ...options, appBasePath: '/' },
+        }),
+      ),
+    );
+    expect(atRoot).toHaveBeenCalledWith(
+      expect.objectContaining({ appUrl: 'https://app.acme.test' }),
+    );
   });
 
   it('renders a due message in a short transaction, sends it, records it as sent', async () => {

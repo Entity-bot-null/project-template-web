@@ -21,7 +21,7 @@ test.afterEach(async () => {
 });
 
 async function signUp(page: Page, email: string, name = 'Katherine Johnson') {
-  await page.goto('/sign-in');
+  await page.goto('/app/sign-in');
   await page.getByRole('link', { name: 'Create an account' }).click();
   // Loaded when opened: the sign-in page stays on screen until it is.
   await expect(page.getByRole('heading', { name: 'Create an account' })).toBeVisible();
@@ -34,7 +34,9 @@ async function signUp(page: Page, email: string, name = 'Katherine Johnson') {
 
 async function confirmationLink(email: string): Promise<string> {
   const text = await waitForMessage(email, 'Confirm your App account');
-  const link = /http:\/\/localhost:4173\/confirm-sign-up#token=[A-Za-z0-9_-]{43}/.exec(text)?.[0];
+  const link = /http:\/\/localhost:4173\/app\/confirm-sign-up#token=[A-Za-z0-9_-]{43}/.exec(
+    text,
+  )?.[0];
   expect(link, 'the confirmation link in the message').toBeDefined();
   return link ?? '';
 }
@@ -48,7 +50,7 @@ test.describe('with email', () => {
     const email = newAddress();
     await signUp(page, email);
     // No account yet.
-    await page.goto('/sign-in');
+    await page.goto('/app/sign-in');
     await page.getByLabel('Email').fill(email);
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();

@@ -46,7 +46,7 @@ function txWith({
   return { tx, client: tx as unknown as Prisma.TransactionClient };
 }
 
-const context = { product: 'Acme', appOrigin: 'https://app.acme.test' };
+const context = { product: 'Acme', appUrl: 'https://app.acme.test/app' };
 
 function createdToken(tx: ReturnType<typeof txWith>['tx']) {
   const [[{ data }]] = tx.accountToken.create.mock.calls as unknown as [
@@ -63,9 +63,10 @@ describe('the confirmation of a new address', () => {
       message: message(),
       ...context,
     });
-    const token = /https:\/\/app\.acme\.test\/confirm-email-change#token=([A-Za-z0-9_-]{43})/.exec(
-      rendered?.text ?? '',
-    )?.[1];
+    const token =
+      /https:\/\/app\.acme\.test\/app\/confirm-email-change#token=([A-Za-z0-9_-]{43})/.exec(
+        rendered?.text ?? '',
+      )?.[1];
     expect(createdToken(tx)).toMatchObject({
       userId: 'u1',
       purpose: 'email_change',
@@ -152,9 +153,10 @@ describe('the notice to the previous address', () => {
       'on 2026-10-13 10:05:00 UTC, from this one to n•••@example.test',
     );
     expect(rendered?.text).not.toContain('new.address@example.test');
-    const token = /https:\/\/app\.acme\.test\/revert-email-change#token=([A-Za-z0-9_-]{43})/.exec(
-      rendered?.text ?? '',
-    )?.[1];
+    const token =
+      /https:\/\/app\.acme\.test\/app\/revert-email-change#token=([A-Za-z0-9_-]{43})/.exec(
+        rendered?.text ?? '',
+      )?.[1];
     expect(createdToken(tx)).toMatchObject({
       purpose: 'email_revert',
       tokenHash: hashAccountToken(token ?? ''),

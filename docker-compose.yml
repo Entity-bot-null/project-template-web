@@ -6,7 +6,8 @@
 #   docker compose --profile observability up -d   OpenTelemetry backend + Grafana (development)
 #
 # Production-like stack built from the Dockerfiles (profile "stack"):
-# migrations, then the API, behind the web server at http://localhost:8080.
+# migrations, then the API, behind the web server at http://localhost:8080
+# (the landing at /, the app at /app/).
 #   docker compose --profile stack up --build
 # Reads JWT_ACCESS_SECRET from a root .env (see .env.example). Not a
 # deployment: no TLS, local credentials, nothing published beyond loopback.
@@ -114,6 +115,8 @@ services:
         APP_RELEASE: ${APP_RELEASE:-local}
     environment:
       API_UPSTREAM: http://api:3000
+      # The address the stack is opened at: the landing's absolute links.
+      APP_ORIGIN: http://localhost:${WEB_PORT:-8080}
       APP_ENVIRONMENT: stack
       WEB_SENTRY_DSN: ${STACK_WEB_SENTRY_DSN:-}
     ports:

@@ -15,6 +15,7 @@ const options: MailOptions = {
   smtpUrl: 'smtp://localhost:1035',
   from: { name: 'Acme', address: 'no-reply@acme.test' },
   appOrigin: 'https://app.acme.test',
+  appBasePath: '/app',
   maxAttempts: 8,
   dailyLimitPerAddress: 10,
   production: false,

@@ -1,5 +1,6 @@
 // The box `pnpm dev` prints under the servers' logs once they are up
-// (scripts/dev.mjs): where the landing, the app, the API, its docs, the
+// (scripts/dev.mjs): where the site (the landing, with the app at /app/ and
+// the API at /api, one origin as in production), the API, its docs, the
 // database and the mail catcher are. Read from the settings those processes read (apps/api/.env,
 // DB_PORT, MAILPIT_*), so it shows what runs, not what the defaults would be;
 // email's state is what the API's readiness probe answered.
@@ -9,9 +10,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseEnv, styleText } from 'node:util';
 
-// apps/web/vite.config.ts and apps/landing/astro.config.mjs: server.port, with
-// strictPort (the dev server fails rather than move to another port).
-const WEB_PORT = '5173';
+// apps/landing/astro.config.mjs: server.port, with strictPort (the dev server
+// fails rather than move to another port). It forwards /app to the web app's
+// dev server and /api to the API.
 const LANDING_PORT = '4321';
 // docker-compose.yml: the ports the db and mailpit services publish without
 // DB_PORT, MAILPIT_SMTP_PORT and MAILPIT_UI_PORT.
@@ -41,7 +42,7 @@ export function devSettings({ api, compose }) {
   const mail = mailSettings(api, compose);
   const settings = {
     landing: `http://localhost:${LANDING_PORT}`,
-    web: `http://localhost:${WEB_PORT}`,
+    web: `http://localhost:${LANDING_PORT}/app/`,
     api: apiUrl,
     docs: `${apiUrl}/docs`,
     mail: mail.value,
@@ -120,8 +121,8 @@ export function renderBanner(settings, app, style = styleText, mailStatus = unde
       ? settings.mail
       : `${settings.mail} · ${mailStatus}`;
   const rows = [
-    ['Landing', settings.landing],
-    ['Web', settings.web],
+    ['Site', settings.landing],
+    ['App', settings.web],
     ['API', settings.api],
     ['API docs', settings.docs],
     ...(settings.database ? [['Database', settings.database]] : []),

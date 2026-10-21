@@ -16,14 +16,14 @@ test.afterEach(async () => {
 });
 
 async function signIn(page: Page, email: string, password: string) {
-  await page.goto('/sign-in');
+  await page.goto('/app/sign-in');
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
 }
 
-const CONFIRM_LINK = /http:\/\/localhost:4173\/confirm-email-change#token=[A-Za-z0-9_-]{43}/;
-const REVERT_LINK = /http:\/\/localhost:4173\/revert-email-change#token=[A-Za-z0-9_-]{43}/;
+const CONFIRM_LINK = /http:\/\/localhost:4173\/app\/confirm-email-change#token=[A-Za-z0-9_-]{43}/;
+const REVERT_LINK = /http:\/\/localhost:4173\/app\/revert-email-change#token=[A-Za-z0-9_-]{43}/;
 
 function linkIn(text: string, link: RegExp): string {
   const found = link.exec(text)?.[0];

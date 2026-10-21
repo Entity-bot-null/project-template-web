@@ -255,7 +255,7 @@ pnpm dev
 | Open                                                          | You should see                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | http://localhost:4321                                         | the landing, the public site; its language links switch to Spanish (`/es/`) and back |
-| http://localhost:5173                                         | the sign-in page                                                                     |
+| **Sign in** on the landing                                    | the sign-in page, at http://localhost:4321/app/sign-in                               |
 | sign in as `admin@example.com` / `admin-password`             | the app, signed in as Admin                                                          |
 | sign out, sign in as `member@example.com` / `member-password` | the app as Member, without admin screens                                             |
 | http://localhost:3000/api/docs                                | the API documentation (Swagger)                                                      |
@@ -330,9 +330,9 @@ In a second terminal:
 pnpm smoke --url http://localhost:8080
 ```
 
-**Check:** the smoke test ends with `Smoke test passed (public URL only).` and http://localhost:8080
-shows the app. The stack uses the development database (the same `db` service and volume), so the
-accounts of 3.3 sign in there too.
+**Check:** the smoke test ends with `Smoke test passed (public URL only).`, http://localhost:8080
+shows the landing and http://localhost:8080/app/ the app. The stack uses the development database
+(the same `db` service and volume), so the accounts of 3.3 sign in there too.
 
 Stop: `Ctrl+C`, then `docker compose --profile stack down`.
 
@@ -741,8 +741,8 @@ It takes 15–25 minutes the first time. The jobs, in order: Resolve the commit 
 api / api-migrate / web → Release to staging (server).
 
 **Check:** the run ends green; its summary lists the three image digests; the last step prints
-`Smoke test passed (public URL only).`; https://staging.acme.com opens the sign-in page with a
-valid certificate (the padlock).
+`Smoke test passed (public URL only).`; https://staging.acme.com opens the landing with a valid
+certificate (the padlock).
 
 **If it fails:**
 
@@ -762,8 +762,9 @@ valid certificate (the padlock).
 
 ### 8.2 Look at it
 
-Open https://staging.acme.com. The sign-in page loads; nobody can sign in yet: production databases
-have no accounts.
+Open https://staging.acme.com: the landing, in English, and in Spanish at `/es/`. Its **Sign in**
+leads to https://staging.acme.com/app/sign-in; nobody can sign in yet: production databases have
+no accounts.
 
 ### 8.3 Cut the first release and deploy it to production
 
@@ -786,7 +787,8 @@ have no accounts.
    reviewer opens the run on GitHub → **Review deployments** → **Approve and deploy**.
 
 **Check:** both runs end green; production builds nothing (its summary lists the three digests of
-the staging run, "built and scanned by run <its id>"); https://app.acme.com opens the sign-in page.
+the staging run, "built and scanned by run <its id>"); https://app.acme.com opens the landing and
+https://app.acme.com/app/ the sign-in page.
 
 ### 8.4 Create the first administrator
 
@@ -823,8 +825,8 @@ cd /srv/app
 ./rollback.sh
 ```
 
-**Check:** it prints `rollback: running <commit of 8.1>`; https://staging.acme.com/app-config.json
-shows that commit as `release`; the site still works.
+**Check:** it prints `rollback: running <commit of 8.1>`;
+https://staging.acme.com/app/app-config.json shows that commit as `release`; the site still works.
 
 Then bring staging back to the release through the workflow, as for any deployment:
 
@@ -852,7 +854,7 @@ back is now something you have done, not something you read about.
    docker compose --env-file server.env --env-file release.env up -d --wait api web
    ```
 
-**Check:** `https://app.acme.com/app-config.json` shows the web DSN; the API's log line
+**Check:** `https://app.acme.com/app/app-config.json` shows the web DSN; the API's log line
 `Starting release … error tracking on` (`docker compose --env-file server.env --env-file release.env logs api | head`).
 In Sentry, set alert rules: [alerting.md](alerting.md).
 
@@ -861,7 +863,7 @@ In Sentry, set alert rules: [alerting.md](alerting.md).
 In your uptime monitor, add two checks every minute from several regions:
 
 - `https://app.acme.com/healthz` (the web server),
-- `https://app.acme.com/app-config.json` (the app's configuration is served).
+- `https://app.acme.com/app/app-config.json` (the app's configuration is served).
 
 Send the alerts to the people of 0.1 (email and a phone notification).
 

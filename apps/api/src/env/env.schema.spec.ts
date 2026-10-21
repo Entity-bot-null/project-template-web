@@ -141,6 +141,27 @@ describe('EnvSchema', () => {
     ]);
   });
 
+  it('reads APP_BASE_PATH as the path of the web app, /app by default', () => {
+    expect(EnvSchema.parse(base).APP_BASE_PATH).toBe('/app');
+    expect(EnvSchema.parse({ ...base, APP_BASE_PATH: '' }).APP_BASE_PATH).toBe('/app');
+    for (const path of ['/', '/portal', '/portal/v2', '/my-app_1.0~x']) {
+      expect(EnvSchema.parse({ ...base, APP_BASE_PATH: path }).APP_BASE_PATH).toBe(path);
+    }
+    for (const path of [
+      'app',
+      '/app/',
+      '//app',
+      '/app//x',
+      '/../x',
+      '/./x',
+      '/a b',
+      '/app?x',
+      '/app#x',
+    ]) {
+      expect(issuePaths({ ...base, APP_BASE_PATH: path }), path).toEqual(['APP_BASE_PATH']);
+    }
+  });
+
   it('allows SameSite=None only in production, where cookies are Secure', () => {
     expect(issuePaths({ ...base, AUTH_COOKIE_SAMESITE: 'none' })).toEqual(['AUTH_COOKIE_SAMESITE']);
     expect(issuePaths({ ...production, AUTH_COOKIE_SAMESITE: 'none' })).toEqual([]);

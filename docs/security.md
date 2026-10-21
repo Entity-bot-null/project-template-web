@@ -113,7 +113,8 @@ needs a compliance claim verifies it itself.
   account's `security_version`. Valid for 30 minutes and once; a new link replaces the earlier
   unused ones; a credential change ends every outstanding one. Expired and used tokens are swept
   after a day.
-- **The link** is `APP_ORIGIN/reset-password#token=...` (never built from a request's Host). The
+- **The link** is `APP_ORIGIN` + `APP_BASE_PATH` + `/reset-password#token=...`
+  (`https://app.example.com/app/reset-password#token=...`, never built from a request's Host). The
   token travels after `#`, which browsers never send to a server or in a `Referer`; the page reads
   it, removes it from the address bar and the history at once (`replace`), keeps it in memory only
   (never browser storage) and drops it once used. Opening the link changes nothing: only the
@@ -162,10 +163,10 @@ fails otherwise); off, accounts are created by an operator (`user:create`). When
   sign-up and its link (and the route is limited per IP like a sign-in). The confirmation creates the account (role `member`)
   and signs it in, ending any session the browser had, like a sign-in.
 - **The token:** 256 random bits, minted when the message is sent, only its SHA-256 stored on the
-  sign-up; 24 hours, once (the sign-up row is deleted in the transaction that creates the
-  account, under its row lock: two confirmations, one account). The link is
-  `APP_ORIGIN/confirm-sign-up#token=...`, handled like a reset link (fragment, removed from the
-  address bar and history, memory only, opening it changes nothing).
+  sign-up; 24 hours, once (the sign-up row is deleted in the transaction that creates the account,
+  under its row lock: two confirmations, one account). The link is
+  `APP_ORIGIN/app/confirm-sign-up#token=...` (with `APP_BASE_PATH`), handled like a reset link
+  (fragment, removed from the address bar and history, memory only, opening it changes nothing).
 - **Limits:** 5 sign-ups per 15 minutes per IP, 10 confirmations per 15 minutes per IP; per
   address, one message a minute and `MAIL_DAILY_LIMIT_PER_ADDRESS` a day, shared with password
   recovery. An address that gets an account by other means after the link was sent answers 409.
@@ -192,7 +193,8 @@ the role is checked by the API on every route, whatever the web app shows):
 - **The token:** 256 bits minted when the message is sent, only its SHA-256 stored on the
   invitation, 7 days, once (the invitation row is deleted in the transaction that creates the
   account: two acceptances, one account; an address that got an account meanwhile answers 409).
-  The link is `APP_ORIGIN/accept-invitation#token=...`, handled like every emailed link.
+  The link is `APP_ORIGIN/app/accept-invitation#token=...` (with `APP_BASE_PATH`), handled like
+  every emailed link.
 - **Limits:** 30 invitations per 15 minutes per IP; per address, one message a minute and
   `MAIL_DAILY_LIMIT_PER_ADDRESS` a day (an administrator who resends too soon gets 429, and the
   earlier invitation stands); 10 acceptances per 15 minutes per IP. Expired invitations are swept.
@@ -336,7 +338,9 @@ API decides what is **allowed**. Never rely on a hidden link or a client guard a
   such a client a proxy to the API on its own origin instead.
 - **XSS:** React escapes output; never use `dangerouslySetInnerHTML` without a sanitizer (OPCIONAL:
   DOMPurify). The web image sends a strict CSP (`default-src 'self'`, no inline scripts, no
-  framing); widen it per directive, in review, when a feature needs it.
+  framing) on the landing and the app alike; widen it per directive, in review, when a feature
+  needs it. The landing keeps within it by construction: static HTML, stylesheets as files, no
+  script, nothing from another origin (its JavaScript budget is 0 kB).
 
 ## Security headers and caching
 
@@ -344,8 +348,11 @@ API: helmet defaults (CSP, HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `R
 CORP/COOP, no `X-Powered-By`) and `Cache-Control: no-store` on every response (they carry tokens
 and personal data). Web image: CSP, `X-Content-Type-Options`, `X-Frame-Options: DENY`,
 `Referrer-Policy: no-referrer` (pages are opened from one-time links), `Permissions-Policy`, COOP
-(`apps/web/nginx/security-headers.conf`); hashed
-assets cached for a year, never an error response. The CSP's `connect-src` gains exactly one origin
+(`apps/web/nginx/security-headers.conf`), on every page of the landing and the app; hashed
+assets (`/app/assets/`, `/_astro/`) cached for a year, never an error response. Redirects carry a
+path only (`absolute_redirect off`): never an address built from the request's `Host`. The landing's
+absolute links take the configured `APP_ORIGIN`, written in by nginx as it serves them, never the
+request's `Host` either. The CSP's `connect-src` gains exactly one origin
 when browser error tracking is configured: Sentry's ingest host, derived from `WEB_SENTRY_DSN` by
 the web server (nothing else can widen it at runtime).
 
@@ -546,7 +553,7 @@ mail without authentication: it is published on 127.0.0.1 only and is never part
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified. The one exception is a server on the machine itself (`localhost`, `127.0.0.1`, `[::1]`: a local relay, the end-to-end suite's Mailpit): that traffic never crosses a network, and `localhost` is connected to as `127.0.0.1`, never through a DNS answer. In production the API warns at boot when it uses the exception (a copied development setting). |
 | Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                                                                                                                                                                                                                                          |
-| Links                  | Built from `APP_ORIGIN` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                                                                                                                                                                   |
+| Links                  | Built from `APP_ORIGIN` and `APP_BASE_PATH` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                                                                                                                                               |
 | What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits.                                                                                                                                                                                                                   |
 | Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address. Database errors are logged by class and code, never their message (it can quote a query's arguments).                                                                                                                                                                                                                                             |
 | Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                                                                                                                                                                                                                                  |

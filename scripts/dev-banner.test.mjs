@@ -24,7 +24,7 @@ describe('devSettings', () => {
       }),
       {
         landing: 'http://localhost:4321',
-        web: 'http://localhost:5173',
+        web: 'http://localhost:4321/app/',
         api: 'http://127.0.0.1:3000/api',
         docs: 'http://127.0.0.1:3000/api/docs',
         database: `localhost:${DEFAULT_DB_PORT}/app`,
@@ -80,7 +80,7 @@ describe('devSettings', () => {
     );
     const port = /server: \{ port: (\d+) \}/.exec(config)?.[1];
     assert.equal(devSettings({ api: {}, compose: {} }).landing, `http://localhost:${String(port)}`);
-    assert.match(config, /server: \{ strictPort: true \}/);
+    assert.match(config, /\bstrictPort: true\b/);
   });
 
   test('the default ports are the ones docker-compose.yml publishes', () => {
