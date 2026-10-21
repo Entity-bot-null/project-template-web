@@ -13,7 +13,7 @@
 //      exports (observability/api-metrics.json, which
 //      apps/api/src/observability/metrics-catalog.spec.ts keeps in step with
 //      the code) or one a recording rule writes;
-//   4. promtool, from the pinned image of .github/tool-images/Dockerfile:
+//   4. promtool, from the pinned image of scripts/tool-images/Dockerfile:
 //      the Prometheus configuration, the rule files (lint findings fatal),
 //      every dashboard expression compiled into a rule file so Prometheus'
 //      own parser reads it, and the rules' unit tests. Needs Docker, like

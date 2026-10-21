@@ -316,7 +316,7 @@ needs Docker, and the part that does not also runs in `pnpm test:scripts`):
 - every alert has a `severity` label (`critical` pages, `warning` goes to the team's channel), a
   `runbook_url` to a section of [incident-response.md](incident-response.md) that exists, the
   `dashboard_uid` to open first, a summary and a description, and a unit test that makes it fire;
-- promtool, pinned in `.github/tool-images/Dockerfile`, checks the configuration and the rules,
+- promtool, pinned in `scripts/tool-images/Dockerfile`, checks the configuration and the rules,
   parses every dashboard query (each one compiled into a recording rule) and runs the unit tests.
 
 `runbook_url` is a path in this repository: make it a link in the notification template of your

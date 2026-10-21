@@ -78,7 +78,7 @@ produce findings that need judgment.
 production Redis are not needed by any job: unit and E2E suites run with them off (the default),
 the telemetry and error tracking specs use in-process collectors and a stubbed transport, and the
 Redis adapters run against a throwaway Redis service in the integration job (pinned in
-`.github/tool-images/Dockerfile`; a missing one fails those specs in CI instead of skipping them).
+`scripts/tool-images/Dockerfile`; a missing one fails those specs in CI instead of skipping them).
 
 Nothing else gates a merge: style preferences beyond the linters, Semgrep's informational
 registry, and ZAP warnings are for review, not for the pipeline. Promote an advisory check to
@@ -164,6 +164,10 @@ major update, an update to the workflows, or a pull request the workflow decline
 why) is merged by hand, after reading its release notes. An update that changes `deploy/vps`
 also needs the files copied to the server
 ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
+
+Dependabot may change files under `.github/` only for GitHub Actions, so the tool images CI runs
+live in `scripts/tool-images/Dockerfile`: under `.github/`, it refused every update of them
+([dependabot-core#15237](https://github.com/dependabot/dependabot-core/issues/15237)).
 
 ## Releases
 
@@ -297,13 +301,14 @@ which the gate enforces.
 | What                                                                                                                                                                   | Pinned by                                                          | Updated by                                               |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
 | GitHub Actions (`uses:`)                                                                                                                                               | commit SHA, tag in comment                                         | Dependabot (`github-actions`)                            |
-| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, Terraform, TFLint, Ubuntu, ZAP, promtool) and the CI PostgreSQL, Redis and Mailpit services | tag and digest in `.github/tool-images/Dockerfile`                 | Dependabot (`docker`), tag and digest together           |
+| Tool images (actionlint with shellcheck, zizmor, Semgrep, gitleaks, Trivy, Terraform, TFLint, Ubuntu, ZAP, promtool) and the CI PostgreSQL, Redis and Mailpit services | tag and digest in `scripts/tool-images/Dockerfile`                 | Dependabot (`docker`), tag and digest together           |
 | Base images in the Dockerfiles (Node.js from ECR Public's mirror of Docker's official images, nginx from NGINX's GHCR)                                                 | tag and digest                                                     | Dependabot (`docker`), tag and digest together           |
 | Compose images                                                                                                                                                         | tag                                                                | Dependabot (`docker-compose`)                            |
 | npm packages                                                                                                                                                           | `pnpm-lock.yaml` (integrity hashes)                                | Dependabot (`npm`), `pnpm update`                        |
 | Terraform providers (`infra/terraform`)                                                                                                                                | exact version in `versions.tf`, checksums in `.terraform.lock.hcl` | Dependabot (`terraform`), version and checksums together |
 | Node.js                                                                                                                                                                | the major in `.nvmrc` (CI, hooks); the base images above           | the major by hand ([below](#nodejs))                     |
 | pnpm                                                                                                                                                                   | `packageManager` in `package.json`, recorded in `pnpm-lock.yaml`   | by hand ([below](#pnpm))                                 |
+| The runners (`runs-on` of every job)                                                                                                                                   | `ubuntu-24.04`, the servers' Ubuntu                                | by hand ([below](#ubuntu))                               |
 
 The Dockerfiles' base images come from registries without Docker Hub's anonymous pull limit, which
 CI runners share and hit: the same images, with the same digests, as on Docker Hub.
@@ -343,15 +348,16 @@ Dependabot's pull requests are the weekly routine ([Dependency updates](#depende
 it never proposes is moved by a person, on its own branch, with the full CI on its pull request
 (the images are built and scanned there too):
 
-| Part                | Dependabot proposes                                                   | Moved by hand                                                                      |
-| ------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| npm packages        | minors and patches (grouped), majors (one per pull request)           | merging a major, after its release notes; [TypeScript](#typescript)                |
-| Node.js             | the base image's new digest within the major, weekly                  | [the major](#nodejs), and `@types/node`'s with it                                  |
-| pnpm                | nothing: it never edits `packageManager`                              | [a new version](#pnpm)                                                             |
-| GitHub Actions      | new SHA and version comment, in the workflows and `.github/actions/*` | merging: the auto-merge never merges a change to a workflow or an action           |
-| Tool images         | tag and digest together                                               | a Terraform minor also needs `required_version` ([above](#infrastructure-as-code)) |
-| PostgreSQL, Redis   | the new digest within the major (CI images); Compose tags within it   | [the major](#postgresql-and-redis)                                                 |
-| Terraform providers | version and lock-file checksums together                              | nothing                                                                            |
+| Part                | Dependabot proposes                                                      | Moved by hand                                                                      |
+| ------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| npm packages        | minors and patches (grouped), majors (one per pull request)              | merging a major, after its release notes; [TypeScript](#typescript)                |
+| Node.js             | the base image's new digest within the major, weekly                     | [the major](#nodejs), and `@types/node`'s with it                                  |
+| pnpm                | nothing: it never edits `packageManager`                                 | [a new version](#pnpm)                                                             |
+| GitHub Actions      | new SHA and version comment, in the workflows and `.github/actions/*`    | merging: the auto-merge never merges a change to a workflow or an action           |
+| Tool images         | tag and digest together                                                  | a Terraform minor also needs `required_version` ([above](#infrastructure-as-code)) |
+| PostgreSQL, Redis   | the new digest within the major (CI images); Compose tags within it      | [the major](#postgresql-and-redis)                                                 |
+| Terraform providers | version and lock-file checksums together                                 | nothing                                                                            |
+| Ubuntu              | nothing: neither a runner label nor the servers' release is a dependency | [the next LTS](#ubuntu), everywhere at once                                        |
 
 ### Node.js
 
@@ -401,12 +407,23 @@ supports a range of TypeScript versions (`pnpm view typescript-eslint peerDepend
 `>=4.8.4 <6.1.0` with typescript-eslint 8.71, so neither 6.1 nor 7 yet): a version outside it is not
 merged until typescript-eslint supports it. Then `pnpm typecheck`, `pnpm lint` and the tests.
 
+### Ubuntu
+
+CI's runners and the servers run the same Ubuntu LTS, 24.04: `runs-on: ubuntu-24.04` in every
+workflow, the servers' release ([deploy-vps.md](deploy-vps.md#1-what-you-need); `droplet_image` in
+`infra/terraform/digitalocean`) and the `ubuntu` tool image of the cloud-init check. CI does not use
+`ubuntu-latest`: GitHub moves that label to a new release on its own schedule (Ubuntu 26.04, from
+October 2026), which would change the system of every job without a commit. The next LTS moves all
+of them in one pull request with the full CI, once what the jobs install on the runner supports it
+(Playwright's browser dependencies, `playwright install --with-deps`) and the servers' guides have
+been followed on it.
+
 ### PostgreSQL and Redis
 
 Their majors move by hand, together, so CI keeps testing what runs:
 
 1. `docker-compose.yml` (`db`, `redis`), `deploy/vps/compose.yaml` (`db`, `backup`, `redis`) and
-   `.github/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
+   `scripts/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
    Dependabot proposes their minor updates (digests) in all three.
 2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure, then
    `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the accepted

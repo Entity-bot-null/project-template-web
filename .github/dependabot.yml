@@ -60,10 +60,12 @@ updates:
     commit-message:
       prefix: build
 
-  # The tool images CI runs (.github/tool-images/Dockerfile): tag and digest
-  # updated together.
+  # The tool images CI runs (scripts/tool-images/Dockerfile): tag and digest
+  # updated together. Outside .github/ on purpose: Dependabot may open pull
+  # requests that change files there only for GitHub Actions, and refused
+  # every one of these (dependabot/dependabot-core#15237).
   - package-ecosystem: docker
-    directory: /.github/tool-images
+    directory: /scripts/tool-images
     schedule:
       interval: weekly
     cooldown:
@@ -75,6 +77,11 @@ updates:
       - dependency-name: docker/library/postgres
         update-types: [version-update:semver-major]
       - dependency-name: docker/library/redis
+        update-types: [version-update:semver-major]
+      # The Ubuntu release of the cloud-init check is the servers': the next
+      # LTS moves CI, the servers and this image together, by hand
+      # (docs/ci-cd.md#ubuntu).
+      - dependency-name: docker/library/ubuntu
         update-types: [version-update:semver-major]
     groups:
       tools:

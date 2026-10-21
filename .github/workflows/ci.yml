@@ -24,7 +24,7 @@ jobs:
     # Opt-in: needs a public repository or GitHub Advanced Security. Enable
     # with the repository variable ENABLE_DEPENDENCY_REVIEW=true.
     if: github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,7 +42,7 @@ jobs:
     name: CI passed
     if: always()
     needs: [dependency-review, gates]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: A required job failed

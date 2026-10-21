@@ -9,7 +9,7 @@
 #   terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 \
 #     -platform=darwin_arm64 -platform=windows_amd64
 # Terraform itself moves with the terraform image of
-# .github/tool-images/Dockerfile: keep required_version on its minor version.
+# scripts/tool-images/Dockerfile: keep required_version on its minor version.
 terraform {
   required_version = "~> 1.16.5"
 
