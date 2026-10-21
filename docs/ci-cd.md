@@ -411,12 +411,13 @@ merged until typescript-eslint supports it. Then `pnpm typecheck`, `pnpm lint` a
 
 CI's runners and the servers run the same Ubuntu LTS, 24.04: `runs-on: ubuntu-24.04` in every
 workflow, the servers' release ([deploy-vps.md](deploy-vps.md#1-what-you-need); `droplet_image` in
-`infra/terraform/digitalocean`) and the `ubuntu` tool image of the cloud-init check. CI does not use
-`ubuntu-latest`: GitHub moves that label to a new release on its own schedule (Ubuntu 26.04, from
-October 2026), which would change the system of every job without a commit. The next LTS moves all
-of them in one pull request with the full CI, once what the jobs install on the runner supports it
-(Playwright's browser dependencies, `playwright install --with-deps`) and the servers' guides have
-been followed on it.
+`infra/terraform/digitalocean`) and the `ubuntu` tool image of the cloud-init check, whose digest is
+all Dependabot updates: an interim release (24.10) would leave the servers' LTS, and its package
+archive closes when its support ends. CI does not use `ubuntu-latest`: GitHub moves that label to a
+new release on its own schedule (Ubuntu 26.04, from October 2026), which would change the system of
+every job without a commit. The next LTS moves all of them in one pull request with the full CI,
+once what the jobs install on the runner supports it (Playwright's browser dependencies,
+`playwright install --with-deps`) and the servers' guides have been followed on it.
 
 ### PostgreSQL and Redis
 
