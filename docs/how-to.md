@@ -21,7 +21,7 @@ When something fails along the way, see [troubleshooting.md](troubleshooting.md)
 - [Call an external service](#call-an-external-service)
 - [Run a job on one instance, or process a message once](#run-a-job-on-one-instance-or-process-a-message-once)
 - [Send an email](#send-an-email)
-- [Turn on Redis](#turn-on-redis)
+- [Run with or without Redis](#run-with-or-without-redis)
 - [Turn on error tracking](#turn-on-error-tracking)
 - [Turn on tracing and metrics](#turn-on-tracing-and-metrics)
 - [Pull changes from the team](#pull-changes-from-the-team)
@@ -948,19 +948,25 @@ the transaction of the change it reports, never send it from the request.
    integration spec that queues it and reads it back from Mailpit (`apps/api/test/mailpit.ts`);
    an end-to-end test for a flow a person follows from the message.
 
-## Turn on Redis
+## Run with or without Redis
 
-1. Locally: in the root `.env`, `REDIS_PASSWORD=<the output of openssl rand -hex 24>`; then
-   `docker compose --profile redis up -d`.
-2. In `apps/api/.env`: `REDIS_URL=redis://:<that password>@127.0.0.1:6379`, and the features to
-   move to it: `RATE_LIMIT_STORE=redis`, `CACHE_STORE=redis` (locks and idempotency follow
-   `REDIS_URL`).
-3. `pnpm dev`: the log says `Redis connected (redis://127.0.0.1:6379)`; readiness shows
-   `"redis": "ok"`. Stop the container to see the degraded mode, start it again to see the
-   recovery.
-4. Production: a private Redis with TLS and an ACL user, `REDIS_URL=rediss://...` from the secret
-   store, `REDIS_KEY_PREFIX` per environment ([security.md](security.md#redis)). Set
-   `REDIS_REQUIRED=true` only if the application cannot work without it.
+Redis is on in development: `pnpm services:up` (and `pnpm dev`) starts it with the database, on
+127.0.0.1:6389 with the password `app`, and `apps/api/.env.example` points the API at it with the
+shared rate limits, the shared cache and a readiness that requires it, as on the reference server.
+
+1. Check: the `pnpm dev` box shows `Redis localhost:6389`, the API logs
+   `Redis connected (redis://localhost:6389)` and readiness shows `"redis": "ok"`.
+   `docker compose stop redis` shows the degraded mode, `docker compose start redis` the recovery.
+2. Without Redis: remove `REDIS_URL`, `RATE_LIMIT_STORE`, `CACHE_STORE` and `REDIS_REQUIRED` from
+   `apps/api/.env`. The in-process stores take over (one instance only), and the Redis integration
+   specs are skipped.
+3. Another port or password: `REDIS_PORT` and `REDIS_PASSWORD` in the root `.env`, and the same in
+   `REDIS_URL` (the `pnpm dev` box warns when the ports differ).
+4. Production: the reference server runs its own Redis with an ACL user
+   ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)). Elsewhere, or for more than one
+   server: a private Redis with TLS and an ACL user, `REDIS_URL=rediss://...` from the secret store,
+   `REDIS_KEY_PREFIX` per environment ([security.md](security.md#redis)). `REDIS_REQUIRED=true` only
+   where the application must not run without it.
 
 ## Turn on error tracking
 

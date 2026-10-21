@@ -230,11 +230,11 @@ GHCR), and call it with `push: true`. Pushed images carry their SBOM and SLSA pr
 attestations; signed GitHub attestations are one commented step away
 (docs/security.md#artifact-integrity).
 
-Locally: `docker compose --profile stack up --build` runs migrations, the API and the web image at
-http://localhost:8080, the production topology on one machine. Add `--profile redis` (and
-`STACK_REDIS_URL`, `STACK_RATE_LIMIT_STORE=redis` in the root `.env`) to run it with shared rate
-limits, `--profile observability` (and `STACK_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318`)
-to see its traces and metrics in Grafana.
+Locally: `docker compose --profile stack up --build` runs migrations, the API (on the compose Redis,
+as on the reference server) and the web image at http://localhost:8080, the production topology on
+one machine. Add `--profile observability` (and
+`STACK_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318` in the root `.env`) to see its traces and
+metrics in Grafana.
 
 The build context is an allowlist (`.dockerignore`): the root manifests, the lockfile and `apps/`.
 A new top-level folder an image needs (a shared `packages/`) must be added there.
@@ -267,9 +267,11 @@ pull request; exceptions are listed with their reason in `.github/zizmor.yml`:
 ## Infrastructure as code
 
 `infra/terraform/digitalocean` provisions the server target on DigitalOcean
-([deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean)). The CI job **Infrastructure
-as code (Terraform)**, and `pnpm iac:check` locally, check it with the pinned images, the
-configuration mounted read-only, without a cloud account or a token:
+([deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean)), and `deploy/vps/db-init.sh`
+creates the database and its roles on a server that runs its own
+([deploy-vps.md](deploy-vps.md#5-the-database)). The CI job **Infrastructure as code (Terraform)**,
+and `pnpm iac:check` locally, check both with the pinned images, the configuration mounted
+read-only, without a cloud account or a token:
 
 | Check                                                                                 | Fails on                                                                                |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -281,6 +283,8 @@ configuration mounted read-only, without a cloud account or a token:
 | `cloud-init schema` on the rendered user data, with Ubuntu 24.04's cloud-init         | an invalid key or value                                                                 |
 | shellcheck on the user data's `runcmd`, the fingerprint of `files/docker.asc`         | a shell finding; a key other than Docker's                                              |
 | `database/roles.sql` on PostgreSQL as an administrator that is not a superuser, twice | an error; roles or rights other than the guide's                                        |
+| `deploy/vps/db-init.sh` in PostgreSQL's entrypoint on an empty volume, as mounted     | an error; roles or rights other than the guide's; a weak or wrong password let in       |
+| A backup as `app_backup` (`pg_dump`, the format of the server's nightly backup)       | a dump without the data                                                                 |
 
 A real `terraform plan` or `apply` is never part of CI: it needs an account, a token and the
 state. Run them by hand, per environment. The Terraform and TFLint images are updated by
@@ -401,15 +405,23 @@ merged until typescript-eslint supports it. Then `pnpm typecheck`, `pnpm lint` a
 
 Their majors move by hand, together, so CI keeps testing what runs:
 
-1. `docker-compose.yml` (`db`, `redis`) and `.github/tool-images/Dockerfile` (`postgres`, `redis`,
-   tag and digest): the same major.
-2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure,
-   then `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the
-   accepted majors), and a restore drill afterwards
-   ([disaster-recovery.md](disaster-recovery.md#checklist)).
+1. `docker-compose.yml` (`db`, `redis`), `deploy/vps/compose.yaml` (`db`, `backup`, `redis`) and
+   `.github/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
+   Dependabot proposes their minor updates (digests) in all three.
+2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure, then
+   `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the accepted
+   majors), and a restore drill afterwards ([disaster-recovery.md](disaster-recovery.md#checklist)).
+   On the VPS target's own database, a dump and restore, since a data directory does not start under
+   the next major: a backup at once (`backup.sh now`) copied off the server, the volume
+   `app_db_data` removed, the release with the new image deployed (an empty database, its roles,
+   every table), then that backup restored into it with the site stopped
+   ([disaster-recovery.md](disaster-recovery.md#the-servers-own-database)). Rehearse it on staging
+   first.
 3. Local data: a PostgreSQL data directory does not start under the next major. Dump it before
    (`docker compose exec db pg_dumpall -U app > dump.sql`), remove the volume, start the new
    version and restore it; or start empty, with `pnpm db:migrate` and `pnpm db:seed`.
+4. Redis keeps nothing that cannot be lost (every key the template writes has a TTL): if a new major
+   refuses the files of its volume, remove the volume.
 
 ## Deployment
 
@@ -515,8 +527,8 @@ redeploy the recorded digests. Never roll back by reversing a migration in produ
 ## Running the gates locally
 
 `pnpm verify` runs the fast gates (format, lint, typecheck, coverage, security with the dependency
-policy, build, budget). Before a large pull request also run `pnpm test:integration` (PostgreSQL
-from `pnpm db:up`; the Redis adapter specs run when `docker compose --profile redis up -d` is up
-and `REDIS_URL` is set in `apps/api/.env`, and are skipped when no Redis URL is set) and
-`pnpm test:e2e`. With Docker running, `pnpm sast`, `pnpm lint:workflows`,
-`pnpm observability:check` and `pnpm iac:check` run the same pinned images CI runs.
+policy, build, budget). Before a large pull request also run `pnpm test:integration` (PostgreSQL,
+Redis and Mailpit from `pnpm services:up`; the Redis and outbox specs use `REDIS_URL` and
+`MAIL_SMTP_URL` of `apps/api/.env`, and are skipped when they are not set) and `pnpm test:e2e`. With
+Docker running, `pnpm sast`, `pnpm lint:workflows`, `pnpm observability:check` and `pnpm iac:check`
+run the same pinned images CI runs.

@@ -402,10 +402,10 @@ The counters live in a **store** chosen by `RATE_LIMIT_STORE`
 (`infrastructure/rate-limit/rate-limit.store.ts`); the guard, the limits and the routes are the same
 with either:
 
-| Store              | When                                            | Behavior                                                                                                                                    |
-| ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory` (default) | one instance                                    | the throttler's in-memory store, as the template always had                                                                                 |
-| `redis`            | several instances (OPTIONAL, needs `REDIS_URL`) | shared counters: a client cannot multiply its allowance by the number of instances; same algorithm, atomically in a Lua script, server time |
+| Store              | When                                                                         | Behavior                                                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory` (default) | one instance                                                                 | the throttler's in-memory store, as the template always had                                                                                 |
+| `redis`            | several instances (needs `REDIS_URL`; development and the VPS target use it) | shared counters: a client cannot multiply its allowance by the number of instances; same algorithm, atomically in a Lua script, server time |
 
 While Redis is unreachable the Redis store does **not fail open**: each instance falls back to its
 own in-memory counters (limits become per instance), logs the switch once, counts it
@@ -425,6 +425,19 @@ never the `*Unsafe`variants with interpolated input: an ESLint rule refuses them
 scripts and tests included. The one use,`$executeRawUnsafe` in the test reset helper, interpolates
 table names read from the database catalog (identifiers cannot be bound as parameters) and carries
 a disable comment that says so.
+
+## Database access
+
+The API connects as a role that reads and writes data and cannot change the schema (`app_runtime`),
+the migration job as the schema's owner (`app_migrator`): neither is a superuser, and each gets only
+its own `DATABASE_URL` ([disaster-recovery.md](disaster-recovery.md#backup-strategy)). The same
+roles everywhere, made three ways: by hand on a managed database, by `pnpm iac:database` on
+Terraform's, and by `deploy/vps/db-init.sh` on the VPS target's own
+([deploy-vps.md](deploy-vps.md#5-the-database)), which adds `app_backup`, read-only, for the nightly
+backup. There PostgreSQL is on the server's internal network only, never published, and asks every
+container for its password; its superuser is reached only through the database container.
+`pnpm iac:check` runs both role scripts on PostgreSQL in CI and fails when a role can do more than
+its share ([ci-cd.md](ci-cd.md#infrastructure-as-code)).
 
 ## Secrets
 
@@ -449,7 +462,9 @@ a disable comment that says so.
   out of git (`*.tfstate*` in `.gitignore`), on the operator's disk or in a private Spaces bucket
   ([deploy-vps.md](deploy-vps.md#state)).
 - In production: the platform's secret store or the GitHub environment secrets, one value per
-  environment (docs/environment.md#secrets). Rotation: [Secret rotation](#secret-rotation).
+  environment (docs/environment.md#secrets); on the VPS target, files on the server readable by the
+  deploy user only, one per container with only what it needs
+  ([deploy-vps.md](deploy-vps.md#the-files)). Rotation: [Secret rotation](#secret-rotation).
 - A leaked secret is rotated first, then removed from history if needed; removal alone is not enough.
 
 ## Logging
@@ -527,18 +542,19 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
 
 ## Redis
 
-OPTIONAL infrastructure (docs/architecture.md#redis). Secure defaults, development and production:
+OPTIONAL for the application (docs/architecture.md#redis), and on by default in development and on
+the VPS target. Secure defaults in all three places:
 
-| Concern             | Development (`docker compose --profile redis`)                                                                       | Production (REQUIRES CONFIGURATION)                                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Where               | a container on this machine                                                                                          | a managed or private Redis (ElastiCache, Memorystore, Azure Cache, Upstash...) on the private network only, never a public endpoint              |
-| Network             | published on 127.0.0.1 only                                                                                          | reachable from the API's network only (security groups, private endpoints)                                                                       |
-| Authentication      | password required (`REDIS_PASSWORD` in the root `.env`, never committed); the container refuses to start without one | an ACL user limited to the key prefix and the commands the adapters run (list in docs/architecture.md#redis), its password from the secret store |
-| Encryption          | none (loopback)                                                                                                      | TLS: `rediss://` (the API warns at boot about `redis://` in production)                                                                          |
-| Credentials in logs | never: the URL is logged as host:port, errors are redacted                                                           | same                                                                                                                                             |
-| Persistence         | AOF every second, a volume                                                                                           | per use: cache and rate limits can lose data; locks and idempotency claims should survive a restart (AOF or the provider's persistence)          |
-| Memory              | 256 MB, evicts only keys with a TTL (`volatile-lru`)                                                                 | sized to the workload, with the same policy: every key the template writes has a TTL, so keys without one (a future job queue) are never evicted |
-| Process             | runs as the `redis` user; password passed through a file, not the command line                                       | the provider's hardening                                                                                                                         |
+| Concern             | Development (`pnpm services:up`)                                                     | The VPS target (`deploy/vps`)                                                                                                | Elsewhere (REQUIRES CONFIGURATION)                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Where               | a container on this machine                                                          | a container on the server, beside the API                                                                                    | a managed or private Redis (ElastiCache, Memorystore, Azure Cache, Upstash...) on the private network only, never a public endpoint              |
+| Network             | published on 127.0.0.1 only (port 6389)                                              | the internal network `data` only, never published                                                                            | reachable from the API's network only (security groups, private endpoints)                                                                       |
+| Authentication      | a password (`REDIS_PASSWORD` in the root `.env`; `app` when unset, development only) | an ACL user, `app`, limited to `~app:*` and the commands the adapters run; the default user off; its password in `redis.env` | an ACL user limited to the key prefix and the commands the adapters run (list in docs/architecture.md#redis), its password from the secret store |
+| Encryption          | none (loopback)                                                                      | none: the internal network stays on the server (the boot warning about `redis://` is expected)                               | TLS: `rediss://` (the API warns at boot about `redis://` in production)                                                                          |
+| Credentials in logs | never: the URL is logged as host:port, errors are redacted                           | same                                                                                                                         | same                                                                                                                                             |
+| Persistence         | AOF every second, a volume                                                           | AOF every second, the volume `app_redis_data`                                                                                | per use: cache and rate limits can lose data; locks and idempotency claims should survive a restart (AOF or the provider's persistence)          |
+| Memory              | 256 MB, evicts only keys with a TTL (`volatile-lru`)                                 | the same, in a container limited to 512 MB                                                                                   | sized to the workload, with the same policy: every key the template writes has a TTL, so keys without one (a future job queue) are never evicted |
+| Process             | runs as the `redis` user; password passed through a file, not the command line       | the same, with the server's hardening ([Container images](#container-images)); the ACL file on a `tmpfs` only Redis reads    | the provider's hardening                                                                                                                         |
 
 The application treats Redis as untrusted for correctness: losing it degrades features but never
 authorizes a request, and no session or authorization data lives there.
@@ -660,8 +676,9 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   one day at most, never until the base digest changes.
 - The files of an image belong to root: the user it runs as can read and run them, never change
   them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
-  - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`, and
-    nginx's generated configuration), emptied at every restart;
+  - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`,
+    nginx's generated configuration, PostgreSQL's socket directory), emptied at every restart; the
+    data of PostgreSQL, its backups and Redis on their own volumes;
   - no Linux capability (`cap_drop: [ALL]`), except Caddy's `NET_BIND_SERVICE` for ports 80
     and 443;
   - `no-new-privileges`, so a setuid binary grants nothing;
@@ -851,8 +868,10 @@ Accepted on purpose, each with its way out:
 - [ ] TLS and HSTS at the edge; `TRUST_PROXY` (and nginx realip) for the real topology.
 - [ ] `CORS_ORIGINS` / `AUTH_COOKIE_SAMESITE` only for another browser client on another origin;
       the web app itself is served on the API's origin ([CSRF, CORS, XSS](#csrf-cors-xss)).
-- [ ] `RATE_LIMIT_STORE=redis` (with a private, authenticated, TLS Redis) if more than one API
-      instance runs.
+- [ ] More than one server: `RATE_LIMIT_STORE=redis` on a Redis they all reach, private,
+      authenticated and over TLS (the VPS target's own Redis serves one server).
+- [ ] The VPS target's own database: its nightly backups copied off the server
+      ([deploy-vps.md](deploy-vps.md#backups)).
 - [ ] Error tracking (Sentry projects for API and web), its access and retention; tracing backend
       and its credentials in `OTEL_EXPORTER_OTLP_HEADERS`.
 - [ ] Production secrets per environment; who can read them; rotation.
