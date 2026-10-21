@@ -677,10 +677,16 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
   `messages.ts` first: the site does not compile until both dictionaries have it, and
   `pnpm --filter landing test` fails on an empty text, stray spaces or English left in the Spanish
   dictionary.
-- **The product's name.** `SITE_NAME` in `src/lib/site.ts`; the icon is `public/favicon.svg`.
+- **The product's name.** `SITE_NAME` in `src/lib/site.ts`; the icon is `public/favicon.svg`, and
+  the picture a shared link shows is `public/og.png`, with the name drawn in it: replace it with the
+  product's, at 1200 × 630 (`SHARE_IMAGE` in the same file; a spec checks the size).
 - **The look.** Colours (each with its light and dark value), the five type sizes and the motion
   live in `src/styles/global.css`; components use them through Tailwind classes (`bg-ground`,
   `text-ink`, `text-display`). Keep body text in the full ink and contrast at 4.5:1 or more.
+  `pnpm lint` checks the classes against that stylesheet: an unknown, duplicate or conflicting class
+  fails, and so does an order other than Tailwind's, which `pnpm lint:fix` and the pre-commit hook
+  write. A new motion class, kept outside `@layer components` like the others, is listed in
+  `eslint.config.js`.
 - **A section.** A component in `src/components/` that takes `locale` and reads its texts with
   `messages(locale)`, added to `Home.astro`. Give it a heading (`h2`, named by `aria-labelledby`
   on the section) and the `reveal` class on the parts that should arrive as it scrolls in.

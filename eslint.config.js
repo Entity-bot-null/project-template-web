@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import prettier from 'eslint-config-prettier/flat';
 import astro from 'eslint-plugin-astro';
+import betterTailwindcss from 'eslint-plugin-better-tailwindcss';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
@@ -195,6 +196,34 @@ export default defineConfig(
       // role="list" on a list without bullets is deliberate: Safari drops the
       // list semantics of a <ul> or <ol> styled with list-style: none.
       'astro/jsx-a11y/no-redundant-roles': ['error', { ul: ['list'], ol: ['list'] }],
+    },
+  },
+  // The landing's Tailwind classes, read against its own stylesheet (theme
+  // and component classes): an unknown, duplicate, conflicting or deprecated
+  // class is an error, and so is an order other than Tailwind's, which
+  // `eslint --fix` (and so the pre-commit hook) writes. Prettier's Tailwind
+  // plugin would sort them too, but it cannot read the syntax tree of
+  // prettier-plugin-astro 1.1 (Astro's Rust compiler).
+  {
+    files: ['apps/landing/**/*.astro'],
+    extends: [betterTailwindcss.configs['recommended-error']],
+    settings: {
+      'better-tailwindcss': {
+        cwd: 'apps/landing',
+        entryPoint: 'src/styles/global.css',
+        detectComponentClasses: true,
+      },
+    },
+    rules: {
+      // Line breaks are Prettier's.
+      'better-tailwindcss/enforce-consistent-line-wrapping': 'off',
+      // The motion classes of global.css stay outside @layer components on
+      // purpose: they exist only under prefers-reduced-motion: no-preference,
+      // unlayered so no utility overrides them. A new one is listed here.
+      'better-tailwindcss/no-unknown-classes': [
+        'error',
+        { ignore: ['^reveal$', '^reveal-load$', '^reveal-line$', '^reveal-lines$', '^settle$'] },
+      ],
     },
   },
 
