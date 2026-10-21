@@ -177,16 +177,17 @@ git init -b main
 
 Abre el proyecto en tu editor (`code .`) y cambia:
 
-| Fichero                           | Cambio                                                                               |
-| --------------------------------- | ------------------------------------------------------------------------------------ |
-| `package.json` (raíz)             | `"name"` → `REPO`, `"description"` → una frase sobre el producto                     |
-| `README.md`                       | el título y el primer párrafo                                                        |
-| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (el idioma de tu interfaz) |
-| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Producto> API')`                                   |
-| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → el nombre del producto, tal como lo muestra el sitio público           |
-| `SECURITY.md`                     | `security@example.com` → tu contacto de seguridad                                    |
-| `.github/CODEOWNERS`              | sustituye `@your-org/...` por usuarios o equipos reales y quita el `#`               |
-| `CHANGELOG.md`                    | deja solo el título `# Changelog`: la historia de la plantilla no es la tuya         |
+| Fichero                           | Cambio                                                                                                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `package.json` (raíz)             | `"name"` → `REPO`, `"description"` → una frase sobre el producto                                             |
+| `README.md`                       | el título y el primer párrafo                                                                                |
+| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (el idioma de tu interfaz)                         |
+| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Producto> API')`                                                           |
+| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → el nombre del producto, tal como lo muestra el sitio público                                   |
+| `apps/landing/public/`            | `favicon.svg` y `og.png` (1200 × 630) → el icono de tu producto y la imagen que muestra un enlace compartido |
+| `SECURITY.md`                     | `security@example.com` → tu contacto de seguridad                                                            |
+| `.github/CODEOWNERS`              | sustituye `@your-org/...` por usuarios o equipos reales y quita el `#`                                       |
+| `CHANGELOG.md`                    | deja solo el título `# Changelog`: la historia de la plantilla no es la tuya                                 |
 
 Los paquetes `apps/api`, `apps/web` y `apps/landing` conservan sus nombres (`api`, `web`,
 `landing`): son privados.

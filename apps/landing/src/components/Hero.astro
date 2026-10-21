@@ -22,7 +22,7 @@ const t = messages(locale);
   <Headline as="h1" id="hero-heading" lines={t.home.heading} class="max-w-[15ch]" />
   <div class="flex flex-col gap-8 md:flex-row md:items-baseline-last md:justify-between">
     <p class="reveal-load max-w-[36ch] text-lead [--d:420ms]">{t.home.lead}</p>
-    <a href={appPath()} class="button reveal-load w-full md:w-auto [--d:520ms]">
+    <a href={appPath()} class="button reveal-load w-full [--d:520ms] md:w-auto">
       {t.home.action}
     </a>
   </div>

@@ -172,16 +172,17 @@ git init -b main
 
 Open the project in your editor (`code .`) and change:
 
-| File                              | Change                                                                       |
-| --------------------------------- | ---------------------------------------------------------------------------- |
-| `package.json` (root)             | `"name"` → `REPO`, `"description"` → one sentence about the product          |
-| `README.md`                       | the title and the first paragraph                                            |
-| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (your UI language) |
-| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                            |
-| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → the product's name, as the public site shows it                |
-| `SECURITY.md`                     | `security@example.com` → your security contact                               |
-| `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`          |
-| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours     |
+| File                              | Change                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `package.json` (root)             | `"name"` → `REPO`, `"description"` → one sentence about the product                               |
+| `README.md`                       | the title and the first paragraph                                                                 |
+| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (your UI language)                      |
+| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                                                 |
+| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → the product's name, as the public site shows it                                     |
+| `apps/landing/public/`            | `favicon.svg` and `og.png` (1200 × 630) → your product's icon and the picture a shared link shows |
+| `SECURITY.md`                     | `security@example.com` → your security contact                                                    |
+| `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`                               |
+| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours                          |
 
 The packages `apps/api`, `apps/web` and `apps/landing` keep their names (`api`, `web`,
 `landing`): they are private.

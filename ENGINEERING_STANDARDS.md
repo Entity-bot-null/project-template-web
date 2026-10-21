@@ -23,7 +23,8 @@ checked in review. Details live in `docs/`.
   ([docs/architecture.md](docs/architecture.md)).
 - The web app reaches the API only through `src/api/client.ts` and folds results with `call()`.
 - The landing is static HTML and CSS in every language of the site, its texts in typed
-  dictionaries ([docs/architecture.md](docs/architecture.md#landing-appslanding)).
+  dictionaries ([docs/architecture.md](docs/architecture.md#landing-appslanding)), its Tailwind
+  classes known to its stylesheet and in Tailwind's order (`pnpm lint`).
 - Shared behavior lives in one place (`common/`, `src/auth/`, `src/hooks/`); do not copy it.
 - Significant decisions are recorded as ADRs ([docs/adr/](docs/adr/)).
 

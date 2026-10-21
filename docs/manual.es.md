@@ -88,6 +88,7 @@ git init -b main
 | `apps/web/index.html`             | `<title>`, la meta description, `lang`                                                                                            |
 | `apps/api/src/openapi/openapi.ts` | `.setTitle('API')`, y después ejecuta `pnpm contract`                                                                             |
 | `apps/landing/src/lib/site.ts`    | `SITE_NAME`, el nombre en el sitio público; sus textos están en `apps/landing/src/i18n/` ([how-to](how-to.md#change-the-landing)) |
+| `apps/landing/public/`            | `favicon.svg`, el icono, y `og.png`, la imagen que muestra un enlace compartido, con el nombre dibujado (1200 × 630)              |
 | `SECURITY.md`                     | el contacto privado para reportar vulnerabilidades                                                                                |
 | `.github/CODEOWNERS`              | usuarios o equipos reales en lugar de los marcadores, sin comentar                                                                |
 | `LICENSE` (no viene ninguno)      | la licencia que necesite el producto, si se distribuye                                                                            |
@@ -774,17 +775,18 @@ a `production` (el entorno pide la aprobación de sus revisores).
 pnpm smoke --url https://<host público> --api http://<api dentro de la plataforma>:3000 --release <sha>
 ```
 
-| Comprobación                    | Pasa cuando                                                                                                                                         |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| web server health               | `/healthz` responde 200                                                                                                                             |
-| landing                         | `/` es la landing, con sus enlaces en el origen de este despliegue (`APP_ORIGIN`) y las cabeceras CSP y `X-Content-Type-Options`; `/es/` en español |
-| not-found page                  | una dirección desconocida responde 404 con la página de no encontrado                                                                               |
-| app shell                       | `/app/` y un enlace profundo bajo ella son la app                                                                                                   |
-| emailed links of before `/app/` | `/reset-password` redirige a `/app/reset-password`                                                                                                  |
-| runtime configuration           | `/app/app-config.json` responde, con la release esperada si se pasa `--release`                                                                     |
-| API through the web server      | una ruta `/api/...` desconocida responde el 404 JSON de la API con un request id                                                                    |
-| probes not public               | `/api/health/ready` responde 404 por la URL pública                                                                                                 |
-| API liveness y readiness        | 200 en la propia API (`degraded` se informa, no es un fallo)                                                                                        |
+| Comprobación                    | Pasa cuando                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| web server health               | `/healthz` responde 200                                                                                                                                                        |
+| landing                         | `/` es la landing, con sus enlaces y su imagen para compartir en el origen de este despliegue (`APP_ORIGIN`) y las cabeceras CSP y `X-Content-Type-Options`; `/es/` en español |
+| share picture                   | `/og.png` responde 200 como PNG                                                                                                                                                |
+| not-found page                  | una dirección desconocida responde 404 con la página de no encontrado                                                                                                          |
+| app shell                       | `/app/` y un enlace profundo bajo ella son la app                                                                                                                              |
+| emailed links of before `/app/` | `/reset-password` redirige a `/app/reset-password`                                                                                                                             |
+| runtime configuration           | `/app/app-config.json` responde, con la release esperada si se pasa `--release`                                                                                                |
+| API through the web server      | una ruta `/api/...` desconocida responde el 404 JSON de la API con un request id                                                                                               |
+| probes not public               | `/api/health/ready` responde 404 por la URL pública                                                                                                                            |
+| API liveness y readiness        | 200 en la propia API (`degraded` se informa, no es un fallo)                                                                                                                   |
 
 No inicia sesión ni escribe nada; cualquier fallo sale con código 1. Se puede omitir cualquiera de
 las dos URLs para comprobar solo un lado.
