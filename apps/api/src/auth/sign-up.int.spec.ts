@@ -95,7 +95,7 @@ describe.skipIf(skipWithoutMailpit)('sign-up (PostgreSQL + Mailpit)', () => {
     const [message] = await messagesTo(email);
     const { text } = await readMessage(message?.ID ?? '');
     // The link points at the configured public origin, never at a request's Host.
-    expect(text).toContain(`https://app.example.com/confirm-sign-up#token=${token}`);
+    expect(text).toContain(`https://app.example.com/app/confirm-sign-up#token=${token}`);
 
     const res = await confirm(token).expect(200);
     const session = envelopeOf<{ accessToken: string; user: Record<string, unknown> }>(res).data;

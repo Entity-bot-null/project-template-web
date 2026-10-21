@@ -9,7 +9,7 @@ const ADMIN = { email: 'admin@example.com', password: 'admin-password', name: 'A
 const REFRESH_COOKIE = '__Host-refresh_token';
 
 async function signIn(page: Page, user: { email: string; password: string }) {
-  await page.goto('/sign-in');
+  await page.goto('/app/sign-in');
   await page.getByLabel('Email').fill(user.email);
   await page.getByLabel('Password', { exact: true }).fill(user.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -20,7 +20,7 @@ async function cookieNames(context: BrowserContext): Promise<string[]> {
 }
 
 test('sends anonymous visitors to sign-in', async ({ page }) => {
-  await page.goto('/admin/users');
+  await page.goto('/app/admin/users');
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
 });
@@ -47,7 +47,7 @@ test('keeps the session across a reload and ends it on sign-out', async ({ page 
   // The server ended the session and the browser dropped both cookies.
   await expect.poll(() => cookieNames(page.context())).not.toContain(REFRESH_COOKIE);
   expect(await cookieNames(page.context())).not.toContain('has_session');
-  await page.goto('/');
+  await page.goto('/app/');
   await expect(page).toHaveURL(/\/sign-in$/);
 });
 
@@ -55,7 +55,7 @@ test('signs every open tab out together', async ({ context, page }) => {
   await signIn(page, MEMBER);
   await expect(page.getByRole('heading', { name: `Welcome, ${MEMBER.name}` })).toBeVisible();
   const otherTab = await context.newPage();
-  await otherTab.goto('/');
+  await otherTab.goto('/app/');
   await expect(otherTab.getByRole('heading', { name: `Welcome, ${MEMBER.name}` })).toBeVisible();
 
   await page.getByRole('button', { name: 'Sign out' }).click();
@@ -66,8 +66,10 @@ test('keeps members out of the admin area', async ({ page }) => {
   await signIn(page, MEMBER);
   await expect(page.getByRole('heading', { name: `Welcome, ${MEMBER.name}` })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Users' })).toHaveCount(0);
-  await page.goto('/admin/users');
-  await expect(page).toHaveURL(/\/$/);
+  await page.goto('/app/admin/users');
+  // The app's home: /app, the router's basename (the web server redirects
+  // /app to /app/ when the page is loaded again).
+  await expect(page).toHaveURL(/\/app\/?$/);
 });
 
 test('shows admins the list of users', async ({ page }) => {

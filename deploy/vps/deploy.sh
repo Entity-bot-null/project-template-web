@@ -4,12 +4,16 @@
 #
 #   ./deploy.sh <api image@digest> <api-migrate image@digest> <web image@digest> <release>
 #
-# 1. pulls the new images by digest;
-# 2. migrates the database (stops here on failure: the running release keeps
+# 1. pulls the new images by digest, and the pinned images of the data
+#    services;
+# 2. starts the data services, or leaves them running: Redis, and PostgreSQL
+#    with its nightly backup when this server runs the database
+#    (COMPOSE_PROFILES=db in server.env);
+# 3. migrates the database (stops here on failure: the running release keeps
 #    serving);
-# 3. rolls out the API, then the web image, waiting until they are healthy
+# 4. rolls out the API, then the web image, waiting until they are healthy
 #    and the API is ready;
-# 4. on success, records it in release.env (the one it replaced moves to
+# 5. on success, records it in release.env (the one it replaced moves to
 #    release.previous.env, the target of rollback.sh); on failure, starts
 #    the release of release.env again.
 #
@@ -35,7 +39,7 @@ for image in "$1" "$2" "$3"; do
       ;;
   esac
 done
-for file in server.env api.env migrate.env web.env; do
+for file in server.env api.env migrate.env web.env redis.env; do
   if [ ! -f "$file" ]; then
     echo "deploy: $file is missing next to compose.yaml (copy $file.example and fill it in)" >&2
     exit 2
@@ -54,6 +58,28 @@ fi
 
 compose() {
   docker compose --env-file server.env --env-file "$release_file" "$@"
+}
+
+# The services a release does not replace: Redis, and PostgreSQL with its
+# nightly backup when this server runs the database. Their images are pinned
+# in compose.yaml.
+pull_data() {
+  if [ "$with_database" = yes ]; then
+    compose pull redis db backup
+  else
+    compose pull redis
+  fi
+}
+
+# Redis and PostgreSQL healthy before the migration needs them. The backup is
+# started, not waited for: a failed backup shows in `docker compose ps` (and
+# the alerts) and must not hold a deployment back, which may be its fix.
+start_data() {
+  if [ "$with_database" = yes ]; then
+    compose up --detach --wait --wait-timeout 180 redis db && compose up --detach backup
+  else
+    compose up --detach --wait --wait-timeout 180 redis
+  fi
 }
 
 # The API answers readiness (its database reachable), not only liveness, which
@@ -83,15 +109,39 @@ fi
 } > release.next.env
 
 release_file=release.next.env
+# The profiles server.env enables: the database here, or a managed one.
+if compose config --services | grep -qx db; then
+  with_database=yes
+  for file in db.env backup.env; do
+    if [ ! -f "$file" ]; then
+      rm -f release.next.env
+      echo "deploy: $file is missing next to compose.yaml (COMPOSE_PROFILES=db: copy $file.example and fill it in)" >&2
+      exit 2
+    fi
+  done
+else
+  with_database=no
+fi
+
 echo "deploy: pulling release $4"
 # By digest: Docker refuses content whose digest is not the one asked for.
-if ! compose --profile migrate pull migrate api web proxy; then
+if ! compose --profile migrate pull migrate api web proxy || ! pull_data; then
   rm -f release.next.env
   echo "deploy: could not pull release $4; nothing changed" >&2
   exit 1
 fi
 if [ -n "${REGISTRY_TOKEN:-}" ]; then
   logout_registry
+fi
+
+echo "deploy: starting the data services"
+# Already running and unchanged: left as they are. A new pinned image (an
+# update of PostgreSQL or Redis) restarts that service here, before the
+# migration.
+if ! start_data; then
+  rm -f release.next.env
+  echo "deploy: the data services did not start; the running release keeps serving: docker compose ps, and their logs" >&2
+  exit 1
 fi
 
 echo "deploy: migrating the database"

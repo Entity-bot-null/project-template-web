@@ -1,6 +1,7 @@
-# The built SPA, plus /api forwarded to the API, so the browser sees a single
-# origin. ${API_UPSTREAM} and the other ${...} below are substituted when the
-# container starts (templates of the official nginx image), after
+# One origin for the browser: the landing at / (apps/landing, static pages),
+# the web app at /app/ (apps/web, a single-page app) and the API at /api/,
+# forwarded. ${API_UPSTREAM} and the other ${...} below are substituted when
+# the container starts (templates of the official nginx image), after
 # 18-validate-runtime-config.sh checked them; nginx's own $variables are left
 # alone.
 
@@ -20,6 +21,14 @@ map $request_uri $request_path {
 log_format app '$remote_addr [$time_local] "$request_method $request_path" $status '
                '$body_bytes_sent $request_time "$http_user_agent" request_id=$request_id';
 
+# The landing's not-found page in the language of the address: one line per
+# language besides the default (apps/landing/src/i18n/locales.ts; the
+# repository's tests check that the two agree).
+map $uri $landing_not_found {
+    default /404.html;
+    ~^/es/ /es/404/index.html;
+}
+
 server {
     listen 8080;
     server_name _;
@@ -32,20 +41,15 @@ server {
     root /usr/share/nginx/html;
     server_tokens off;
     access_log /var/log/nginx/access.log app;
+    # Redirects name a path, never an address built from this request: the
+    # browser resolves it against the address it used. An absolute one would
+    # carry this container's port (8080) and the Host header a client chose.
+    absolute_redirect off;
 
     location = /healthz {
         access_log off;
         default_type text/plain;
         return 200 "ok\n";
-    }
-
-    # Deployment settings the app reads at runtime (src/monitoring/runtimeConfig.ts):
-    # one image, many environments. Public, like the bundle: never a secret.
-    location = /app-config.json {
-        include /etc/nginx/snippets/security-headers.conf;
-        add_header Cache-Control "no-store" always;
-        default_type application/json;
-        return 200 '{"environment":"${APP_ENVIRONMENT}","release":"${APP_RELEASE}","sentryDsn":"${WEB_SENTRY_DSN}","sentrySampleRate":"${WEB_SENTRY_SAMPLE_RATE}","webVitalsSampleRate":"${WEB_VITALS_SAMPLE_RATE}"}';
     }
 
     # ^~: API paths that end like a file name (/api/files/report.pdf) are
@@ -105,35 +109,90 @@ server {
         return 413 '{"data":null,"message":"The request body is too large"}';
     }
 
-    # Hashed build output: immutable, cached for a year. ^~ keeps the regex
-    # location below from taking these requests. Not on errors (no `always`):
-    # a 404 for an asset must never be cached for a year.
-    location ^~ /assets/ {
+    # ---- The web app (apps/web), built with its base at /app/ ----
+
+    location = /app {
+        include /etc/nginx/snippets/security-headers.conf;
+        return 301 /app/$is_args$args;
+    }
+
+    location ^~ /app/ {
+        # Deployment settings the app reads at runtime
+        # (src/monitoring/runtimeConfig.ts): one image, many environments.
+        # Public, like the bundle: never a secret.
+        location = /app/app-config.json {
+            include /etc/nginx/snippets/security-headers.conf;
+            add_header Cache-Control "no-store" always;
+            default_type application/json;
+            return 200 '{"environment":"${APP_ENVIRONMENT}","release":"${APP_RELEASE}","sentryDsn":"${WEB_SENTRY_DSN}","sentrySampleRate":"${WEB_SENTRY_SAMPLE_RATE}","webVitalsSampleRate":"${WEB_VITALS_SAMPLE_RATE}"}';
+        }
+
+        # Hashed build output: immutable, cached for a year. ^~ keeps the
+        # regex location below from taking these requests. Not on errors (no
+        # `always`): a 404 for an asset must never be cached for a year.
+        location ^~ /app/assets/ {
+            include /etc/nginx/snippets/security-headers.conf;
+            add_header Cache-Control "public, max-age=31536000, immutable";
+            try_files $uri =404;
+        }
+
+        # A path that looks like a file must exist: never answer index.html
+        # for a missing asset. The extension must start with a letter, so a
+        # route such as /app/releases/v1.2 still reaches the app.
+        location ~* "\.[a-z][a-z0-9]{1,9}$" {
+            include /etc/nginx/snippets/security-headers.conf;
+            try_files $uri =404;
+        }
+
+        # The app's entry point, always revalidated so a deployment is picked
+        # up at once. Exact match: it wins over the regex location above, also
+        # when reached through the fallback below.
+        location = /app/index.html {
+            include /etc/nginx/snippets/security-headers.conf;
+            add_header Cache-Control "no-cache" always;
+        }
+
+        # Every other path under /app/ is a client-side route, answered with
+        # the entry point.
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri /app/index.html;
+    }
+
+    # Links sent before the app moved under /app/ keep working: the screens
+    # emails link to redirect there, the query string kept (the token rides in
+    # the fragment, which browsers keep across a redirect). The longest-lived
+    # of those links, an invitation, works for 7 days; a project that never
+    # served the app at the root can delete this location.
+    location ~ "^/(sign-in|forgot-password|reset-password|accept-invitation|confirm-sign-up|confirm-email-change|revert-email-change)/?$" {
+        include /etc/nginx/snippets/security-headers.conf;
+        return 301 /app/$1$is_args$args;
+    }
+
+    # ---- The landing (apps/landing): static pages, everything else ----
+
+    # Hashed build output: immutable, cached for a year (not on errors).
+    location ^~ /_astro/ {
         include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;
     }
 
-    # A path that looks like a file must exist: never answer index.html for a
-    # missing asset. The extension must start with a letter, so a route such
-    # as /releases/v1.2 still reaches the app.
-    location ~* "\.[a-z][a-z0-9]{1,9}$" {
-        include /etc/nginx/snippets/security-headers.conf;
-        try_files $uri =404;
-    }
-
-    # The app's entry point, always revalidated so a deployment is picked up
-    # at once. Exact match: it wins over the regex location above, also when
-    # reached through the fallback below.
-    location = /index.html {
-        include /etc/nginx/snippets/security-headers.conf;
-        add_header Cache-Control "no-cache" always;
-    }
-
-    # Every other path is a client-side route, answered with the entry point.
+    # A page is a folder with its index.html (/es/); an address without its
+    # last slash is redirected to it (/es to /es/); nothing else is guessed:
+    # an address the site does not have answers 404 with the not-found page
+    # of its language. Revalidated, so a deployment shows at once.
     location / {
         include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-cache" always;
-        try_files $uri /index.html;
+        # The landing is built once, for a placeholder origin
+        # (apps/web/Dockerfile): its absolute links (canonical and alternate
+        # links, the sitemap, robots.txt) get this deployment's public origin
+        # as they are served. APP_ORIGIN is checked before nginx starts.
+        sub_filter_once off;
+        sub_filter_types text/xml application/xml text/plain;
+        sub_filter 'https://public-origin.invalid' '${APP_ORIGIN}';
+        error_page 404 $landing_not_found;
+        try_files $uri $uri/ =404;
     }
 }

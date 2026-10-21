@@ -19,6 +19,10 @@ endpoint, screen, environment variable, role, dependency) follow the recipe in
   `apps/web/src/api/schema.d.ts`; never edit them by hand.
 - Web: call the API only through `src/api/client.ts`, fold results with `call()`, keep the access
   token in memory.
+- Landing (`apps/landing`, Astro + Tailwind CSS): every text in `src/i18n/en.ts` and `es.ts`, both
+  languages in the same change; pages are static HTML and CSS (no client script, no inline style,
+  nothing from another origin: the CSP refuses them, and the JavaScript budget is 0 kB); links into
+  the app through `src/lib/links.ts`. Recipe: [docs/how-to.md](docs/how-to.md#change-the-landing).
 - Tests next to the code: `*.spec.ts(x)` unit/component, `*.int.spec.ts` API integration,
   `e2e/*.e2e.ts` browser. Never weaken a test, a lint rule, a type or a threshold to make a check
   pass; fix the cause.

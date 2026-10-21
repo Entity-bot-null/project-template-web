@@ -31,7 +31,7 @@ function txWith(user: Record<string, unknown> | null) {
   return { tx, client: tx as unknown as Prisma.TransactionClient };
 }
 
-const context = { product: 'Acme', appOrigin: 'https://app.acme.test' };
+const context = { product: 'Acme', appUrl: 'https://app.acme.test/app' };
 
 describe('the password reset message', () => {
   it('mints its token when it is sent, puts it after # in a link to the configured origin, stores only its hash', async () => {
@@ -41,7 +41,7 @@ describe('the password reset message', () => {
       message: message(),
       ...context,
     });
-    const link = /https:\/\/app\.acme\.test\/reset-password#token=([A-Za-z0-9_-]{43})/.exec(
+    const link = /https:\/\/app\.acme\.test\/app\/reset-password#token=([A-Za-z0-9_-]{43})/.exec(
       rendered?.text ?? '',
     );
     expect(link).not.toBeNull();
@@ -90,7 +90,7 @@ describe('the password changed notice', () => {
     expect(viaReset?.subject).toBe('Your Acme password was changed');
     expect(viaReset?.text).toContain('on 2026-10-13 10:05:00 UTC');
     expect(viaReset?.text).toContain('Every session of the account was signed out.');
-    expect(viaReset?.text).toContain('https://app.acme.test/forgot-password');
+    expect(viaReset?.text).toContain('https://app.acme.test/app/forgot-password');
     expect(viaReset?.text).not.toMatch(/token=/);
     const viaChange = await passwordChangedTemplate.compose({
       tx: client,

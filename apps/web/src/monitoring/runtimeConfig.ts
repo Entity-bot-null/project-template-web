@@ -1,8 +1,9 @@
 // Settings that differ between deployments of the same build, read at runtime
-// from /app-config.json: one image runs in staging and in production. The web
-// server writes the file from its environment at start (apps/web/nginx), the
-// dev and preview servers from theirs (vite.config.ts). Never a secret here:
-// the file is public, like the bundle.
+// from app-config.json in the app's own folder (/app/app-config.json): one
+// image runs in staging and in production. The web server writes the file
+// from its environment at start (apps/web/nginx), the dev and preview servers
+// from theirs (vite.config.ts). Never a secret here: the file is public, like
+// the bundle.
 
 export interface RuntimeConfig {
   environment: string;
@@ -18,7 +19,7 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   release: 'unversioned',
 };
 
-const CONFIG_URL = '/app-config.json';
+const CONFIG_URL = `${import.meta.env.BASE_URL}app-config.json`;
 const TIMEOUT_MS = 3_000;
 
 let shared: Promise<RuntimeConfig> | undefined;

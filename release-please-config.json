@@ -23,6 +23,7 @@
       "extra-files": [
         { "type": "json", "path": "apps/api/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "apps/web/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "apps/landing/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "openapi/openapi.json", "jsonpath": "$.info.version" }
       ]
     }

@@ -1,0 +1,35 @@
+---
+// A picture of the app: the form an administrator invites someone with
+// (apps/web/src/pages/AdminInvitationsPage.tsx), filled in. In the app's own
+// words, since it is the app; `label` says what it shows in this page's
+// language.
+interface Props {
+  label: string;
+}
+
+const { label } = Astro.props;
+---
+
+<div data-ui role="img" aria-label={label} class="ui w-full max-w-140 p-5 sm:p-6">
+  <p class="text-[1.0625rem] font-semibold">Invite someone</p>
+  <div class="mt-4 grid gap-4 sm:grid-cols-[1fr_9rem]">
+    <div>
+      <span class="block font-medium">Email</span>
+      <span class="ui-field mt-1 truncate">ada@example.com</span>
+    </div>
+    <div>
+      <span class="block font-medium">Role</span>
+      <span class="ui-field mt-1 flex items-center justify-between">
+        Member
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 12 12"
+          class="size-3 fill-none stroke-current stroke-[1.5]"
+        >
+          <path d="m2.5 4.5 3.5 3.5 3.5-3.5"></path>
+        </svg>
+      </span>
+    </div>
+  </div>
+  <span class="ui-button mt-5">Send invitation</span>
+</div>

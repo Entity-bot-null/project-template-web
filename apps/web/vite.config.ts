@@ -1,7 +1,14 @@
 /// <reference types="vitest/config" />
 import type { ServerResponse } from 'node:http';
 import react from '@vitejs/plugin-react';
-import { defineConfig, type Plugin } from 'vite';
+import { type Connect, defineConfig, type Plugin } from 'vite';
+
+// Where the app lives on the site's origin: /app/, next to the landing at /
+// and the API at /api, one origin for the browser (apps/web/nginx in
+// production; in development the landing's dev server forwards /app here).
+// The router's basename (src/router.tsx) and the links the API puts in emails
+// (APP_BASE_PATH) follow it.
+const BASE = '/app/';
 
 // Where the dev server and `vite preview` forward /api. The browser only ever
 // talks to its own origin, in development as behind the production web
@@ -10,7 +17,7 @@ import { defineConfig, type Plugin } from 'vite';
 // localhost can resolve to ::1 first.
 const apiTarget = process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:3000';
 
-// /app-config.json, the deployment settings the app reads at runtime
+// /app/app-config.json, the deployment settings the app reads at runtime
 // (src/monitoring/runtimeConfig.ts), from this process's environment: the same
 // file the production web server writes from its own (apps/web/nginx). Empty
 // WEB_SENTRY_DSN: error tracking off, the default. WEB_VITALS_SAMPLE_RATE 0:
@@ -32,16 +39,42 @@ function runtimeConfig(): Plugin {
   return {
     name: 'runtime-config',
     configureServer(server) {
-      server.middlewares.use('/app-config.json', serve);
+      server.middlewares.use(`${BASE}app-config.json`, serve);
     },
     configurePreviewServer(server) {
-      server.middlewares.use('/app-config.json', serve);
+      server.middlewares.use(`${BASE}app-config.json`, serve);
+    },
+  };
+}
+
+// These servers serve the app alone: their root, and the base without its
+// last slash, lead to it (308, the query string kept), as the production web
+// server answers /app, instead of Vite's "did you mean /app/?" page.
+function redirectToBase(): Plugin {
+  const redirect: Connect.NextHandleFunction = (request, response, next) => {
+    const [path, query] = (request.url ?? '').split('?');
+    if (path !== '/' && path !== BASE.slice(0, -1)) {
+      next();
+      return;
+    }
+    response.statusCode = 308;
+    response.setHeader('Location', query === undefined ? BASE : `${BASE}?${query}`);
+    response.end();
+  };
+  return {
+    name: 'redirect-to-base',
+    configureServer(server) {
+      server.middlewares.use(redirect);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(redirect);
     },
   };
 }
 
 export default defineConfig({
-  plugins: [react(), runtimeConfig()],
+  base: BASE,
+  plugins: [react(), runtimeConfig(), redirectToBase()],
   server: {
     port: 5173,
     strictPort: true,

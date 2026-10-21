@@ -81,18 +81,20 @@ git init -b main
 
 ### 2.2 Renómbralo (REQUIERE CONFIGURACIÓN)
 
-| Dónde                             | Qué cambiar                                                        |
-| --------------------------------- | ------------------------------------------------------------------ |
-| `package.json` (raíz)             | `name`, `description`                                              |
-| `README.md`                       | el título y el primer párrafo                                      |
-| `apps/web/index.html`             | `<title>`, la meta description, `lang`                             |
-| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')`, y después ejecuta `pnpm contract`              |
-| `SECURITY.md`                     | el contacto privado para reportar vulnerabilidades                 |
-| `.github/CODEOWNERS`              | usuarios o equipos reales en lugar de los marcadores, sin comentar |
-| `LICENSE` (no viene ninguno)      | la licencia que necesite el producto, si se distribuye             |
+| Dónde                             | Qué cambiar                                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json` (raíz)             | `name`, `description`                                                                                                             |
+| `README.md`                       | el título y el primer párrafo                                                                                                     |
+| `apps/web/index.html`             | `<title>`, la meta description, `lang`                                                                                            |
+| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')`, y después ejecuta `pnpm contract`                                                                             |
+| `apps/landing/src/lib/site.ts`    | `SITE_NAME`, el nombre en el sitio público; sus textos están en `apps/landing/src/i18n/` ([how-to](how-to.md#change-the-landing)) |
+| `apps/landing/public/`            | `favicon.svg`, el icono, y `og.png`, la imagen que muestra un enlace compartido, con el nombre dibujado (1200 × 630)              |
+| `SECURITY.md`                     | el contacto privado para reportar vulnerabilidades                                                                                |
+| `.github/CODEOWNERS`              | usuarios o equipos reales en lugar de los marcadores, sin comentar                                                                |
+| `LICENSE` (no viene ninguno)      | la licencia que necesite el producto, si se distribuye                                                                            |
 
-Los paquetes del workspace se llaman `api` y `web` a propósito: son privados y no hace falta
-renombrarlos.
+Los paquetes del workspace se llaman `api`, `web` y `landing` a propósito: son privados y no hace
+falta renombrarlos.
 
 ### 2.3 Instala
 
@@ -115,7 +117,9 @@ openssl rand -hex 32
 
 Pega el valor impreso como `JWT_ACCESS_SECRET=` en `apps/api/.env`. Es el único valor que la API
 necesita para arrancar en local; el fichero documenta todas las demás variables. Ya apunta el correo
-al Mailpit local ([11.5](#115-correo)); borra `MAIL_SMTP_URL` y `SIGN_UP_ENABLED` (el registro necesita correo) para trabajar sin él.
+al Mailpit local ([11.5](#115-correo)); borra `MAIL_SMTP_URL` y `SIGN_UP_ENABLED` (el registro
+necesita correo) para trabajar sin él. También apunta la API al Redis local ([11.1](#111-redis));
+borra `REDIS_URL`, `RATE_LIMIT_STORE`, `CACHE_STORE` y `REDIS_REQUIRED` para trabajar sin él.
 
 Docker Compose lee el `.env` de la raíz. Créalo cuando necesites alguno de sus ajustes:
 
@@ -132,10 +136,12 @@ cp .env.example .env
 - **Puertos 1035 u 8035 ocupados** (el SMTP y la web de Mailpit; no sus habituales 1025 y 8025,
   que puede tener el Mailpit de otro proyecto): `MAILPIT_SMTP_PORT` y `MAILPIT_UI_PORT` en el `.env`
   de la raíz, y el puerto SMTP en `MAIL_SMTP_URL` de `apps/api/.env`.
-- **Redis local** ([11.1](#111-redis)): `REDIS_PASSWORD` en el `.env` de la raíz (la salida de
-  `openssl rand -hex 24`, pegada como valor).
+- **Puerto 6389 ocupado, u otra contraseña de Redis** ([11.1](#111-redis)): Redis usa el 6389 y no
+  el 6379 de Redis, con la contraseña `app`: `REDIS_PORT` y `REDIS_PASSWORD` en el `.env` de la
+  raíz, y lo mismo en `REDIS_URL` de `apps/api/.env`.
 
-`apps/web/.env.example` lista los ajustes opcionales de la web; ninguno es necesario.
+`apps/web/.env.example` y `apps/landing/.env.example` listan los ajustes opcionales de la web y de
+la landing; ninguno es necesario.
 
 Nunca hagas commit de un fichero `.env`: `.gitignore`, el hook de pre-commit y los escaneos de
 secretos los rechazan.
@@ -157,25 +163,29 @@ El seed imprime las cuentas: `admin@example.com` / `admin-password` y `member@ex
 pnpm dev
 ```
 
-Arranca la base de datos y Mailpit (`pnpm services:up`, si estaban parados) y después la API y la
-web con recarga en caliente, e imprime estas direcciones en un recuadro bajo sus logs, también tras
-cada reinicio:
+Arranca la base de datos, Redis y Mailpit (`pnpm services:up`, si estaban parados) y después la API,
+la web y la landing (el sitio público) con recarga en caliente, e imprime estas direcciones en un
+recuadro bajo sus logs, también tras cada reinicio:
 
-| Qué                               | URL                                             |
-| --------------------------------- | ----------------------------------------------- |
-| Web                               | http://localhost:5173                           |
-| API                               | http://127.0.0.1:3000/api                       |
-| Documentación de la API (Swagger) | http://localhost:3000/api/docs                  |
-| Liveness / readiness de la API    | http://127.0.0.1:3000/api/health/live, `/ready` |
-| Correos que envió la API          | http://localhost:8035 (Mailpit)                 |
+| Qué                                        | URL                                             |
+| ------------------------------------------ | ----------------------------------------------- |
+| El sitio: la landing, en español en `/es/` | http://localhost:4321                           |
+| La web, a través del sitio                 | http://localhost:4321/app/                      |
+| API                                        | http://127.0.0.1:3000/api                       |
+| Documentación de la API (Swagger)          | http://localhost:3000/api/docs                  |
+| Liveness / readiness de la API             | http://127.0.0.1:3000/api/health/live, `/ready` |
+| Correos que envió la API                   | http://localhost:8035 (Mailpit)                 |
 
-Abre la web e inicia sesión con una cuenta del seed. La primera línea de log de la API dice qué
-está activo:
-`Starting release unversioned in development: tracing and metrics off, error tracking off, Redis off, email on`.
+El servidor de la landing es la entrada única del sitio, como la imagen web en producción: reenvía
+`/app` al servidor de desarrollo de la web (que también responde por sí solo en
+http://localhost:5173/app/) y `/api` a la API. Abre http://localhost:4321, sigue **Iniciar sesión**
+e inicia sesión con una cuenta del seed. La primera línea de log de la API dice qué está activo:
+`Starting release unversioned in development: tracing and metrics off, error tracking off, Redis on, email on`.
 
-Para con `Ctrl+C`. `pnpm db:down` retira los contenedores de la base de datos y de Mailpit; los datos
-de la base de datos se quedan en su volumen de Docker (los mensajes de Mailpit no), y los servicios
-opcionales siguen funcionando hasta `docker compose --profile <perfil> down`.
+Para con `Ctrl+C`. `pnpm db:down` retira los contenedores de la base de datos, de Redis y de
+Mailpit; los datos de la base de datos y de Redis se quedan en sus volúmenes de Docker (los mensajes
+de Mailpit no), y los servicios opcionales siguen funcionando hasta
+`docker compose --profile <perfil> down`.
 
 ### 2.7 Comprueba que pasan todos los gates
 
@@ -190,8 +200,8 @@ pnpm test:scripts                        # tests de los scripts del repositorio 
 pnpm sast                                # Semgrep (Docker; unos minutos, ver 14)
 pnpm lint:workflows                      # actionlint + zizmor + shellcheck (Docker)
 pnpm observability:check                 # dashboards y reglas de alerta, promtool (Docker)
-pnpm iac:check                           # Terraform, TFLint, Trivy, cloud-init, roles de la base de datos (Docker)
-docker compose --profile stack up --build   # imágenes de producción en http://localhost:8080
+pnpm iac:check                           # Terraform, TFLint, Trivy, cloud-init, los dos scripts de roles (Docker)
+docker compose --profile stack up --build   # imágenes de producción: el sitio en http://localhost:8080, la app en /app/
 ```
 
 Para el último, el `.env` de la raíz necesita `JWT_ACCESS_SECRET`. En otra terminal,
@@ -364,26 +374,30 @@ pnpm lint:fix      # aplica los arreglos automáticos de ESLint
 
 ## 4. Tests
 
-| Tipo                       | Comando                                                             | Necesita                                       | Ficheros                                 |
-| -------------------------- | ------------------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------- |
-| Unitarios y de componentes | `pnpm test`                                                         | nada                                           | `*.spec.ts`, `*.spec.tsx`                |
-| Con cobertura              | `pnpm test:coverage`                                                | nada                                           | informes en `apps/*/coverage/index.html` |
-| Modo watch                 | `pnpm --filter api test:watch`, `pnpm --filter web test:watch`      | nada                                           |                                          |
-| Un fichero                 | `pnpm --filter api exec vitest run src/users/users.service.spec.ts` | nada                                           |                                          |
-| Integración                | `pnpm test:integration`                                             | `pnpm db:up`; Redis opcional                   | `apps/api/src/**/*.int.spec.ts`          |
-| End-to-end                 | `pnpm test:e2e`                                                     | `pnpm db:up`, `pnpm build`, Chromium instalado | `e2e/*.e2e.ts`                           |
-| End-to-end, interactivo    | `pnpm exec playwright test --ui`                                    | lo mismo                                       |                                          |
-| Un solo test end-to-end    | `pnpm exec playwright test --grep "keeps members out"`              | lo mismo                                       |                                          |
-| Último informe end-to-end  | `pnpm exec playwright show-report`                                  | una ejecución anterior                         | `playwright-report/`                     |
+| Tipo                       | Comando                                                                                            | Necesita                                             | Ficheros                                 |
+| -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------- |
+| Unitarios y de componentes | `pnpm test`                                                                                        | nada                                                 | `*.spec.ts`, `*.spec.tsx`                |
+| Con cobertura              | `pnpm test:coverage`                                                                               | nada                                                 | informes en `apps/*/coverage/index.html` |
+| Modo watch                 | `pnpm --filter api test:watch`, `pnpm --filter web test:watch`, `pnpm --filter landing test:watch` | nada                                                 |                                          |
+| Un fichero                 | `pnpm --filter api exec vitest run src/users/users.service.spec.ts`                                | nada                                                 |                                          |
+| Integración                | `pnpm test:integration`                                                                            | `pnpm services:up` (PostgreSQL, Redis, Mailpit)      | `apps/api/src/**/*.int.spec.ts`          |
+| End-to-end                 | `pnpm test:e2e`                                                                                    | `pnpm services:up`, `pnpm build`, Chromium instalado | `e2e/*.e2e.ts`                           |
+| End-to-end, interactivo    | `pnpm exec playwright test --ui`                                                                   | lo mismo                                             |                                          |
+| Un solo test end-to-end    | `pnpm exec playwright test --grep "keeps members out"`                                             | lo mismo                                             |                                          |
+| Último informe end-to-end  | `pnpm exec playwright show-report`                                                                 | una ejecución anterior                               | `playwright-report/`                     |
 
 - **Los tests de integración** crean y migran `<db>_test` en el servidor de `DATABASE_URL`, nunca
   tocan la base de datos de desarrollo y se ejecutan de fichero en fichero.
-- **Los specs de Redis** se ejecutan cuando hay una URL de Redis: arranca Redis
-  ([11.1](#111-redis)) con `REDIS_URL` en `apps/api/.env`, o pásala para una ejecución:
-  `REDIS_TEST_URL=redis://:<contraseña>@127.0.0.1:6379 pnpm test:integration`. Sin ella se saltan
-  en local; `CI=true` los hace obligatorios, como en CI.
+- **Los specs de Redis** se ejecutan contra el Redis de desarrollo (`REDIS_URL` de `apps/api/.env`,
+  como lo deja `.env.example`), cada ejecución bajo su propio prefijo de claves, o contra otro para
+  una ejecución: `REDIS_TEST_URL=redis://:<contraseña>@127.0.0.1:<puerto> pnpm test:integration`.
+  Sin URL de Redis se saltan en local; `CI=true` los hace obligatorios, como en CI.
 - **Los tests end-to-end** usan `<db>_e2e` (se vuelve a sembrar en cada ejecución), la API compilada
-  en el puerto 3100 y la web compilada en el 4173: para cualquier otra cosa que use esos puertos.
+  en el puerto 3100, la web compilada en el 4173 y la landing compilada en el 4321: para cualquier
+  otra cosa que use esos puertos (un `pnpm dev` en marcha ocupa el 4321).
+- **Los tests de la landing** renderizan sus páginas como lo hace el build (la API de contenedor de
+  Astro) y comprueban los dos idiomas, los enlaces que leen los buscadores y la entrada a la
+  aplicación; su suelo de cobertura es del 100 %.
 
 Cómo escribir tests, mocks, fixtures y el trinquete de cobertura: [testing.md](testing.md).
 
@@ -433,13 +447,14 @@ gh pr create --fill        # o ábrelo en GitHub
 
 ### 6.1 Dónde vive la configuración
 
-| Fichero                 | Lo lee                                                                | En git |
-| ----------------------- | --------------------------------------------------------------------- | ------ |
-| `apps/api/.env`         | la API y el CLI de Prisma, en desarrollo                              | nunca  |
-| `apps/api/.env.example` | documentación de todas las variables de la API                        | sí     |
-| `.env` (raíz)           | Docker Compose: puertos, el secreto del stack, la contraseña de Redis | nunca  |
-| `.env.example` (raíz)   | documentación de las variables de Compose                             | sí     |
-| `apps/web/.env.example` | los ajustes opcionales de la web                                      | sí     |
+| Fichero                     | Lo lee                                                                | En git |
+| --------------------------- | --------------------------------------------------------------------- | ------ |
+| `apps/api/.env`             | la API y el CLI de Prisma, en desarrollo                              | nunca  |
+| `apps/api/.env.example`     | documentación de todas las variables de la API                        | sí     |
+| `.env` (raíz)               | Docker Compose: puertos, el secreto del stack, la contraseña de Redis | nunca  |
+| `.env.example` (raíz)       | documentación de las variables de Compose                             | sí     |
+| `apps/web/.env.example`     | los ajustes opcionales de la web                                      | sí     |
+| `apps/landing/.env.example` | el ajuste opcional del build de la landing                            | sí     |
 
 Las variables definidas en el entorno ganan a los ficheros `.env`; los despliegues las toman del
 gestor de secretos de la plataforma. La API valida todo al arrancar y se detiene nombrando la
@@ -451,24 +466,26 @@ Obligatorias: `NODE_ENV`, `DATABASE_URL`, `JWT_ACCESS_SECRET`; en producción ta
 Todo lo demás tiene un valor por defecto seguro. La tabla completa con cada regla:
 [environment.md](environment.md).
 
-| Grupo             | Variables (valor por defecto)                                                                                                                                                                                                                                   |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ejecución         | `NODE_ENV` (ninguno), `HOST` (127.0.0.1; todas las interfaces en producción), `PORT` (3000)                                                                                                                                                                     |
-| Base de datos     | `DATABASE_URL` (ninguno), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                                                       |
-| Autenticación     | `JWT_ACCESS_SECRET` (ninguno), `JWT_ACCESS_SECRET_PREVIOUS` (sin definir), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                                                      |
-| HTTP              | `CORS_ORIGINS` (vacío), `APP_ORIGIN` (sin definir; defínela en producción; obligatoria con correo), `TRUST_PROXY` (loopback; obligatoria en producción), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60)                                                   |
-| Logs e identidad  | `LOG_LEVEL` (log), `LOG_FORMAT` (json en producción, si no text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (de la imagen, si no unversioned)                                                                                                                 |
-| Error tracking    | `SENTRY_DSN` (sin definir: apagado), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                   |
-| Trazas y métricas | `OTEL_EXPORTER_OTLP_ENDPOINT` (sin definir: apagado), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES` |
-| Redis             | `REDIS_URL` (sin definir: apagado), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                  |
-| Correo            | `MAIL_SMTP_URL` (sin definir: apagado), `MAIL_FROM` (obligatoria con ella), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10), `SIGN_UP_ENABLED` (false; requiere correo)                                                                            |
+| Grupo             | Variables (valor por defecto)                                                                                                                                                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ejecución         | `NODE_ENV` (ninguno), `HOST` (127.0.0.1; todas las interfaces en producción), `PORT` (3000)                                                                                                                                                                                  |
+| Base de datos     | `DATABASE_URL` (ninguno), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                                                                    |
+| Autenticación     | `JWT_ACCESS_SECRET` (ninguno), `JWT_ACCESS_SECRET_PREVIOUS` (sin definir), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                                                                   |
+| HTTP              | `CORS_ORIGINS` (vacío), `APP_ORIGIN` (sin definir; defínela en producción; obligatoria con correo), `APP_BASE_PATH` (/app: dónde se sirve la web bajo ese origen), `TRUST_PROXY` (loopback; obligatoria en producción), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60) |
+| Logs e identidad  | `LOG_LEVEL` (log), `LOG_FORMAT` (json en producción, si no text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (de la imagen, si no unversioned)                                                                                                                              |
+| Error tracking    | `SENTRY_DSN` (sin definir: apagado), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                                |
+| Trazas y métricas | `OTEL_EXPORTER_OTLP_ENDPOINT` (sin definir: apagado), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES`              |
+| Redis             | `REDIS_URL` (sin definir: apagado), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory); `apps/api/.env.example` enciende Redis para desarrollo                                       |
+| Correo            | `MAIL_SMTP_URL` (sin definir: apagado), `MAIL_FROM` (obligatoria con ella), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10), `SIGN_UP_ENABLED` (false; requiere correo)                                                                                         |
 
 ### 6.3 Variables de la web
 
 Se definen en el contenedor web (la imagen de producción) y la app las recibe en
-`/app-config.json`; los servidores de desarrollo y preview de Vite leen los mismos nombres de su
-entorno:
+`/app/app-config.json`; los servidores de desarrollo y preview de Vite leen los mismos nombres de
+su entorno:
 
+`APP_ORIGIN` (obligatoria, sin valor por defecto: el origen público del sitio, que nginx escribe en
+los enlaces absolutos de la landing al servirla; el destino VPS la deriva de `APP_DOMAIN`),
 `API_UPSTREAM` (http://api:3000, la API a la que el servidor web reenvía `/api`), `APP_ENVIRONMENT`
 (production), `APP_RELEASE` (lo fija el build de la imagen), `WEB_SENTRY_DSN` (vacío: apagado),
 `WEB_SENTRY_SAMPLE_RATE` (1), `WEB_VITALS_SAMPLE_RATE` (1, la proporción de cargas de página que
@@ -476,25 +493,32 @@ informan de sus Web Vitals; 0: apagado). Solo en desarrollo: `API_PROXY_TARGET`
 (http://127.0.0.1:3000).
 Todo lo que se llame `VITE_*` se compila en el bundle público: nunca un secreto.
 
+La landing lee una variable, al compilarse: `PUBLIC_URL` (http://localhost:4321), el origen público
+de sus enlaces canónicos y alternativos, su sitemap y su robots.txt (la imagen web la compila para
+un marcador que `APP_ORIGIN` sustituye). Los reenvíos de su servidor de desarrollo se mueven con
+`API_PROXY_TARGET` (http://127.0.0.1:3000) y `WEB_PROXY_TARGET` (http://localhost:5173)
+([environment.md](environment.md#landing-variables)).
+
 ### 6.4 Variables de Compose (`.env` de la raíz)
 
-`DB_PORT` (5442), `MAILPIT_SMTP_PORT` (1035), `MAILPIT_UI_PORT` (8035), `JWT_ACCESS_SECRET` (la API
-del stack), `WEB_PORT` (8080), `REDIS_PASSWORD`
-(solo la exige el perfil `redis`), `REDIS_PORT` (6379), `OTLP_HTTP_PORT` (4318), `GRAFANA_PORT`
-(3001), `PROMETHEUS_PORT` (9090), `APP_RELEASE` (la release de las imágenes del stack, por defecto `local`) y las
-integraciones opcionales del stack: `STACK_REDIS_URL`, `STACK_RATE_LIMIT_STORE`,
-`STACK_CACHE_STORE`, `STACK_OTEL_EXPORTER_OTLP_ENDPOINT`, `STACK_SENTRY_DSN`,
+`DB_PORT` (5442), `REDIS_PORT` (6389), `REDIS_PASSWORD` (app), `MAILPIT_SMTP_PORT` (1035),
+`MAILPIT_UI_PORT` (8035), `JWT_ACCESS_SECRET` (la API del stack), `WEB_PORT` (8080),
+`OTLP_HTTP_PORT` (4318), `GRAFANA_PORT` (3001), `PROMETHEUS_PORT` (9090), `APP_RELEASE` (la release
+de las imágenes del stack, por defecto `local`); los ajustes de Redis del propio stack, que por
+defecto usan el Redis de Compose: `STACK_REDIS_URL`, `STACK_RATE_LIMIT_STORE`, `STACK_CACHE_STORE`;
+y sus integraciones opcionales: `STACK_OTEL_EXPORTER_OTLP_ENDPOINT`, `STACK_SENTRY_DSN`,
 `STACK_WEB_SENTRY_DSN`.
 
 ### 6.5 Por entorno
 
-| Ajuste                   | desarrollo                    | CI                                       | staging                  | producción               |
-| ------------------------ | ----------------------------- | ---------------------------------------- | ------------------------ | ------------------------ |
-| `NODE_ENV`               | `development`                 | `test`                                   | `production`             | `production`             |
-| `APP_ENVIRONMENT`        | por defecto                   | por defecto                              | `staging`                | `production`             |
-| `TRUST_PROXY`            | por defecto                   | por defecto                              | el número real de saltos | el número real de saltos |
-| Secretos                 | `apps/api/.env`, `.env` raíz  | generados en cada ejecución              | gestor de secretos       | gestor de secretos       |
-| Integraciones opcionales | apagadas, o servicios locales | apagadas (servicio Redis para sus specs) | según se decida          | según se decida          |
+| Ajuste                   | desarrollo                    | CI                               | staging                                                     | producción               |
+| ------------------------ | ----------------------------- | -------------------------------- | ----------------------------------------------------------- | ------------------------ |
+| `NODE_ENV`               | `development`                 | `test`                           | `production`                                                | `production`             |
+| `APP_ENVIRONMENT`        | por defecto                   | por defecto                      | `staging`                                                   | `production`             |
+| `TRUST_PROXY`            | por defecto                   | por defecto                      | el número real de saltos                                    | el número real de saltos |
+| Secretos                 | `apps/api/.env`, `.env` raíz  | generados en cada ejecución      | gestor de secretos; el destino VPS: ficheros en el servidor | lo mismo                 |
+| Redis                    | el Redis de Compose           | un servicio Redis para sus specs | el del propio servidor (destino VPS), o uno privado         | lo mismo                 |
+| Integraciones opcionales | apagadas, o servicios locales | apagadas                         | según se decida                                             | según se decida          |
 
 ## 7. Referencia de comandos
 
@@ -502,39 +526,39 @@ Todos los comandos que trae la plantilla.
 
 ### 7.1 Scripts de la raíz (`pnpm <script>`)
 
-| Comando                                                                  | Qué hace                                                                                                                                                                   |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`                                                           | instala el workspace; ejecuta `prepare` (instala los hooks de Git) y el `postinstall` de la API (`prisma generate`)                                                        |
-| `pnpm dev`                                                               | `pnpm services:up`, y después la API (`nest start --watch`) y la web (Vite) en paralelo; sus URLs en un recuadro bajo los logs                                             |
-| `pnpm build`                                                             | compila todas las apps (`apps/*/dist`)                                                                                                                                     |
-| `pnpm lint`                                                              | ESLint sobre todo el repositorio, sin warnings permitidos                                                                                                                  |
-| `pnpm lint:fix`                                                          | lo mismo, aplicando los arreglos automáticos                                                                                                                               |
-| `pnpm format`                                                            | Prettier reescribe todos los ficheros                                                                                                                                      |
-| `pnpm format:check`                                                      | Prettier informa de los ficheros sin formatear                                                                                                                             |
-| `pnpm typecheck`                                                         | TypeScript en todas las apps, la comprobación de los tipos del contrato y los scripts del repositorio                                                                      |
-| `pnpm test`                                                              | tests unitarios y de componentes de todas las apps                                                                                                                         |
-| `pnpm test:coverage`                                                     | lo mismo con los umbrales de cobertura                                                                                                                                     |
-| `pnpm test:integration`                                                  | la API contra PostgreSQL (y Redis y Mailpit si están configurados)                                                                                                         |
-| `pnpm test:e2e`                                                          | Playwright sobre la app compilada                                                                                                                                          |
-| `pnpm test:scripts`                                                      | los tests de los scripts del repositorio (`scripts/*.test.mjs`: selección de ficheros de Semgrep, motor de Doberman)                                                       |
-| `pnpm security`                                                          | `pnpm audit --audit-level=high`, después `pnpm deps:check`, después `pnpm secrets:scan`                                                                                    |
-| `pnpm deps:check`                                                        | política de dependencias: orígenes del registro con integridad, licencias y los ajustes de supply chain de `pnpm-workspace.yaml`                                           |
-| `pnpm secrets:scan`                                                      | secretlint sobre todos los ficheros que git sigue o añadiría                                                                                                               |
-| `pnpm sast`                                                              | Semgrep con la imagen fijada (Docker)                                                                                                                                      |
-| `pnpm lint:workflows`                                                    | actionlint, zizmor y shellcheck con las imágenes fijadas (Docker)                                                                                                          |
-| `pnpm observability:check`                                               | los dashboards y las reglas de alerta de `observability/` (fuentes de datos, runbooks, nombres de métricas), después promtool y los tests unitarios de las reglas (Docker) |
-| `pnpm iac:check`                                                         | las comprobaciones de `infra/terraform`: fmt, validate, tests, TFLint, Trivy, cloud-init, roles de la base de datos (Docker)                                               |
-| `pnpm iac:database`                                                      | los roles de la base de datos de un entorno de DigitalOcean hecho con Terraform (`deploy-vps.md`)                                                                          |
-| `pnpm sbom:generate`                                                     | SBOM CycloneDX de las dependencias de producción en `dist/sbom/sbom.cdx.json`                                                                                              |
-| `pnpm perf:check`                                                        | tamaño gzip de los assets web compilados frente a `apps/web/performance-budget.json` (después de `pnpm build`)                                                             |
-| `pnpm smoke --url <URL pública> --api <URL de la API> [--release <sha>]` | smoke test de solo lectura de un despliegue en marcha ([10.3](#103-smoke-test))                                                                                            |
-| `pnpm contract`                                                          | exporta `openapi/openapi.json` y regenera los tipos del cliente web                                                                                                        |
-| `pnpm services:up`                                                       | `docker compose up --detach --wait db mailpit`: la base de datos y el capturador de correo                                                                                 |
-| `pnpm db:up`                                                             | `docker compose up --detach --wait db`                                                                                                                                     |
-| `pnpm db:down`                                                           | `docker compose down`: retira los contenedores de la base de datos y de Mailpit y conserva los datos de la base de datos; los servicios opcionales se paran con su perfil  |
-| `pnpm db:migrate [--name <nombre>]`                                      | crea una migración a partir de los cambios del esquema, aplica las pendientes y regenera el cliente (desarrollo)                                                           |
-| `pnpm db:seed`                                                           | cuentas de desarrollo (solo bases de datos locales; `--allow-remote-database` para una remota desechable)                                                                  |
-| `pnpm verify`                                                            | `format:check` → `lint` → `typecheck` → `test:coverage` → `security` → `build` → `perf:check`                                                                              |
+| Comando                                                                  | Qué hace                                                                                                                                                                                       |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                                           | instala el workspace; ejecuta `prepare` (instala los hooks de Git) y el `postinstall` de la API (`prisma generate`)                                                                            |
+| `pnpm dev`                                                               | `pnpm services:up`, y después la API (`nest start --watch`), la web (Vite) y la landing (Astro) en paralelo; sus URLs en un recuadro bajo los logs                                             |
+| `pnpm build`                                                             | compila todas las apps (`apps/*/dist`)                                                                                                                                                         |
+| `pnpm lint`                                                              | ESLint sobre todo el repositorio, sin warnings permitidos                                                                                                                                      |
+| `pnpm lint:fix`                                                          | lo mismo, aplicando los arreglos automáticos                                                                                                                                                   |
+| `pnpm format`                                                            | Prettier reescribe todos los ficheros                                                                                                                                                          |
+| `pnpm format:check`                                                      | Prettier informa de los ficheros sin formatear                                                                                                                                                 |
+| `pnpm typecheck`                                                         | TypeScript en todas las apps (`astro check` en la landing), la comprobación de los tipos del contrato y los scripts del repositorio                                                            |
+| `pnpm test`                                                              | tests unitarios y de componentes de todas las apps                                                                                                                                             |
+| `pnpm test:coverage`                                                     | lo mismo con los umbrales de cobertura                                                                                                                                                         |
+| `pnpm test:integration`                                                  | la API contra PostgreSQL (y Redis y Mailpit si están configurados)                                                                                                                             |
+| `pnpm test:e2e`                                                          | Playwright sobre la app y la landing compiladas                                                                                                                                                |
+| `pnpm test:scripts`                                                      | los tests de los scripts del repositorio (`scripts/*.test.mjs`: selección de ficheros de Semgrep, motor de Doberman)                                                                           |
+| `pnpm security`                                                          | `pnpm audit --audit-level=high`, después `pnpm deps:check`, después `pnpm secrets:scan`                                                                                                        |
+| `pnpm deps:check`                                                        | política de dependencias: orígenes del registro con integridad, licencias y los ajustes de supply chain de `pnpm-workspace.yaml`                                                               |
+| `pnpm secrets:scan`                                                      | secretlint sobre todos los ficheros que git sigue o añadiría                                                                                                                                   |
+| `pnpm sast`                                                              | Semgrep con la imagen fijada (Docker)                                                                                                                                                          |
+| `pnpm lint:workflows`                                                    | actionlint, zizmor y shellcheck con las imágenes fijadas (Docker)                                                                                                                              |
+| `pnpm observability:check`                                               | los dashboards y las reglas de alerta de `observability/` (fuentes de datos, runbooks, nombres de métricas), después promtool y los tests unitarios de las reglas (Docker)                     |
+| `pnpm iac:check`                                                         | las comprobaciones de `infra/terraform` (fmt, validate, tests, TFLint, Trivy, cloud-init, roles de la base de datos) y de `deploy/vps/db-init.sh` sobre PostgreSQL (Docker)                    |
+| `pnpm iac:database`                                                      | los roles de la base de datos de un entorno de DigitalOcean hecho con Terraform (`deploy-vps.md`)                                                                                              |
+| `pnpm sbom:generate`                                                     | SBOM CycloneDX de las dependencias de producción en `dist/sbom/sbom.cdx.json`                                                                                                                  |
+| `pnpm perf:check`                                                        | tamaño gzip de los assets compilados de la web y de la landing frente al `performance-budget.json` de cada app (después de `pnpm build`)                                                       |
+| `pnpm smoke --url <URL pública> --api <URL de la API> [--release <sha>]` | smoke test de solo lectura de un despliegue en marcha ([10.3](#103-smoke-test))                                                                                                                |
+| `pnpm contract`                                                          | exporta `openapi/openapi.json` y regenera los tipos del cliente web                                                                                                                            |
+| `pnpm services:up`                                                       | `docker compose up --detach --wait db redis mailpit`: la base de datos, Redis y el capturador de correo                                                                                        |
+| `pnpm db:up`                                                             | `docker compose up --detach --wait db`                                                                                                                                                         |
+| `pnpm db:down`                                                           | `docker compose down`: retira los contenedores de la base de datos, de Redis y de Mailpit y conserva los datos de la base de datos y de Redis; los servicios opcionales se paran con su perfil |
+| `pnpm db:migrate [--name <nombre>]`                                      | crea una migración a partir de los cambios del esquema, aplica las pendientes y regenera el cliente (desarrollo)                                                                               |
+| `pnpm db:seed`                                                           | cuentas de desarrollo (solo bases de datos locales; `--allow-remote-database` para una remota desechable)                                                                                      |
+| `pnpm verify`                                                            | `format:check` → `lint` → `typecheck` → `test:coverage` → `security` → `build` → `perf:check`                                                                                                  |
 
 ### 7.2 Scripts de la API (`pnpm --filter api <script>`)
 
@@ -558,18 +582,34 @@ Todos los comandos que trae la plantilla.
 
 ### 7.3 Scripts de la web (`pnpm --filter web <script>`)
 
-| Script          | Qué hace                                                                                  |
-| --------------- | ----------------------------------------------------------------------------------------- |
-| `dev`           | servidor de desarrollo de Vite en http://localhost:5173, con `/api` reenviado a la API    |
-| `build`         | `tsc -b`, después `vite build` en `apps/web/dist`                                         |
-| `preview`       | sirve el build en http://localhost:4173, con `/api` reenviado                             |
-| `typecheck`     | comprueba `schema.d.ts` contra el contrato, después `tsc -b`                              |
-| `test`          | tests de componentes y unitarios con Vitest                                               |
-| `test:watch`    | modo watch                                                                                |
-| `test:coverage` | con los umbrales de cobertura de `vite.config.ts`                                         |
-| `api:types`     | regenera `src/api/schema.d.ts` desde `openapi/openapi.json` (la mitad de `pnpm contract`) |
+| Script          | Qué hace                                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `dev`           | servidor de desarrollo de Vite en http://localhost:5173/app/ (la app se compila para `/app/`), con `/api` reenviado a la API |
+| `build`         | `tsc -b`, después `vite build` en `apps/web/dist`                                                                            |
+| `preview`       | sirve el build en http://localhost:4173/app/, con `/api` reenviado                                                           |
+| `typecheck`     | comprueba `schema.d.ts` contra el contrato, después `tsc -b`                                                                 |
+| `test`          | tests de componentes y unitarios con Vitest                                                                                  |
+| `test:watch`    | modo watch                                                                                                                   |
+| `test:coverage` | con los umbrales de cobertura de `vite.config.ts`                                                                            |
+| `api:types`     | regenera `src/api/schema.d.ts` desde `openapi/openapi.json` (la mitad de `pnpm contract`)                                    |
 
-### 7.4 Scripts del repositorio que se ejecutan directamente
+### 7.4 Scripts de la landing (`pnpm --filter landing <script>`)
+
+| Script          | Qué hace                                                                                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`           | servidor de desarrollo de Astro en http://localhost:4321, la entrada única del sitio: `/app` reenviado al servidor de desarrollo de la web, `/api` a la API |
+| `build`         | `astro check`, después `astro build` en `apps/landing/dist`: las páginas, el sitemap y robots.txt                                                           |
+| `preview`       | sirve el build en http://localhost:4321                                                                                                                     |
+| `typecheck`     | `astro check`: los tipos de los ficheros `.astro` y `.ts`, que también falla con avisos                                                                     |
+| `test`          | tests unitarios y de páginas con Vitest                                                                                                                     |
+| `test:watch`    | modo watch                                                                                                                                                  |
+| `test:coverage` | con los umbrales de cobertura de `vitest.config.ts`                                                                                                         |
+
+Todos los scripts ejecutan el CLI de Astro a través de `apps/landing/scripts/astro.mjs`, que apaga
+la telemetría de uso de Astro y mantiene sus servidores en primer plano, donde `pnpm dev` y
+Playwright los paran.
+
+### 7.5 Scripts del repositorio que se ejecutan directamente
 
 | Comando                                                                                                         | Qué hace                                                                                                                                                         |
 | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -582,24 +622,23 @@ Todos los comandos que trae la plantilla.
 | `scripts/check-dependencies.mjs`, `scan-secrets.mjs`, `sast.mjs`, `lint-workflows.mjs`, `check-bundle-size.mjs` | están detrás de los scripts de la raíz con el mismo propósito                                                                                                    |
 | `scripts/check-iac.mjs`, `scripts/iac-database.mjs`                                                             | están detrás de `pnpm iac:check` y `pnpm iac:database`                                                                                                           |
 
-### 7.5 Docker Compose
+### 7.6 Docker Compose
 
-| Comando                                                                             | Qué arranca                                                                                                                                                                             |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm db:up`                                                                        | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5442}`                                                                                                                                       |
-| `pnpm services:up`                                                                  | `db`, y `mailpit`: el capturador de correo, SMTP en `127.0.0.1:${MAILPIT_SMTP_PORT:-1035}`, web en http://localhost:8035 (`MAILPIT_UI_PORT`), mensajes en memoria                       |
-| `docker compose --profile redis up -d`                                              | `redis`: Redis 8 con contraseña, `127.0.0.1:${REDIS_PORT:-6379}`, datos en el volumen `redis_data`                                                                                      |
-| `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki y Grafana con los dashboards y las reglas de `observability/`; OTLP en el 4318, Grafana en http://localhost:3001, Prometheus en el 9090 |
-| `docker compose --profile stack up --build`                                         | `migrate` (se ejecuta una vez), `api`, `web`: las imágenes de producción en http://localhost:8080                                                                                       |
-| `docker compose --profile stack --profile redis --profile observability up --build` | el stack con todos los servicios opcionales (define las variables `STACK_*`, [6.4](#64-variables-de-compose-env-de-la-raíz))                                                            |
-| `docker compose ps`                                                                 | qué está corriendo, con su estado de salud                                                                                                                                              |
-| `docker compose logs -f <servicio>`                                                 | sigue el log de un servicio (`api`, `web`, `db`, `mailpit`, `redis`, `migrate`)                                                                                                         |
-| `docker compose --profile <perfil> down`                                            | para y retira esos contenedores; los volúmenes se quedan                                                                                                                                |
-| `docker compose down -v`                                                            | **borra también los volúmenes**: se pierden los datos de la base de datos de desarrollo y de Redis                                                                                      |
-| `docker compose exec db psql -U app -d app`                                         | consola SQL                                                                                                                                                                             |
-| `docker compose exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli'`       | consola de Redis (la contraseña no aparece en la línea de comandos)                                                                                                                     |
+| Comando                                                                       | Qué arranca                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm db:up`                                                                  | `db`: PostgreSQL 18, `127.0.0.1:${DB_PORT:-5442}`                                                                                                                                                                                                                             |
+| `pnpm services:up`                                                            | `db`; `redis`: Redis 8 con contraseña (`app`), `127.0.0.1:${REDIS_PORT:-6389}`, datos en el volumen `redis_data`; y `mailpit`: el capturador de correo, SMTP en `127.0.0.1:${MAILPIT_SMTP_PORT:-1035}`, web en http://localhost:8035 (`MAILPIT_UI_PORT`), mensajes en memoria |
+| `docker compose --profile observability up -d`                                | `otel-lgtm`: collector, Prometheus, Tempo, Loki y Grafana con los dashboards y las reglas de `observability/`; OTLP en el 4318, Grafana en http://localhost:3001, Prometheus en el 9090                                                                                       |
+| `docker compose --profile stack up --build`                                   | `migrate` (se ejecuta una vez), `api`, `web`: las imágenes de producción, sobre `db` y `redis`; el sitio en http://localhost:8080 y la app en `/app/`                                                                                                                         |
+| `docker compose --profile stack --profile observability up --build`           | el stack con todos los servicios opcionales (define las variables `STACK_*`, [6.4](#64-variables-de-compose-env-de-la-raíz))                                                                                                                                                  |
+| `docker compose ps`                                                           | qué está corriendo, con su estado de salud                                                                                                                                                                                                                                    |
+| `docker compose logs -f <servicio>`                                           | sigue el log de un servicio (`api`, `web`, `db`, `mailpit`, `redis`, `migrate`)                                                                                                                                                                                               |
+| `docker compose --profile <perfil> down`                                      | para y retira esos contenedores; los volúmenes se quedan                                                                                                                                                                                                                      |
+| `docker compose down -v`                                                      | **borra también los volúmenes**: se pierden los datos de la base de datos de desarrollo y de Redis                                                                                                                                                                            |
+| `docker compose exec db psql -U app -d app`                                   | consola SQL                                                                                                                                                                                                                                                                   |
+| `docker compose exec redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli'` | consola de Redis (la contraseña no aparece en la línea de comandos)                                                                                                                                                                                                           |
 
-### 7.6 Imágenes sin Compose
+### 7.7 Imágenes sin Compose
 
 ```
 docker build -f apps/api/Dockerfile -t api --build-arg APP_RELEASE=$(git rev-parse HEAD) .
@@ -610,21 +649,22 @@ docker build -f apps/web/Dockerfile -t web --build-arg APP_RELEASE=$(git rev-par
 El contexto de build es la raíz del repositorio (una lista de permitidos en `.dockerignore`). La
 imagen de migraciones ejecuta `prisma migrate deploy` por defecto, después de rechazar una base de
 datos cuyas migraciones aplicadas se editaron después (`apps/api/scripts/migrate-deploy.mjs`); la
-misma imagen responde a los demás comandos de migración ([7.7](#77-comandos-de-operación)).
+misma imagen responde a los demás comandos de migración ([7.8](#78-comandos-de-operación)).
 
-### 7.7 Comandos de operación
+### 7.8 Comandos de operación
 
-| Comando                                                                                                                                                   | Uso                                                                                                                                          |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness de una instancia, desde dentro de la plataforma                                                                                    |
-| `docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js status` (`test --to <dirección>`, `retry --failed`)                         | la bandeja de salida del correo: qué espera, qué falló y por qué; una prueba de entrega; reenviar los fallidos ([11.5](#115-correo))         |
-| `pnpm smoke --url <URL pública> --api <URL de la API> --release <sha>`                                                                                    | después de un despliegue, un restore o un incidente                                                                                          |
-| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate>`                                                                                              | rechaza una base de datos cuyas migraciones aplicadas se editaron y después aplica las pendientes                                            |
-| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate> node node_modules/prisma/build/index.js migrate status`                                       | qué migraciones tiene un entorno                                                                                                             |
-| `... migrate resolve --rolled-back <migración>` / `--applied <migración>`                                                                                 | registra el resultado de una migración fallida ([database.md](database.md#when-a-migration-fails))                                           |
-| `... migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`                                                                  | compara el esquema de un entorno con el de la imagen, después de un restore ([disaster-recovery.md](disaster-recovery.md#restore-procedure)) |
-| `pg_dump`, `pg_restore`, `createdb`                                                                                                                       | backups y restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine))                                         |
-| `BEGIN; SELECT id FROM users WHERE id = '<id>' FOR UPDATE; UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL; COMMIT;` | termina todas las sesiones de un usuario (incidente de seguridad); el bloqueo del usuario impide que un refresh en curso la sobreviva        |
+| Comando                                                                                                                                                   | Uso                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `curl http://<api>:3000/api/health/ready`                                                                                                                 | readiness de una instancia, desde dentro de la plataforma                                                                                                                                    |
+| `docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js status` (`test --to <dirección>`, `retry --failed`)                         | la bandeja de salida del correo: qué espera, qué falló y por qué; una prueba de entrega; reenviar los fallidos ([11.5](#115-correo))                                                         |
+| `pnpm smoke --url <URL pública> --api <URL de la API> --release <sha>`                                                                                    | después de un despliegue, un restore o un incidente                                                                                                                                          |
+| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate>`                                                                                              | rechaza una base de datos cuyas migraciones aplicadas se editaron y después aplica las pendientes                                                                                            |
+| `docker run --rm -e DATABASE_URL=<url> <imagen api-migrate> node node_modules/prisma/build/index.js migrate status`                                       | qué migraciones tiene un entorno                                                                                                                                                             |
+| `... migrate resolve --rolled-back <migración>` / `--applied <migración>`                                                                                 | registra el resultado de una migración fallida ([database.md](database.md#when-a-migration-fails))                                                                                           |
+| `... migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code`                                                                  | compara el esquema de un entorno con el de la imagen, después de un restore ([disaster-recovery.md](disaster-recovery.md#restore-procedure))                                                 |
+| `pg_dump`, `pg_restore`, `createdb`                                                                                                                       | backups y restores ([disaster-recovery.md](disaster-recovery.md#rehearsal-on-a-development-machine))                                                                                         |
+| `docker compose ... exec backup sh /usr/local/bin/backup.sh now`                                                                                          | un backup en el acto, en la base de datos propia del destino VPS ([deploy-vps.md](deploy-vps.md#backups)); su restore: [disaster-recovery.md](disaster-recovery.md#the-servers-own-database) |
+| `BEGIN; SELECT id FROM users WHERE id = '<id>' FOR UPDATE; UPDATE sessions SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL; COMMIT;` | termina todas las sesiones de un usuario (incidente de seguridad); el bloqueo del usuario impide que un refresh en curso la sobreviva                                                        |
 
 ## 8. CI/CD
 
@@ -690,11 +730,12 @@ configurado, en cambio, se ejecutan en él todos los workflows de pull request
 
 ### 10.1 Implementa el job de release una vez (REQUIERE CONFIGURACIÓN)
 
-**Destino listo para usar:** un servidor Linux por entorno con Docker y un PostgreSQL gestionado.
-Define la variable del repositorio `DEPLOY_TARGET=vps` y sigue [deploy-vps.md](deploy-vps.md) (paso a
-paso: [step-by-step.es.md](step-by-step.es.md#fase-7-servidores-de-producción)); no hay que escribir nada
+**Destino listo para usar:** un servidor Linux por entorno con Docker, Redis y PostgreSQL en él
+(backups nocturnos incluidos), o un PostgreSQL gestionado en su lugar. Define la variable del
+repositorio `DEPLOY_TARGET=vps` y sigue [deploy-vps.md](deploy-vps.md) (paso a paso:
+[step-by-step.es.md](step-by-step.es.md#fase-7-servidores-de-producción)); no hay que escribir nada
 de lo que sigue. En DigitalOcean, Terraform (`infra/terraform/digitalocean`) puede crear los
-servidores y las bases de datos en lugar de los pasos manuales, con el mismo resultado
+servidores y las bases de datos gestionadas en lugar de los pasos manuales, con el mismo resultado
 ([deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean)). Para cualquier otra
 plataforma:
 
@@ -734,14 +775,18 @@ a `production` (el entorno pide la aprobación de sus revisores).
 pnpm smoke --url https://<host público> --api http://<api dentro de la plataforma>:3000 --release <sha>
 ```
 
-| Comprobación               | Pasa cuando                                                                      |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| web server health          | `/healthz` responde 200                                                          |
-| app shell                  | `/` es la app, con las cabeceras CSP y `X-Content-Type-Options`                  |
-| runtime configuration      | `/app-config.json` responde, con la release esperada si se pasa `--release`      |
-| API through the web server | una ruta `/api/...` desconocida responde el 404 JSON de la API con un request id |
-| probes not public          | `/api/health/ready` responde 404 por la URL pública                              |
-| API liveness y readiness   | 200 en la propia API (`degraded` se informa, no es un fallo)                     |
+| Comprobación                    | Pasa cuando                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| web server health               | `/healthz` responde 200                                                                                                                                                        |
+| landing                         | `/` es la landing, con sus enlaces y su imagen para compartir en el origen de este despliegue (`APP_ORIGIN`) y las cabeceras CSP y `X-Content-Type-Options`; `/es/` en español |
+| share picture                   | `/og.png` responde 200 como PNG                                                                                                                                                |
+| not-found page                  | una dirección desconocida responde 404 con la página de no encontrado                                                                                                          |
+| app shell                       | `/app/` y un enlace profundo bajo ella son la app                                                                                                                              |
+| emailed links of before `/app/` | `/reset-password` redirige a `/app/reset-password`                                                                                                                             |
+| runtime configuration           | `/app/app-config.json` responde, con la release esperada si se pasa `--release`                                                                                                |
+| API through the web server      | una ruta `/api/...` desconocida responde el 404 JSON de la API con un request id                                                                                               |
+| probes not public               | `/api/health/ready` responde 404 por la URL pública                                                                                                                            |
+| API liveness y readiness        | 200 en la propia API (`degraded` se informa, no es un fallo)                                                                                                                   |
 
 No inicia sesión ni escribe nada; cualquier fallo sale con código 1. Se puede omitir cualquiera de
 las dos URLs para comprobar solo un lado.
@@ -759,32 +804,38 @@ las dos URLs para comprobar solo un lado.
 
 ## 11. Infraestructura opcional
 
-Apagada por defecto; encender cada pieza es configuración. Nada de esto hace falta para
-desarrollar, probar o desplegar. El correo es la excepción en local: viene encendido, contra Mailpit
+Encender cada pieza es configuración, y nada de esto hace falta para desarrollar, probar o
+desplegar. Dos vienen encendidas en local: Redis ([11.1](#111-redis)) y el correo, contra Mailpit
 ([11.5](#115-correo)).
 
 ### 11.1 Redis
 
 Rate limits compartidos entre instancias, una caché compartida, locks y claims de idempotencia.
+Encendido por defecto en local y en el servidor de referencia; la aplicación funciona sin él.
 
-1. `.env` de la raíz: `REDIS_PASSWORD=<salida de openssl rand -hex 24>`.
-2. `docker compose --profile redis up -d`
-3. `apps/api/.env`: `REDIS_URL=redis://:<esa contraseña>@127.0.0.1:6379`, y las funciones que
-   quieras mover: `RATE_LIMIT_STORE=redis`, `CACHE_STORE=redis`.
-4. `pnpm dev`: el log dice `Redis connected (redis://127.0.0.1:6379)`; readiness muestra
-   `"redis": "ok"`. Para el contenedor (`docker compose stop redis`) para ver el modo degradado y
-   arráncalo (`docker compose --profile redis start redis`) para ver la recuperación.
-5. Producción (REQUIERE CONFIGURACIÓN): un Redis privado con TLS y un usuario ACL, `rediss://` desde
-   el gestor de secretos, `REDIS_KEY_PREFIX` por entorno; `REDIS_REQUIRED=true` solo si el producto
-   no puede funcionar sin él ([security.md](security.md#redis), [architecture.md](architecture.md#redis)).
+1. `pnpm services:up` (y `pnpm dev`) lo arranca con la base de datos: `127.0.0.1:6389`, la
+   contraseña `app` (`REDIS_PORT` y `REDIS_PASSWORD` en el `.env` de la raíz los cambian; después,
+   lo mismo en `REDIS_URL`).
+2. `apps/api/.env`, desde `.env.example`: `REDIS_URL=redis://:app@localhost:6389`,
+   `RATE_LIMIT_STORE=redis`, `CACHE_STORE=redis`, `REDIS_REQUIRED=true`. Sin Redis: borra las
+   cuatro.
+3. Comprueba: el recuadro de `pnpm dev` muestra `Redis localhost:6389`, el log dice
+   `Redis connected (redis://localhost:6389)` y readiness muestra `"redis": "ok"`. Páralo
+   (`docker compose stop redis`) para ver el modo degradado (readiness 503, con `REDIS_REQUIRED`) y
+   arráncalo (`docker compose start redis`) para ver la recuperación.
+4. El servidor de referencia tiene el suyo, con un usuario ACL, solo en su red interna
+   ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)). En otro sitio (REQUIERE
+   CONFIGURACIÓN): un Redis privado con TLS y un usuario ACL, `rediss://` desde el gestor de
+   secretos, `REDIS_KEY_PREFIX` por entorno; `REDIS_REQUIRED=true` solo si el producto no puede
+   funcionar sin él ([security.md](security.md#redis), [architecture.md](architecture.md#redis)).
 
 ### 11.2 Error tracking (Sentry)
 
 1. Crea dos proyectos de Sentry: Node.js (API) y JavaScript de navegador (web).
 2. API: `SENTRY_DSN` (gestor de secretos; en local en `apps/api/.env`). Web: `WEB_SENTRY_DSN` en el
    contenedor web (en local, en el entorno de `pnpm dev`). `APP_ENVIRONMENT` en ambos.
-3. Comprueba: la línea de arranque dice `error tracking on`; `/app-config.json` muestra el DSN; la
-   CSP permite el host de ingesta de Sentry.
+3. Comprueba: la línea de arranque dice `error tracking on`; `/app/app-config.json` muestra el DSN;
+   la CSP permite el host de ingesta de Sentry.
 4. Reglas de alerta en Sentry ([alerting.md](alerting.md)). Lo que nunca se envía:
    [security.md](security.md#error-tracking-data).
 
@@ -809,19 +860,16 @@ Rate limits compartidos entre instancias, una caché compartida, locks y claims 
 
 ```
 JWT_ACCESS_SECRET=<openssl rand -hex 32>
-REDIS_PASSWORD=<openssl rand -hex 24>
-STACK_REDIS_URL=redis://:<REDIS_PASSWORD>@redis:6379
-STACK_RATE_LIMIT_STORE=redis
-STACK_CACHE_STORE=redis
 STACK_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
 ```
 
 ```
-docker compose --profile stack --profile redis --profile observability up --build
+docker compose --profile stack --profile observability up --build
 ```
 
-Web en http://localhost:8080, Grafana en http://localhost:3001. Para con
-`docker compose --profile stack --profile redis --profile observability down`.
+El sitio en http://localhost:8080 (la app en `/app/`), Grafana en http://localhost:3001; la API usa
+el Redis de Compose, como en el servidor de referencia. Para con
+`docker compose --profile stack --profile observability down`.
 
 ### 11.5 Correo
 
@@ -854,8 +902,9 @@ APP_ORIGIN=https://<tu dominio>
 ```
 
 o `smtp://...:587`: producción exige STARTTLS en ese caso y rechaza un servidor sin TLS (Mailpit
-entre ellos), salvo uno en la propia máquina (`localhost`, `127.0.0.1`, `[::1]`). `APP_ORIGIN` es
-adonde apuntan los enlaces de los mensajes: nunca el Host de una petición. Antes del primer mensaje, autentica el dominio remitente en el proveedor (SPF, DKIM,
+entre ellos), salvo uno en la propia máquina (`localhost`, `127.0.0.1`, `[::1]`). `APP_ORIGIN` y
+`APP_BASE_PATH` (/app) son adonde apuntan los enlaces de los mensajes: nunca el Host de una
+petición. Antes del primer mensaje, autentica el dominio remitente en el proveedor (SPF, DKIM,
 DMARC): sin ellos los mensajes acaban en spam o se rechazan. Después, con la imagen de la API:
 
 ```
@@ -916,10 +965,11 @@ invita cualquier dirección y abre el enlace desde Mailpit. El diseño:
 | Capacidad                                  | [load-testing.md](load-testing.md) (OPCIONAL)                 |
 | Ajustes de seguridad por proyecto          | [security.md](security.md#per-project-requiere-configuración) |
 
-Lo mínimo antes de recibir tráfico de producción (REQUIERE CONFIGURACIÓN): backups automáticos con
-un simulacro de restore hecho, el job de despliegue con digests y smoke test, checks de uptime, las
-alertas CRITICAL dirigidas a alguien, `TRUST_PROXY` para la topología real, TLS en el borde y la
-tabla de contactos de incident-response.md rellena.
+Lo mínimo antes de recibir tráfico de producción (REQUIERE CONFIGURACIÓN): backups automáticos (en
+la base de datos propia del destino VPS, los nocturnos copiados también fuera del servidor,
+[deploy-vps.md](deploy-vps.md#backups)) con un simulacro de restore hecho, el job de despliegue con
+digests y smoke test, checks de uptime, las alertas CRITICAL dirigidas a alguien, `TRUST_PROXY` para
+la topología real, TLS en el borde y la tabla de contactos de incident-response.md rellena.
 
 Ensaya un restore en tu máquina (tarda unos minutos; en Windows, antepón `MSYS_NO_PATHCONV=1`):
 
@@ -934,15 +984,16 @@ docker compose exec -T db rm /tmp/app.dump
 
 ## 13. Calendario de mantenimiento
 
-| Cuándo                                   | Qué                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cada semana                              | Revisa y aprueba los pull requests de Dependabot: las actualizaciones patch y minor se mergean solas cuando pasa el CI; las majors y las de workflows las mergeas a mano ([ci-cd.md](ci-cd.md#dependency-updates)). En el destino VPS, si uno cambia `deploy/vps` (la imagen de Caddy), copia además los ficheros a cada servidor antes de su siguiente despliegue ([deploy-vps.md](deploy-vps.md#update-the-server-files)). |
-| Cada semana (automático)                 | El DAST se ejecuta los lunes: lee los informes de ZAP de las ejecuciones fallidas.                                                                                                                                                                                                                                                                                                                                           |
-| Cada release                             | Primero staging, smoke test, después producción con los mismos digests.                                                                                                                                                                                                                                                                                                                                                      |
-| Cada trimestre                           | Un simulacro de restore con la [checklist](disaster-recovery.md#checklist); una revisión de las alertas (ruido, huecos) y una alerta de prueba por todo el enrutado; un repaso de la política de error budget; lo que Dependabot nunca propone: una major LTS de Node.js (cada octubre), pnpm, las majors de PostgreSQL y Redis ([ci-cd.md](ci-cd.md#keeping-the-stack-current)).                                            |
-| Cuando sube la cobertura                 | Sube los umbrales en el mismo pull request ([testing.md](testing.md#coverage)).                                                                                                                                                                                                                                                                                                                                              |
-| Cuando un secreto puede haberse filtrado | Rótalo de inmediato ([security.md](security.md#secret-rotation)).                                                                                                                                                                                                                                                                                                                                                            |
-| Después de cada incidente                | El postmortem, y las actualizaciones del runbook y de las alertas que dejó en evidencia.                                                                                                                                                                                                                                                                                                                                     |
+| Cuándo                                             | Qué                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Cada semana                                        | Revisa y aprueba los pull requests de Dependabot: las actualizaciones patch y minor se mergean solas cuando pasa el CI; las majors y las de workflows las mergeas a mano ([ci-cd.md](ci-cd.md#dependency-updates)). En el destino VPS, si uno cambia `deploy/vps` (la imagen de Caddy, de PostgreSQL o de Redis), copia además los ficheros a cada servidor antes de su siguiente despliegue ([deploy-vps.md](deploy-vps.md#update-the-server-files)). |
+| Cada semana (automático)                           | El DAST se ejecuta los lunes: lee los informes de ZAP de las ejecuciones fallidas.                                                                                                                                                                                                                                                                                                                                                                     |
+| Cada semana (destino VPS, su propia base de datos) | `backup` sano en `docker compose ps`, y el backup de anoche copiado fuera del servidor ([deploy-vps.md](deploy-vps.md#backups)).                                                                                                                                                                                                                                                                                                                       |
+| Cada release                                       | Primero staging, smoke test, después producción con los mismos digests.                                                                                                                                                                                                                                                                                                                                                                                |
+| Cada trimestre                                     | Un simulacro de restore con la [checklist](disaster-recovery.md#checklist); una revisión de las alertas (ruido, huecos) y una alerta de prueba por todo el enrutado; un repaso de la política de error budget; lo que Dependabot nunca propone: una major LTS de Node.js (cada octubre), pnpm, las majors de PostgreSQL y Redis ([ci-cd.md](ci-cd.md#keeping-the-stack-current)).                                                                      |
+| Cuando sube la cobertura                           | Sube los umbrales en el mismo pull request ([testing.md](testing.md#coverage)).                                                                                                                                                                                                                                                                                                                                                                        |
+| Cuando un secreto puede haberse filtrado           | Rótalo de inmediato ([security.md](security.md#secret-rotation)).                                                                                                                                                                                                                                                                                                                                                                                      |
+| Después de cada incidente                          | El postmortem, y las actualizaciones del runbook y de las alertas que dejó en evidencia.                                                                                                                                                                                                                                                                                                                                                               |
 
 ## 14. Cuando algo falla
 
@@ -956,7 +1007,7 @@ que suelen aparecer:
 | `ERR_PNPM_UNSUPPORTED_ENGINE`                                      | Node.js 24.15+ ([1.1](#11-instala-las-herramientas))                                                                                                        |
 | `port is already allocated` en `pnpm db:up`                        | `DB_PORT=5443` en el `.env` de la raíz y en `DATABASE_URL`                                                                                                  |
 | `Environment variable JWT_ACCESS_SECRET is invalid`                | `openssl rand -hex 32` en `apps/api/.env`                                                                                                                   |
-| `Cannot reach PostgreSQL at localhost:5442` (tests de integración) | `pnpm db:up`                                                                                                                                                |
+| `Cannot reach PostgreSQL at localhost:5442` (tests de integración) | `pnpm services:up`                                                                                                                                          |
 | No llega correo a Mailpit (http://localhost:8035)                  | la fila `Mail` del recuadro de `pnpm dev`: `off` (define `MAIL_SMTP_URL`), o un aviso sobre su puerto ([11.5](#115-correo))                                 |
 | `Executable doesn't exist ... playwright install`                  | `pnpm exec playwright install chromium`                                                                                                                     |
 | `pre-push: Direct pushes to "main" are not allowed`                | haz push de una rama y abre un pull request                                                                                                                 |
@@ -967,20 +1018,21 @@ que suelen aparecer:
 
 ### 15.1 Puertos y URLs
 
-| Puerto | Qué                                    | Lo arranca                                     |
-| ------ | -------------------------------------- | ---------------------------------------------- |
-| 3000   | API (desarrollo)                       | `pnpm dev`                                     |
-| 5173   | web (desarrollo)                       | `pnpm dev`                                     |
-| 5442   | PostgreSQL (`DB_PORT`)                 | `pnpm db:up`                                   |
-| 1035   | SMTP de Mailpit (`MAILPIT_SMTP_PORT`)  | `pnpm services:up` (y `pnpm dev`)              |
-| 8035   | web de Mailpit (`MAILPIT_UI_PORT`)     | `pnpm services:up` (y `pnpm dev`)              |
-| 3100   | API (tests end-to-end)                 | `pnpm test:e2e`                                |
-| 4173   | web (tests end-to-end, `vite preview`) | `pnpm test:e2e`, `pnpm --filter web preview`   |
-| 8080   | stack tipo producción (`WEB_PORT`)     | `docker compose --profile stack up`            |
-| 6379   | Redis (`REDIS_PORT`)                   | `docker compose --profile redis up -d`         |
-| 4318   | OTLP/HTTP (`OTLP_HTTP_PORT`)           | `docker compose --profile observability up -d` |
-| 3001   | Grafana (`GRAFANA_PORT`)               | `docker compose --profile observability up -d` |
-| 9090   | Prometheus (`PROMETHEUS_PORT`)         | `docker compose --profile observability up -d` |
+| Puerto | Qué                                                                                                  | Lo arranca                                                   |
+| ------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 3000   | API (desarrollo)                                                                                     | `pnpm dev`                                                   |
+| 5173   | servidor de desarrollo de la web (`/app/`; `pnpm dev` llega a él por el 4321)                        | `pnpm dev`                                                   |
+| 4321   | el sitio: la landing, con `/app` y `/api` reenviados (desarrollo); la landing sola (`astro preview`) | `pnpm dev`, `pnpm test:e2e`, `pnpm --filter landing preview` |
+| 5442   | PostgreSQL (`DB_PORT`)                                                                               | `pnpm db:up`, `pnpm services:up` (y `pnpm dev`)              |
+| 6389   | Redis (`REDIS_PORT`)                                                                                 | `pnpm services:up` (y `pnpm dev`)                            |
+| 1035   | SMTP de Mailpit (`MAILPIT_SMTP_PORT`)                                                                | `pnpm services:up` (y `pnpm dev`)                            |
+| 8035   | web de Mailpit (`MAILPIT_UI_PORT`)                                                                   | `pnpm services:up` (y `pnpm dev`)                            |
+| 3100   | API (tests end-to-end)                                                                               | `pnpm test:e2e`                                              |
+| 4173   | web (tests end-to-end, `vite preview`, `/app/`)                                                      | `pnpm test:e2e`, `pnpm --filter web preview`                 |
+| 8080   | stack tipo producción (`WEB_PORT`): el sitio, la app en `/app/`                                      | `docker compose --profile stack up`                          |
+| 4318   | OTLP/HTTP (`OTLP_HTTP_PORT`)                                                                         | `docker compose --profile observability up -d`               |
+| 3001   | Grafana (`GRAFANA_PORT`)                                                                             | `docker compose --profile observability up -d`               |
+| 9090   | Prometheus (`PROMETHEUS_PORT`)                                                                       | `docker compose --profile observability up -d`               |
 
 Todos los puertos publicados escuchan solo en 127.0.0.1.
 
@@ -991,6 +1043,7 @@ Todos los puertos publicados escuchan solo en 127.0.0.1.
 | `admin@example.com` / `admin-password`   | base de datos de desarrollo (`pnpm db:seed`), base de datos end-to-end |
 | `member@example.com` / `member-password` | las mismas                                                             |
 | PostgreSQL `app` / `app`                 | solo el contenedor de desarrollo                                       |
+| Contraseña de Redis `app`                | solo el contenedor de desarrollo                                       |
 
 Son públicas: no las crees nunca en ningún otro sitio.
 
@@ -1013,13 +1066,19 @@ apps/web/                 app React
   src/monitoring/         configuración en runtime, error tracking
   nginx/                  configuración del servidor web de producción
   Dockerfile              imagen web
+apps/landing/             sitio público con Astro: páginas estáticas en inglés y español
+  src/pages/              un fichero por página e idioma (index.astro, es/index.astro, 404)
+  src/components/         las secciones; fragments/ dibuja las pantallas de la aplicación
+  src/i18n/               todos los textos del sitio, en en.ts y es.ts
+  src/styles/global.css   los tokens de diseño (Tailwind CSS)
 openapi/openapi.json      el contrato de la API (generado, en git)
 e2e/                      tests de Playwright
 scripts/                  utilidades del repositorio (comprobaciones, smoke test, imágenes de herramientas)
 docs/                     este manual y las guías
 infra/terraform/          infraestructura como código: el servidor y la base de datos en DigitalOcean (opcional)
+deploy/vps/               el servidor de referencia: sus servicios, despliegue y rollback, roles, backup
 .github/                  workflows, rulesets, Dependabot, plantillas, imágenes de herramientas fijadas
-docker-compose.yml        base de datos, servicios opcionales, stack tipo producción
+docker-compose.yml        base de datos, Redis, Mailpit, servicios opcionales, stack tipo producción
 ```
 
 ### 15.4 Los demás documentos (en inglés)

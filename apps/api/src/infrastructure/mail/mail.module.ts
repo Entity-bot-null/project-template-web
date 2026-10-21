@@ -15,6 +15,7 @@ export function mailOptionsFromEnv(): MailOptions {
     smtpUrl: env.MAIL_SMTP_URL,
     from: env.MAIL_FROM,
     appOrigin: env.APP_ORIGIN,
+    appBasePath: env.APP_BASE_PATH,
     maxAttempts: env.MAIL_MAX_ATTEMPTS,
     dailyLimitPerAddress: env.MAIL_DAILY_LIMIT_PER_ADDRESS,
     production: env.NODE_ENV === 'production',

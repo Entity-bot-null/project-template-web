@@ -15,7 +15,7 @@ export type InvitationPayload = z.infer<typeof InvitationPayloadSchema>;
 export const invitationTemplate: MailTemplate = {
   limited: true,
   ttlMs: INVITATION_MESSAGE_TTL_MS,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     const payload = InvitationPayloadSchema.safeParse(message.payload);
     if (!payload.success) return null;
     const invitation = await tx.invitation.findUnique({
@@ -46,7 +46,7 @@ export const invitationTemplate: MailTemplate = {
         ],
         action: {
           label: 'Accept the invitation',
-          url: `${appOrigin}/accept-invitation#token=${token}`,
+          url: `${appUrl}/accept-invitation#token=${token}`,
         },
         footer: [
           'If you did not expect this, ignore this message: no account is created unless the link is used.',

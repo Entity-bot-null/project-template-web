@@ -86,6 +86,15 @@ describe('routePattern', () => {
     expect(routePattern('/someone@example.com', withParams)).toBe('/*');
   });
 
+  it('reads the path under the base the app is served from', () => {
+    expect(routePattern('/app', routes, '/app')).toBe('/');
+    expect(routePattern('/app/', routes, '/app')).toBe('/');
+    expect(routePattern('/app/admin/users', routes, '/app')).toBe('/admin/users');
+    expect(routePattern('/app/no/such/page', routes, '/app')).toBe('/*');
+    // Not a page of the app: the web server answers it with the landing.
+    expect(routePattern('/pricing/', routes, '/app')).toBe('/*');
+  });
+
   it("covers exactly the pages the API accepts (its WEB_VITALS_ROUTES): add a new route's pattern there", () => {
     const parsed = JSON.parse(contract) as {
       paths: Record<

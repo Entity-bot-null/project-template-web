@@ -28,7 +28,7 @@ a share of users degraded (CRITICAL or persistent WARNING); SEV3 = minor, no use
 1. **Acknowledge** the alert and open an incident record: time, who, the alert, the link to the
    dashboard. Every later step goes in it with its time.
 2. **What changed?** The latest deployments (Deploy workflow runs; the `release` field of the log
-   lines and `/app-config.json` say which commit is running), configuration or secret changes,
+   lines and `/app/app-config.json` say which commit is running), configuration or secret changes,
    migrations, provider maintenance.
 3. **How big?** Readiness of each instance, the 5xx rate by `error.origin` and `http.route`, uptime
    checks, Sentry's users per issue.
@@ -44,7 +44,7 @@ a share of users degraded (CRITICAL or persistent WARNING); SEV3 = minor, no use
 | Is the public side up?        | `pnpm smoke --url <public URL>` (read-only; add `--api <API URL>` from inside the platform)                                                |
 | What happened to one request? | The `X-Request-Id` the client got: the log lines with that `requestId`, its Sentry report (`request_id` tag), its trace (`app.request_id`) |
 | Where do the 5xx come from?   | `app_server_errors_total` by `error_origin` and `http_route`; the error line `METHOD /path -> 5xx (request <id>, <origin>)`                |
-| Which version is running?     | `release` on the log lines and spans (`service.version`), `release` in `/app-config.json` for the web image                                |
+| Which version is running?     | `release` on the log lines and spans (`service.version`), `release` in `/app/app-config.json` for the web image                            |
 | Is the database the problem?  | Readiness `Database unreachable`, `error.origin=database`, `db_client_connection_*` pool metrics, `Slow query` warnings                    |
 | Is Redis the problem?         | Readiness `checks.redis`, `Redis unavailable`, `Redis is not answering` and the matching recovery lines, `app_degraded_operations_total`   |
 | The overall picture?          | Grafana → Application: "API service" (traffic, errors by origin, runtime, database, Redis, dependencies), "API SLOs" (budget, burn rates)  |
@@ -123,7 +123,8 @@ database`; failing pg spans. The API keeps running (it even starts without a dat
   (down, failover, network), `too many clients already` (connection limit),
   `password authentication failed` (rotated credentials), an SSL error (TLS settings), `the
 database system is in recovery mode` (restart or failover). The provider's status, maintenance
-  and failover events; storage free space.
+  and failover events; storage free space. The VPS target's own database: `docker compose ... ps db`
+  and `logs db` on the server, and its free disk (`df -h /`).
 - **Signals:** `db_client_connection_count` by state, `db_client_connection_pending_requests`;
   the provider's CPU, connections, storage and replication metrics.
 - **Immediate actions:** a failover in progress: wait; the pool reconnects on its own. Connection
@@ -131,7 +132,9 @@ database system is in recovery mode` (restart or failover). The provider's statu
   (docs/database.md#connections); look for idle or stuck sessions in `pg_stat_activity` and end
   them (`pg_terminate_backend`). A migration holding a lock: cancel it ([10](#10-failed-database-migration)).
 - **Mitigation:** scale the database, free storage, restore the previous credentials or rotate
-  them everywhere at once. Data lost: [disaster-recovery.md](disaster-recovery.md).
+  them everywhere at once (on the VPS target's own database, PostgreSQL first:
+  [deploy-vps.md](deploy-vps.md#change-a-setting-or-a-secret)). Data lost:
+  [disaster-recovery.md](disaster-recovery.md).
 - **Roll back when:** a deployment changed `DATABASE_URL`, `DB_POOL_MAX` or ran a migration just
   before.
 - **Recovered when:** readiness 200 everywhere, no `database` errors for 15 minutes, no pending
@@ -156,11 +159,14 @@ per-instance counters`; `Cache unavailable, serving from the source`;
   sender. Redis holds nothing that must survive (docs/disaster-recovery.md#what-to-protect).
 - **First checks:** the reason in the line: `ECONNREFUSED` or a timeout (down, network), `WRONGPASS`
   or `NOAUTH` (credentials changed), `LOADING` (Redis restarting and loading its data, transient),
-  `OOM command not allowed` (memory full). The provider's status and memory metrics.
+  `OOM command not allowed` (memory full), `NOPERM` (a key or command outside the ACL). The
+  provider's status and memory metrics; on the VPS target, `docker compose ... ps redis` and
+  `logs redis` on the server.
 - **Signals:** node-redis command metrics (errors, duration), database latency (cache misses).
 - **Immediate actions:** none needed in the application: it reconnects by itself (backoff up to
   5 seconds). Watch database load and latency while the cache is out.
-- **Mitigation:** restart or fail over Redis; restore the credentials; memory full: every key the
+- **Mitigation:** restart or fail over Redis (on the VPS target,
+  `docker compose ... up -d --wait redis`); restore the credentials; memory full: every key the
   template writes has a TTL, so check the eviction policy and what else writes to that Redis.
 - **Roll back when:** a deployment changed `REDIS_URL` or the stores.
 - **Recovered when:** `Redis connection restored after <n>s` or `Redis answering again after <n>s`,
@@ -424,10 +430,10 @@ time`) on the routes that call a provider; 5xx lines ending `dependency: <name>)
 - **Impact:** slower, less usable pages for a quarter or more of their visits, and lower search
   ranking if it lasts; nothing is down.
 - **First checks:** on the "Web Vitals" dashboard, which pages and since when; whether it started
-  with a release (`release` in `/app-config.json`); the navigation types (a cold `navigate` versus
-  `back-forward-cache`); LCP together with TTFB and FCP: a high TTFB is the server or the network
-  (the API's latency on the "API service" dashboard, nginx), a high FCP with a normal TTFB is
-  render-blocking JavaScript or CSS (`pnpm perf:check`, the bundle budget), a late LCP alone is
+  with a release (`release` in `/app/app-config.json`); the navigation types (a cold `navigate`
+  versus `back-forward-cache`); LCP together with TTFB and FCP: a high TTFB is the server or the
+  network (the API's latency on the "API service" dashboard, nginx), a high FCP with a normal TTFB
+  is render-blocking JavaScript or CSS (`pnpm perf:check`, the bundle budget), a late LCP alone is
   the page's main content (an API call it waits for, a large image).
 - **Immediate actions:** none urgent. If it started with a release and is severe, roll back.
 - **Mitigation:** INP: long tasks in event handlers (split the work, defer what is not visible);

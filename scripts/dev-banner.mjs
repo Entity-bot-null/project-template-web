@@ -1,6 +1,7 @@
-// The box `pnpm dev` prints under the API and web logs once both are up
-// (scripts/dev.mjs): where the app, the API, its docs, the database and the
-// mail catcher are. Read from the settings those processes read (apps/api/.env,
+// The box `pnpm dev` prints under the servers' logs once they are up
+// (scripts/dev.mjs): where the site (the landing, with the app at /app/ and
+// the API at /api, one origin as in production), the API, its docs, the
+// database and the mail catcher are. Read from the settings those processes read (apps/api/.env,
 // DB_PORT, MAILPIT_*), so it shows what runs, not what the defaults would be;
 // email's state is what the API's readiness probe answered.
 //
@@ -9,12 +10,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseEnv, styleText } from 'node:util';
 
-// apps/web/vite.config.ts: server.port, with strictPort (Vite fails rather
-// than move to another port).
-const WEB_PORT = '5173';
-// docker-compose.yml: the ports the db and mailpit services publish without
-// DB_PORT, MAILPIT_SMTP_PORT and MAILPIT_UI_PORT.
+// apps/landing/astro.config.mjs: server.port, with strictPort (the dev server
+// fails rather than move to another port). It forwards /app to the web app's
+// dev server and /api to the API.
+const LANDING_PORT = '4321';
+// docker-compose.yml: the ports the db, redis and mailpit services publish
+// without DB_PORT, REDIS_PORT, MAILPIT_SMTP_PORT and MAILPIT_UI_PORT.
 export const DEFAULT_DB_PORT = '5442';
+export const DEFAULT_REDIS_PORT = '6389';
 export const DEFAULT_MAILPIT_SMTP_PORT = '1035';
 export const DEFAULT_MAILPIT_UI_PORT = '8035';
 
@@ -23,7 +26,7 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 /**
  * @typedef {Record<string, string | undefined>} Env
  * @typedef {'ok' | 'degraded' | 'disabled'} MailStatus what readiness said (checks.mail)
- * @typedef {{ web: string; api: string; docs: string; database?: string; mail: string; warnings: string[] }} Settings
+ * @typedef {{ landing: string; web: string; api: string; docs: string; database?: string; redis: string; mail: string; warnings: string[] }} Settings
  */
 
 /**
@@ -38,10 +41,13 @@ export function devSettings({ api, compose }) {
   const host = api.HOST || '127.0.0.1';
   const apiUrl = `http://${host.includes(':') ? `[${host}]` : host}:${api.PORT || '3000'}/api`;
   const mail = mailSettings(api, compose);
+  const redis = redisSettings(api, compose);
   const settings = {
-    web: `http://localhost:${WEB_PORT}`,
+    landing: `http://localhost:${LANDING_PORT}`,
+    web: `http://localhost:${LANDING_PORT}/app/`,
     api: apiUrl,
     docs: `${apiUrl}/docs`,
+    redis: redis.value,
     mail: mail.value,
   };
   if (!api.DATABASE_URL) {
@@ -49,6 +55,7 @@ export function devSettings({ api, compose }) {
       ...settings,
       warnings: [
         'DATABASE_URL is not set: copy apps/api/.env.example to apps/api/.env',
+        ...redis.warnings,
         ...mail.warnings,
       ],
     };
@@ -66,8 +73,35 @@ export function devSettings({ api, compose }) {
             `DATABASE_URL uses port ${port}, but pnpm db:up publishes ${published} (DB_PORT): set the same port in both`,
           ]
         : []),
+      ...redis.warnings,
       ...mail.warnings,
     ],
+  };
+}
+
+/**
+ * Where the API's Redis is (host and port, never the password): the one
+ * `pnpm services:up` starts when REDIS_URL names this machine.
+ * @param {Env} api
+ * @param {Env} compose
+ * @returns {{ value: string; warnings: string[] }}
+ */
+function redisSettings(api, compose) {
+  if (!api.REDIS_URL) {
+    return { value: 'off (in-process stores; set REDIS_URL in apps/api/.env)', warnings: [] };
+  }
+  if (!URL.canParse(api.REDIS_URL)) return { value: 'invalid REDIS_URL', warnings: [] };
+  const url = new URL(api.REDIS_URL);
+  const port = url.port || '6379';
+  const published = compose.REDIS_PORT || DEFAULT_REDIS_PORT;
+  return {
+    value: `${url.hostname}:${port}`,
+    warnings:
+      LOOPBACK.has(url.hostname) && port !== published
+        ? [
+            `REDIS_URL uses port ${port}, but pnpm services:up publishes Redis on ${published} (REDIS_PORT): set the same port in both`,
+          ]
+        : [],
   };
 }
 
@@ -118,10 +152,12 @@ export function renderBanner(settings, app, style = styleText, mailStatus = unde
       ? settings.mail
       : `${settings.mail} · ${mailStatus}`;
   const rows = [
-    ['Web', settings.web],
+    ['Site', settings.landing],
+    ['App', settings.web],
     ['API', settings.api],
     ['API docs', settings.docs],
     ...(settings.database ? [['Database', settings.database]] : []),
+    ['Redis', settings.redis],
     ['Mail', mail],
   ];
   const labelWidth = Math.max(...rows.map(([label = '']) => label.length));

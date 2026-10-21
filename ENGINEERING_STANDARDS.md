@@ -5,23 +5,26 @@ checked in review. Details live in `docs/`.
 
 ## Language and code
 
-| Rule                                                                                                                                          | Enforced by                            |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| TypeScript everywhere, `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noImplicitReturns`                                        | `tsconfig.base.json`, `pnpm typecheck` |
-| No `any` leaking into code, no floating promises, no unsafe member access                                                                     | ESLint `strictTypeChecked`             |
-| No `// eslint-disable` without a reason; unused disables are errors                                                                           | ESLint `reportUnusedDisableDirectives` |
-| One formatting style (Prettier: single quotes, 100 columns)                                                                                   | `pnpm format:check`, pre-commit        |
-| Configuration only through the validated `env` module                                                                                         | ESLint `no-restricted-properties`      |
-| No `console` in application code (use the logger; web: `console.error`/`console.warn` only)                                                   | ESLint `no-console`                    |
-| No `eval`/`new Function`, no raw-SQL `*Unsafe` calls, no unsanitized `dangerouslySetInnerHTML`                                                | ESLint, Semgrep (SAST)                 |
-| Code, comments, commits and docs in English (the exceptions: `docs/manual.es.md` and `docs/step-by-step.es.md`, the Spanish manual and guide) | review                                 |
-| Comments explain why, not what                                                                                                                | review                                 |
+| Rule                                                                                                                                                                                                                              | Enforced by                            |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| TypeScript everywhere, `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `noImplicitReturns`                                                                                                                            | `tsconfig.base.json`, `pnpm typecheck` |
+| No `any` leaking into code, no floating promises, no unsafe member access                                                                                                                                                         | ESLint `strictTypeChecked`             |
+| No `// eslint-disable` without a reason; unused disables are errors                                                                                                                                                               | ESLint `reportUnusedDisableDirectives` |
+| One formatting style (Prettier: single quotes, 100 columns)                                                                                                                                                                       | `pnpm format:check`, pre-commit        |
+| Configuration only through the validated `env` module                                                                                                                                                                             | ESLint `no-restricted-properties`      |
+| No `console` in application code (use the logger; web: `console.error`/`console.warn` only)                                                                                                                                       | ESLint `no-console`                    |
+| No `eval`/`new Function`, no raw-SQL `*Unsafe` calls, no unsanitized `dangerouslySetInnerHTML`                                                                                                                                    | ESLint, Semgrep (SAST)                 |
+| Code, comments, commits and docs in English (the exceptions: `docs/manual.es.md` and `docs/step-by-step.es.md`, the Spanish manual and guide, and the user-facing copy in each language of the landing, `apps/landing/src/i18n/`) | review                                 |
+| Comments explain why, not what                                                                                                                                                                                                    | review                                 |
 
 ## Architecture
 
 - API modules: thin controllers, rules and queries in services, Zod schemas in `dto/`
   ([docs/architecture.md](docs/architecture.md)).
 - The web app reaches the API only through `src/api/client.ts` and folds results with `call()`.
+- The landing is static HTML and CSS in every language of the site, its texts in typed
+  dictionaries ([docs/architecture.md](docs/architecture.md#landing-appslanding)), its Tailwind
+  classes known to its stylesheet and in Tailwind's order (`pnpm lint`).
 - Shared behavior lives in one place (`common/`, `src/auth/`, `src/hooks/`); do not copy it.
 - Significant decisions are recorded as ADRs ([docs/adr/](docs/adr/)).
 

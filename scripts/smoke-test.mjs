@@ -7,8 +7,16 @@
 //
 // Through the public URL (--url), what users get:
 //   GET /healthz             200: the web server serves
-//   GET /                    200 HTML with the security headers: the app shell
-//   GET /app-config.json     200 JSON; its release is --release when given
+//   GET /                    200 HTML with the security headers: the landing,
+//                            its links and share picture on this deployment's
+//                            origin
+//   GET /og.png              200 PNG: that picture
+//   GET /es/                 200: the landing in Spanish
+//   GET /<unknown>           404 with the not-found page and the headers
+//   GET /app/                200: the app shell, deep links too
+//   GET /app/app-config.json 200 JSON; its release is --release when given
+//   GET /reset-password      301 to /app/reset-password: links emailed
+//                            before the app moved under /app/
 //   GET /api/<unknown>       404 in the API's envelope with a request id: the
 //                            web server reaches the API and the API answers
 //   GET /api/health/ready    404: the probes stay private
@@ -90,6 +98,13 @@ function json(body) {
   throw new Error(`not a JSON object: ${body.slice(0, 80)}`);
 }
 
+/** The headers every page carries (apps/web/nginx/security-headers.conf). @param {Response} response */
+function securityHeaders(response) {
+  for (const header of ['content-security-policy', 'x-content-type-options']) {
+    if (!response.headers.has(header)) throw new Error(`no ${header} header`);
+  }
+}
+
 /** The `data` of an API envelope. @param {string} body */
 function data(body) {
   const value = json(body).data;
@@ -102,15 +117,59 @@ if (site !== undefined) {
     status(response, 200);
   });
 
-  await expect('app shell', `${site}/`, (response, body) => {
+  await expect('landing', `${site}/`, (response, body) => {
     status(response, 200);
-    if (!body.includes('<div id="root">')) throw new Error('not the app shell');
-    for (const header of ['content-security-policy', 'x-content-type-options']) {
-      if (!response.headers.has(header)) throw new Error(`no ${header} header`);
+    if (!body.includes('<html lang="en">')) throw new Error('not the landing');
+    securityHeaders(response);
+    // Built for a placeholder origin, written with APP_ORIGIN as it is served.
+    if (body.includes('public-origin.invalid')) throw new Error('links on the build placeholder');
+    const canonical = /<link rel="canonical" href="([^"]+)"/.exec(body)?.[1];
+    if (canonical === undefined) throw new Error('no canonical link');
+    const picture = /<meta property="og:image" content="([^"]+)"/.exec(body)?.[1];
+    if (picture === undefined) throw new Error('no share picture (og:image)');
+    if (new URL(picture).origin !== new URL(canonical).origin) {
+      throw new Error(`share picture on another origin: ${picture}`);
     }
+    return `canonical ${canonical}`;
   });
 
-  await expect('runtime configuration', `${site}/app-config.json`, (response, body) => {
+  await expect('share picture', `${site}/og.png`, (response) => {
+    status(response, 200);
+    const type = response.headers.get('content-type') ?? '';
+    if (!type.startsWith('image/png')) throw new Error(`content-type ${type}, expected image/png`);
+  });
+
+  await expect('landing in Spanish', `${site}/es/`, (response, body) => {
+    status(response, 200);
+    if (!body.includes('<html lang="es">')) throw new Error('not the Spanish landing');
+  });
+
+  await expect('not-found page', `${site}/smoke-test-unknown-page/`, (response, body) => {
+    status(response, 404);
+    if (!body.includes('<meta name="robots" content="noindex">')) {
+      throw new Error("not the landing's not-found page");
+    }
+    securityHeaders(response);
+  });
+
+  await expect('app shell', `${site}/app/`, (response, body) => {
+    status(response, 200);
+    if (!body.includes('<div id="root">')) throw new Error('not the app shell');
+    securityHeaders(response);
+  });
+
+  await expect('app deep link', `${site}/app/sign-in`, (response, body) => {
+    status(response, 200);
+    if (!body.includes('<div id="root">')) throw new Error('not the app shell');
+  });
+
+  await expect('emailed links of before /app/', `${site}/reset-password`, (response) => {
+    status(response, 301);
+    const location = response.headers.get('location');
+    if (location !== '/app/reset-password') throw new Error(`redirected to ${String(location)}`);
+  });
+
+  await expect('runtime configuration', `${site}/app/app-config.json`, (response, body) => {
     status(response, 200);
     const config = json(body);
     if (values.release !== undefined && config.release !== values.release) {

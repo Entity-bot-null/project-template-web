@@ -19,7 +19,7 @@ export type EmailChangedPayload = z.infer<typeof EmailChangedPayloadSchema>;
 export const emailChangedTemplate: MailTemplate = {
   limited: false,
   ttlMs: 24 * 60 * 60_000,
-  async compose({ tx, message, product, appOrigin }) {
+  async compose({ tx, message, product, appUrl }) {
     if (message.userId === null) return null;
     const user = await tx.user.findUnique({
       where: { id: message.userId },
@@ -50,7 +50,7 @@ export const emailChangedTemplate: MailTemplate = {
         ],
         action: {
           label: 'Not you? Undo this change',
-          url: `${appOrigin}/revert-email-change#token=${token}`,
+          url: `${appUrl}/revert-email-change#token=${token}`,
         },
         footer: ['If you made this change, there is nothing to do.'],
       },

@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import { boot } from './auth';
-import { routes } from './router';
+import { BASENAME, routes } from './router';
 
-const router = createBrowserRouter(routes);
+const router = createBrowserRouter(routes, { basename: BASENAME });
 
 // One refresh per page load restores the session from the httpOnly cookie;
 // the guards show a loading screen until it settles. boot() is idempotent,

@@ -1,12 +1,13 @@
-# Local development: `pnpm dev` starts PostgreSQL and Mailpit (`pnpm services:up`),
-# then the API and the web app on the host. `pnpm db:up` starts PostgreSQL alone.
+# Local development: `pnpm dev` starts PostgreSQL, Redis and Mailpit
+# (`pnpm services:up`), then the API, the web app and the landing on the host.
+# `pnpm db:up` starts PostgreSQL alone.
 #
-# Optional services, started only when asked for (docs/architecture.md):
-#   docker compose --profile redis up -d           Redis (REDIS_PASSWORD in the root .env)
+# Optional, started only when asked for (docs/architecture.md):
 #   docker compose --profile observability up -d   OpenTelemetry backend + Grafana (development)
 #
 # Production-like stack built from the Dockerfiles (profile "stack"):
-# migrations, then the API, behind the web server at http://localhost:8080.
+# migrations, then the API, behind the web server at http://localhost:8080
+# (the landing at /, the app at /app/).
 #   docker compose --profile stack up --build
 # Reads JWT_ACCESS_SECRET from a root .env (see .env.example). Not a
 # deployment: no TLS, local credentials, nothing published beyond loopback.
@@ -87,12 +88,15 @@ services:
       # Empty when unset: the API then refuses to boot and names the variable.
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-}
       APP_ENVIRONMENT: stack
+      # Redis below, as in a deployment: shared rate limits, cache, locks and
+      # idempotency, and a readiness that fails without it. STACK_REDIS_URL
+      # points the stack at another Redis.
+      REDIS_URL: ${STACK_REDIS_URL:-redis://:${REDIS_PASSWORD:-app}@redis:6379}
+      RATE_LIMIT_STORE: ${STACK_RATE_LIMIT_STORE:-redis}
+      CACHE_STORE: ${STACK_CACHE_STORE:-redis}
+      REDIS_REQUIRED: 'true'
       # Optional integrations, off unless set in the root .env (.env.example):
-      # with the redis profile, STACK_REDIS_URL=redis://:<REDIS_PASSWORD>@redis:6379;
       # with the observability profile, STACK_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318.
-      REDIS_URL: ${STACK_REDIS_URL:-}
-      RATE_LIMIT_STORE: ${STACK_RATE_LIMIT_STORE:-memory}
-      CACHE_STORE: ${STACK_CACHE_STORE:-memory}
       SENTRY_DSN: ${STACK_SENTRY_DSN:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${STACK_OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
@@ -100,10 +104,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      # Only when the redis profile is active.
       redis:
         condition: service_healthy
-        required: false
 
   web:
     profiles: [stack]
@@ -114,6 +116,8 @@ services:
         APP_RELEASE: ${APP_RELEASE:-local}
     environment:
       API_UPSTREAM: http://api:3000
+      # The address the stack is opened at: the landing's absolute links.
+      APP_ORIGIN: http://localhost:${WEB_PORT:-8080}
       APP_ENVIRONMENT: stack
       WEB_SENTRY_DSN: ${STACK_WEB_SENTRY_DSN:-}
     ports:
@@ -122,21 +126,23 @@ services:
       api:
         condition: service_healthy
 
-  # Optional: Redis for shared rate limits, cache, locks and idempotency
-  # (docs/architecture.md#redis). The application runs without it.
-  # Secure defaults: a password is required (REDIS_PASSWORD in the root .env,
-  # never committed), it is published on loopback only, runs as the redis
-  # user, keeps its data (AOF, fsync every second) and evicts only keys that
-  # have a TTL when full: every key the template writes has one, so future keys
-  # without a TTL (queues) are never dropped. `exec` makes redis-server PID 1:
-  # SIGTERM reaches it and it saves before exiting.
+  # Redis for shared rate limits, cache, locks and idempotency
+  # (docs/architecture.md#redis), started with the database, as in a
+  # deployment. The application still runs without it (it degrades), so the
+  # adapters' fallbacks keep their tests. Secure defaults: a password
+  # (REDIS_PASSWORD in the root .env; "app" when unset, local development only,
+  # like the database's), published on loopback only and on 6389, not Redis's
+  # 6379, so it does not collide with a Redis installed on the machine. It runs
+  # as the redis user, keeps its data (AOF, fsync every second) and evicts only
+  # keys that have a TTL when full: every key the template writes has one, so
+  # future keys without a TTL (queues) are never dropped. `exec` makes
+  # redis-server PID 1: SIGTERM reaches it and it saves before exiting.
   redis:
-    profiles: [redis]
     image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     restart: unless-stopped
     user: redis
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-app}
     command:
       - sh
       - -c
@@ -145,7 +151,7 @@ services:
         printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/redis.conf
         exec redis-server /tmp/redis.conf --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy volatile-lru
     ports:
-      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+      - '127.0.0.1:${REDIS_PORT:-6389}:6379'
     volumes:
       - redis_data:/data
     healthcheck:
