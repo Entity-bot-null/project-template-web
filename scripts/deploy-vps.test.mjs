@@ -424,6 +424,42 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(pointer('release.failed.env'), B[3]);
   });
 
+  test('starts the data services first, or leaves them running', () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const result = run('rollback.sh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(calls().slice(before), ['up data redis', `up ${A[0]} ${A[3]}`]);
+  });
+
+  test('with the database on the server: PostgreSQL and its backup too', () => {
+    writeFileSync(join(srv, 'server.env'), 'APP_DOMAIN=app.example.com\nCOMPOSE_PROFILES=db\n');
+    for (const file of ['db.env', 'backup.env']) writeFileSync(join(srv, file), '');
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const result = run('rollback.sh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(calls().slice(before), [
+      'up data redis db',
+      'up data backup',
+      `up ${A[0]} ${A[3]}`,
+    ]);
+  });
+
+  test('data services that do not start stop it before the release changes', () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    writeFileSync(join(root, 'failing-data'), '');
+    const result = run('rollback.sh');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /rollback: the data services did not start/);
+    assert.equal(running(), B[0]);
+    assert.equal(pointer('release.env'), B[3]);
+    assert.equal(pointer('release.previous.env'), A[3]);
+  });
+
   test('refuses when no previous release is recorded', () => {
     run('deploy.sh', A);
     const result = run('rollback.sh');

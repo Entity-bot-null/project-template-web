@@ -669,9 +669,11 @@ docker compose --env-file server.env --env-file release.env up -d --force-recrea
 
 - **Automatic**: a failed rollout or smoke test puts the previous release back.
 - **By hand**, on the server: `cd /srv/app && ./rollback.sh` (uses the images already there; no
-  registry access needed). It ends once the API is ready, and fails, saying so, when the release it
-  put back is not (a database credential changed since, for example). While a deployment runs it
-  stops at once: a failed deployment puts the running release back by itself.
+  registry access needed). Like `deploy.sh`, it first starts the data services, or leaves them
+  running, and stops before changing the release when they do not start. It ends once the API is
+  ready, and fails, saying so, when the release it put back is not (a database credential changed
+  since, for example). While a deployment runs it stops at once: a failed deployment puts the
+  running release back by itself.
 - **Planned**: run Deploy with the previous tag.
 
 Migrations are never reversed: the previous release runs on the current schema
