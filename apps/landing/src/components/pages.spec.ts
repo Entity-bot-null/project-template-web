@@ -46,6 +46,15 @@ describe.each(LOCALES)('the home page in %s', (locale) => {
     expect(html).toContain('href="/app/sign-in"');
   });
 
+  it('shows its picture when shared, described in its language', async () => {
+    const html = await render(Home, locale);
+    expect(html).toContain('<meta property="og:image" content="https://example.com/og.png">');
+    expect(html).toContain('<meta property="og:image:width" content="1200">');
+    expect(html).toContain('<meta property="og:image:height" content="630">');
+    expect(html).toContain(`<meta property="og:image:alt" content="${t.shareImageAlt}">`);
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+  });
+
   it('describes every picture of the app in its language', async () => {
     const html = await render(Home, locale);
     expect(count(html, /data-ui role="img"/g)).toBe(4);

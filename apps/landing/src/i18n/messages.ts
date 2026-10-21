@@ -13,6 +13,8 @@ export interface Messages {
   /** The language's own name, as the language links show it. */
   readonly languageName: string;
   readonly skipToContent: string;
+  /** What the shared picture shows (public/og.png), for those who cannot see it. */
+  readonly shareImageAlt: string;
   readonly header: {
     /** Accessible name of the navigation landmark. */
     readonly navigation: string;

@@ -1,8 +1,10 @@
+import { SITE_NAME } from '../lib/site';
 import type { Messages } from './messages';
 
 export const en = {
   languageName: 'English',
   skipToContent: 'Skip to content',
+  shareImageAlt: `${SITE_NAME}, beside a drawing of the sign-in form of the app.`,
   header: {
     navigation: 'Main',
     signIn: 'Sign in',

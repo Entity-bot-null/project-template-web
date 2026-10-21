@@ -85,6 +85,7 @@ git init -b main
 | `apps/web/index.html`             | `<title>`, the meta description, `lang`                                                                                      |
 | `apps/api/src/openapi/openapi.ts` | `.setTitle('API')`, then run `pnpm contract`                                                                                 |
 | `apps/landing/src/lib/site.ts`    | `SITE_NAME`, the name on the public site; its words are in `apps/landing/src/i18n/` ([how-to](how-to.md#change-the-landing)) |
+| `apps/landing/public/`            | `favicon.svg`, the icon, and `og.png`, the picture a shared link shows, with the name drawn in it (1200 × 630)               |
 | `SECURITY.md`                     | the private contact for vulnerability reports                                                                                |
 | `.github/CODEOWNERS`              | real users or teams instead of the placeholders, uncommented                                                                 |
 | `LICENSE` (none ships)            | the license the product needs, if it is distributed                                                                          |

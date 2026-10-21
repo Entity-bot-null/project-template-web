@@ -1,8 +1,10 @@
+import { SITE_NAME } from '../lib/site';
 import type { Messages } from './messages';
 
 export const es = {
   languageName: 'Español',
   skipToContent: 'Saltar al contenido',
+  shareImageAlt: `${SITE_NAME}, junto a un dibujo del formulario de inicio de sesión de la aplicación.`,
   header: {
     navigation: 'Principal',
     signIn: 'Iniciar sesión',
