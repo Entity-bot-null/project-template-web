@@ -1,8 +1,9 @@
-// `pnpm dev`, once the database is up: the API and web dev servers (pnpm
-// --parallel, their output passed through as it comes), then the box of
+// `pnpm dev`, once the database is up: the API, web and landing dev servers
+// (pnpm --parallel, their output passed through as it comes), then the box of
 // scripts/dev-banner.mjs under their logs, each time the API has started or
-// restarted after a change and the web server answers. The addresses stay at
-// the bottom of the terminal instead of scrolling away with the start-up logs.
+// restarted after a change and the web and landing servers answer. The
+// addresses stay at the bottom of the terminal instead of scrolling away with
+// the start-up logs.
 //
 //   node scripts/dev.mjs
 import { spawn } from 'node:child_process';
@@ -113,6 +114,8 @@ if (isCli) {
     'api',
     '--filter',
     'web',
+    '--filter',
+    'landing',
     'dev',
   ]);
   const servers = spawn(command, args, {
@@ -128,13 +131,16 @@ if (isCli) {
   // ends at once (it would keep this script alive) and prints nothing.
   const stopped = new AbortController();
 
-  // One box at a time, after the web server answers (at most 30 s: a web
-  // server that does not start still gets the box, under its error).
+  // One box at a time, after the web and landing servers answer (at most 30 s
+  // each: a server that does not start still gets the box, under its error).
   let shown = Promise.resolve();
   const showBanner = () => {
     shown = shown.then(async () => {
       const settings = currentSettings();
-      await answers(settings.web, stopped.signal);
+      await Promise.all([
+        answers(settings.web, stopped.signal),
+        answers(settings.landing, stopped.signal),
+      ]);
       const mailStatus = await readMailStatus(settings.api, stopped.signal);
       if (!stopped.signal.aborted) process.stdout.write(`\n${currentBanner(mailStatus)}\n\n`);
     });

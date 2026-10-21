@@ -7,6 +7,7 @@
   "[prisma]": {
     "editor.defaultFormatter": "Prisma.prisma"
   },
+  "eslint.validate": ["javascript", "javascriptreact", "typescript", "typescriptreact", "astro"],
   "typescript.tsdk": "node_modules/typescript/lib",
   "typescript.enablePromptUseWorkspaceTsdk": true,
   "files.eol": "\n",
@@ -20,6 +21,7 @@
   "search.exclude": {
     "**/dist": true,
     "**/coverage": true,
+    "**/.astro": true,
     "apps/api/src/prisma/generated": true,
     "pnpm-lock.yaml": true
   }

@@ -1,0 +1,68 @@
+---
+// Every page's document: language, title and description, the links search
+// engines read (canonical, the page in each language), what a shared link
+// shows (Open Graph), the icon and the stylesheet. A page passes `path` (its
+// address in the default language) to be indexed, or nothing to stay out of
+// search results (the not-found pages).
+import { alternates, localePath, messages, type Locale } from '../i18n';
+import { SHARE_IMAGE, SITE_NAME } from '../lib/site';
+import '../styles/global.css';
+
+interface Props {
+  locale: Locale;
+  title: string;
+  description: string;
+  path?: string;
+}
+
+const { locale, title, description, path } = Astro.props;
+const t = messages(locale);
+// Set in astro.config.mjs; every build has one.
+const site = Astro.site ?? new URL(Astro.url.origin);
+const canonical = path === undefined ? undefined : new URL(localePath(locale, path), site).href;
+const shareImage = new URL(SHARE_IMAGE.path, site).href;
+---
+
+<!doctype html>
+<html lang={locale}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {canonical === undefined ? (
+      <meta name="robots" content="noindex" />
+    ) : (
+      <>
+        <link rel="canonical" href={canonical} />
+        {alternates(path ?? '/', site).map(({ hreflang, href }) => (
+          <link rel="alternate" hreflang={hreflang} href={href} />
+        ))}
+        <meta property="og:url" content={canonical} />
+      </>
+    )}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={SITE_NAME} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={shareImage} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content={String(SHARE_IMAGE.width)} />
+    <meta property="og:image:height" content={String(SHARE_IMAGE.height)} />
+    <meta property="og:image:alt" content={t.shareImageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ddd6c6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1c1d19" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="bg-ground font-sans text-body text-ink antialiased">
+    <a
+      href="#content"
+      class="sr-only bg-accent px-4 py-3 font-semibold text-accent-ink focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-10"
+    >
+      {t.skipToContent}
+    </a>
+    <slot />
+  </body>
+</html>

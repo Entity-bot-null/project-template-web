@@ -1,6 +1,6 @@
-// The box `pnpm dev` prints under the API and web logs once both are up
-// (scripts/dev.mjs): where the app, the API, its docs, the database and the
-// mail catcher are. Read from the settings those processes read (apps/api/.env,
+// The box `pnpm dev` prints under the servers' logs once they are up
+// (scripts/dev.mjs): where the landing, the app, the API, its docs, the
+// database and the mail catcher are. Read from the settings those processes read (apps/api/.env,
 // DB_PORT, MAILPIT_*), so it shows what runs, not what the defaults would be;
 // email's state is what the API's readiness probe answered.
 //
@@ -9,9 +9,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseEnv, styleText } from 'node:util';
 
-// apps/web/vite.config.ts: server.port, with strictPort (Vite fails rather
-// than move to another port).
+// apps/web/vite.config.ts and apps/landing/astro.config.mjs: server.port, with
+// strictPort (the dev server fails rather than move to another port).
 const WEB_PORT = '5173';
+const LANDING_PORT = '4321';
 // docker-compose.yml: the ports the db and mailpit services publish without
 // DB_PORT, MAILPIT_SMTP_PORT and MAILPIT_UI_PORT.
 export const DEFAULT_DB_PORT = '5442';
@@ -23,7 +24,7 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 /**
  * @typedef {Record<string, string | undefined>} Env
  * @typedef {'ok' | 'degraded' | 'disabled'} MailStatus what readiness said (checks.mail)
- * @typedef {{ web: string; api: string; docs: string; database?: string; mail: string; warnings: string[] }} Settings
+ * @typedef {{ landing: string; web: string; api: string; docs: string; database?: string; mail: string; warnings: string[] }} Settings
  */
 
 /**
@@ -39,6 +40,7 @@ export function devSettings({ api, compose }) {
   const apiUrl = `http://${host.includes(':') ? `[${host}]` : host}:${api.PORT || '3000'}/api`;
   const mail = mailSettings(api, compose);
   const settings = {
+    landing: `http://localhost:${LANDING_PORT}`,
     web: `http://localhost:${WEB_PORT}`,
     api: apiUrl,
     docs: `${apiUrl}/docs`,
@@ -118,6 +120,7 @@ export function renderBanner(settings, app, style = styleText, mailStatus = unde
       ? settings.mail
       : `${settings.mail} · ${mailStatus}`;
   const rows = [
+    ['Landing', settings.landing],
     ['Web', settings.web],
     ['API', settings.api],
     ['API docs', settings.docs],

@@ -5,7 +5,10 @@ export default {
   '{.env*,*.env,.envrc}': 'node scripts/forbid-env-files.mjs',
   // --no-gitignore: a file forced past .gitignore (git add -f) is scanned too.
   '*': 'secretlint --maskSecrets --no-gitignore',
-  '*.{ts,tsx,js,mjs,cjs}': ['eslint --fix --max-warnings=0 --no-warn-ignored', 'prettier --write'],
+  '*.{ts,tsx,js,mjs,cjs,astro}': [
+    'eslint --fix --max-warnings=0 --no-warn-ignored',
+    'prettier --write',
+  ],
   '*.{json,md,yml,yaml,css,html}': 'prettier --write',
   // A contract step (a drop, a rename, a tighter column) needs its reason
   // (docs/database.md#expand-and-contract).

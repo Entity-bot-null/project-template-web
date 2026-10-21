@@ -1,0 +1,35 @@
+---
+// The not-found page of one language: the web server answers with it, and a
+// 404 status, for any address the site does not have (apps/web/nginx). Kept
+// out of search results (no path given to Base).
+import { localePath, messages, type Locale } from '../i18n';
+import Base from '../layouts/Base.astro';
+import { SITE_NAME } from '../lib/site';
+import Header from './Header.astro';
+import Headline from './Headline.astro';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = messages(locale);
+---
+
+<Base locale={locale} title={`${t.notFound.title} · ${SITE_NAME}`} description={t.notFound.body}>
+  <div class="absolute inset-x-0 top-0 px-(--margin) pt-6">
+    <Header locale={locale} path="/" />
+  </div>
+  <main
+    id="content"
+    class="flex flex-col justify-between gap-16 px-(--margin) pt-36 pb-10 md:gap-24 md:pt-40 md:pb-12 lg:min-h-svh"
+  >
+    <Headline as="h1" lines={t.notFound.heading} />
+    <div class="flex flex-col gap-8 md:flex-row md:items-baseline-last md:justify-between">
+      <p class="reveal-load max-w-[36ch] text-lead [--d:420ms]">{t.notFound.body}</p>
+      <a href={localePath(locale)} class="button reveal-load w-full [--d:520ms] md:w-auto">
+        {t.notFound.action}
+      </a>
+    </div>
+  </main>
+</Base>

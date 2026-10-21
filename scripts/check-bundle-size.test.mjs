@@ -47,6 +47,14 @@ describe('initialAssets', () => {
     assert.deepEqual(initialAssets(html), ['index-a.js', 'shared-b.js', 'vendor-c.js']);
   });
 
+  test('reads the assets folder of an app served under a base path', () => {
+    const html = [
+      '<script type="module" src="/app/assets/index-a.js"></script>',
+      '<link rel="modulepreload" href="/assets/elsewhere-b.js">',
+    ].join('\n');
+    assert.deepEqual(initialAssets(html, '/app/assets/'), ['index-a.js']);
+  });
+
   test('leaves out stylesheets, classic scripts and other origins', () => {
     const html = [
       '<link rel="stylesheet" href="/assets/index-x.css">',
@@ -86,6 +94,17 @@ describe('checkBudgets', () => {
     );
     assert.equal(over, false);
     assert.equal(failed, false);
+  });
+
+  test('a budget of 0 kB passes when the build has no such asset, and fails on any', () => {
+    const none = { name: 'JavaScript, none', pattern: /\.js$/, maxGzipKb: 0 };
+    const empty = checkBudgets([none], { files: ['site-a.css'], html: '', gzipBytes: () => 0 });
+    assert.equal(empty.failed, false);
+    assert.equal(empty.lines[0]?.line, 'ok  JavaScript, none: 0.0 kB gzip, budget 0 kB (0 files)');
+    const one = checkBudgets([none], { files: ['tiny-a.js'], html: '', gzipBytes: () => 0 });
+    assert.equal(one.failed, true);
+    assert.equal(one.over, true);
+    assert.match(one.lines[0]?.line ?? '', /^OVER BUDGET {2}JavaScript, none: .*\(1 files\)$/);
   });
 
   test('fails a budget that measures nothing', () => {

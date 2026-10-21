@@ -1,11 +1,13 @@
 # Architecture
 
-A pnpm workspace with two applications that ship together and share one contract.
+A pnpm workspace with three applications that ship together: the API and the web app share one
+contract; the landing is the public site in front of them.
 
 ```
 apps/
   api/          NestJS HTTP API, Prisma (PostgreSQL), Zod, served under /api
   web/          React single-page app (Vite, React Router), typed client from the contract
+  landing/      public site (Astro, Tailwind CSS): static pages in English and Spanish
 openapi/        openapi.json: the committed API contract
 e2e/            Playwright end-to-end suite (whole stack)
 scripts/        repository tooling (branch names, hooks, bundle budget, env guard)
@@ -349,6 +351,39 @@ src/
 
 Styling is plain CSS on purpose (`index.css`): the design system is a product decision (OPCIONAL:
 Tailwind, CSS modules, a component library).
+
+## Landing (`apps/landing`)
+
+```
+src/
+  pages/               one file per page and language: index.astro (/), es/index.astro (/es/),
+                       404.astro and es/404.astro (not-found pages), robots.txt.ts
+  components/          the sections, each taking the page's locale; Home.astro and NotFound.astro
+                       put them together; fragments/ draws screens of the app in HTML
+  layouts/Base.astro   the document: language, title, description, canonical and alternate links
+  i18n/                locales.ts (the languages), messages.ts (the shape), en.ts and es.ts (every
+                       text), index.ts (messages, localePath, alternates)
+  lib/                 site.ts (the product's name), links.ts (appPath: links into the web app),
+                       robots.ts
+  styles/global.css    Tailwind CSS and the design tokens: colours with their dark values, five
+                       type sizes, motion
+scripts/astro.mjs      the Astro CLI with telemetry off and its servers in the foreground
+```
+
+The landing is built to static files: HTML, one stylesheet, the sitemap and robots.txt. It runs no
+code in the browser and no server: nothing to patch at run time, nothing an attacker can reach
+besides files. The default language lives at the root and every other one under its code (Astro's
+i18n routing, `prefixDefaultLocale: false`); a page in one language has its twins as alternate
+links (`hreflang`, `x-default`), so search engines show each visitor the right one. Its texts are
+typed: a text declared in `messages.ts` and missing in one language stops the build.
+
+It follows the same constraints as the rest of the template: one origin (it links to the app as
+`/app/`, `src/lib/links.ts`), the strict Content-Security-Policy of the web image (no inline script
+or style: `build.inlineStylesheets: 'never'`; fonts are the system's, nothing loads from another
+origin), the performance budget (`performance-budget.json`, 0 kB of JavaScript) and accessibility
+(landmarks, a skip link, one `h1`, contrast of 4.5:1 or more, motion only without
+`prefers-reduced-motion`, and pictures of the app as labelled images). Decision record:
+[ADR 0005](adr/0005-public-landing-site.md).
 
 ## Key decisions
 

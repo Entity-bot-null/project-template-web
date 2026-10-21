@@ -12,8 +12,8 @@ push / pull request
        │    ├─ Unit and component tests         vitest + coverage thresholds + OpenAPI drift
        │    ├─ Integration tests                API + PostgreSQL + Redis + Mailpit services (adapters, degraded mode, email outbox)
        │    ├─ Security                         pnpm audit (high+), dependency policy, secretlint, gitleaks
-       │    ├─ Build and performance budget     pnpm build, bundle size budget
-       │    ├─ End-to-end tests                 Playwright on the built stack
+       │    ├─ Build and performance budget     pnpm build, size budgets of the web app and the landing
+       │    ├─ End-to-end tests                 Playwright on the built stack and landing
        │    └─ Images (docker-images.yml)       api, api-migrate, web: built, scanned (Trivy), not pushed
        └─ CI passed            fails if any job above failed  ← required check
   └─ Conventions (conventions.yml)   branch name, PR title (Conventional Commits),

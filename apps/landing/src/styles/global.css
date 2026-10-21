@@ -1,0 +1,280 @@
+@import 'tailwindcss';
+
+/*
+ * The landing's design tokens: rebrand the site here. Colours are roles
+ * (ground, ink, accent...), each with its light and dark value; type is five
+ * sizes, set in the system's own fonts (nothing to download, nothing for the
+ * Content-Security-Policy to allow). Utilities read them as bg-ground,
+ * text-ink, text-display and so on.
+ */
+:root {
+  color-scheme: light dark;
+  /* The page. */
+  --ground: #ddd6c6;
+  --surface: #d2cab8;
+  --ink: #2a2a26;
+  --muted: #59574e;
+  /* The one action colour. */
+  --accent: #4f6238;
+  --accent-strong: #3e4e2b;
+  --accent-ink: #ffffff;
+  /* The closing field (footer). */
+  --field: #3f5a2a;
+  --field-ink: #ffffff;
+  --field-muted: #dde5d2;
+  /* Interface fragments: the app's own panels and controls. */
+  --panel: #f8f8f6;
+  --panel-ink: #22221f;
+  --panel-muted: #5c5a52;
+  --panel-line: #c9c2b2;
+  --panel-field: #ffffff;
+  --margin: clamp(1rem, 0.55rem + 1.9vw, 2rem);
+  --gutter: clamp(0.75rem, 0.4rem + 1.4vw, 1.5rem);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #1c1d19;
+    --surface: #262822;
+    --ink: #ece6d8;
+    --muted: #b9b3a3;
+    --accent: #a5bd84;
+    --accent-strong: #bcd29c;
+    --accent-ink: #1a2112;
+    --field: #2f4521;
+    --field-ink: #f3f0e8;
+    --field-muted: #cdd8bf;
+    --panel: #2c2e28;
+    --panel-ink: #ece6d8;
+    --panel-muted: #b2ac9c;
+    --panel-line: #45473f;
+    --panel-field: #20221d;
+  }
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-ink: var(--accent-ink);
+  --color-field: var(--field);
+  --color-field-ink: var(--field-ink);
+  --color-field-muted: var(--field-muted);
+  --color-panel: var(--panel);
+  --color-panel-ink: var(--panel-ink);
+  --color-panel-muted: var(--panel-muted);
+  --color-panel-line: var(--panel-line);
+}
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans',
+    Arial, sans-serif;
+
+  /* Five sizes do all the work: small, body, lead, head and display. */
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.45;
+  --text-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+  --text-body--line-height: 1.55;
+  --text-lead: clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem);
+  --text-lead--line-height: 1.35;
+  --text-head: clamp(2.5rem, 0.9rem + 4.6vw, 5.25rem);
+  --text-head--line-height: 1;
+  --text-head--letter-spacing: -0.03em;
+  --text-display: clamp(2.5rem, 0.15rem + 12.9vw, 11.5rem);
+  --text-display--line-height: 0.9;
+  --text-display--letter-spacing: -0.035em;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  ::selection {
+    background-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  :focus-visible {
+    outline: 3px solid currentColor;
+    outline-offset: 3px;
+  }
+}
+
+@layer components {
+  /* The one button: flat, square, one fill. */
+  .button {
+    display: inline-flex;
+    min-height: 3.5rem;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 1.75rem;
+    background-color: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+    transition:
+      transform 140ms var(--ease-out),
+      background-color 180ms ease;
+  }
+
+  .button:active {
+    transform: scale(0.97);
+  }
+
+  /* Text links: underlined when hovered or current (the language the page is
+     in), never told apart by colour alone. */
+  .link {
+    text-decoration-line: underline;
+    text-decoration-color: transparent;
+    text-decoration-thickness: 0.08em;
+    text-underline-offset: 0.22em;
+    transition: text-decoration-color 180ms ease;
+  }
+
+  .link[aria-current] {
+    text-decoration-color: currentColor;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .button:hover {
+      background-color: var(--accent-strong);
+    }
+
+    .link:hover {
+      text-decoration-color: currentColor;
+    }
+
+    /* The capability under the pointer stays in full ink, the others step
+       back to the muted ink (still 4.5:1 or more). */
+    .capabilities:has(.capability:hover) .capability:not(:hover) .capability-name {
+      color: var(--muted);
+    }
+  }
+
+  .capability-name {
+    transition: color 180ms ease;
+  }
+
+  /* An interface fragment: a picture of the app, drawn in HTML. */
+  .ui {
+    background-color: var(--panel);
+    color: var(--panel-ink);
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+
+  .ui-field {
+    display: block;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--panel-line);
+    background-color: var(--panel-field);
+    color: var(--panel-ink);
+  }
+
+  .ui-button {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    padding-inline: 1rem;
+    background-color: var(--panel-ink);
+    color: var(--panel);
+    font-weight: 600;
+  }
+}
+
+/*
+ * Motion: arrival on load, entrances on scroll, the closing name settling into
+ * place. Transform and opacity only, CSS only (no script for the
+ * Content-Security-Policy to allow), and only when the visitor has not asked
+ * for less motion; where scroll timelines are missing, everything is simply
+ * in place.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-line {
+    animation: rise-line 900ms var(--ease-expo) both;
+    animation-delay: calc(120ms + var(--i, 0) * 110ms);
+  }
+
+  .reveal-load {
+    animation: rise 600ms var(--ease-out) both;
+    animation-delay: var(--d, 420ms);
+  }
+
+  /* Scroll-linked, so written in longhands: the minifier would otherwise fold
+     them into one animation shorthand with the timeline inside, which
+     browsers do not accept yet, and drop the animation. */
+  @supports (animation-timeline: view()) {
+    .reveal {
+      animation-name: arrive;
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: view();
+      animation-range: entry 0% entry calc(70% + var(--i, 0) * 8%);
+    }
+
+    /* A headline below the first screen: its lines rise as it scrolls in. */
+    .reveal-lines {
+      view-timeline-name: --lines;
+    }
+
+    .reveal-lines .reveal-line {
+      animation-name: rise-line;
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-delay: 0s;
+      animation-timeline: --lines;
+      animation-range: entry calc(10% + var(--i, 0) * 12%) cover 40%;
+    }
+
+    .settle {
+      animation-name: settle;
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 45%;
+    }
+  }
+}
+
+@keyframes rise-line {
+  from {
+    transform: translateY(105%);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.5rem);
+  }
+}
+
+/* Scroll entrances move only: what is below the fold is never invisible, for
+   a reader who jumps to it, a print or a full-page capture. */
+@keyframes arrive {
+  from {
+    transform: translateY(2rem);
+  }
+}
+
+@keyframes settle {
+  from {
+    transform: scale(0.94);
+  }
+}

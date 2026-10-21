@@ -1,0 +1,32 @@
+---
+// A picture of the invitation email, in the words the API sends
+// (apps/api/src/infrastructure/mail/templates/invitation.template.ts).
+import { SITE_NAME } from '../../lib/site';
+
+interface Props {
+  label: string;
+}
+
+const { label } = Astro.props;
+---
+
+<div data-ui role="img" aria-label={label} class="ui w-full max-w-140">
+  <div class="grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1 border-b border-panel-line px-5 py-4 sm:px-6">
+    <span class="text-panel-muted">From</span>
+    <span class="truncate">{SITE_NAME}</span>
+    <span class="text-panel-muted">To</span>
+    <span class="truncate">ada@example.com</span>
+    <span class="text-panel-muted">Subject</span>
+    <span class="font-semibold">You are invited to {SITE_NAME}</span>
+  </div>
+  <div class="flex flex-col gap-3 p-5 sm:px-6">
+    <p class="text-[1.125rem] font-semibold">You are invited to {SITE_NAME}</p>
+    <p>An administrator of {SITE_NAME} invited this address to create an account (role: member).</p>
+    <p>Open the link below to choose your name and password. It works once, for 7 days.</p>
+    <span class="ui-button mt-1 self-start">Accept the invitation</span>
+    <p class="mt-1 text-panel-muted">
+      If you did not expect this, ignore this message: no account is created unless the link is
+      used.
+    </p>
+  </div>
+</div>

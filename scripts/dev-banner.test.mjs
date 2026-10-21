@@ -23,6 +23,7 @@ describe('devSettings', () => {
         compose: {},
       }),
       {
+        landing: 'http://localhost:4321',
         web: 'http://localhost:5173',
         api: 'http://127.0.0.1:3000/api',
         docs: 'http://127.0.0.1:3000/api/docs',
@@ -70,6 +71,16 @@ describe('devSettings', () => {
     const settings = devSettings({ api: {}, compose: {} });
     assert.equal(settings.database, undefined);
     assert.match(settings.warnings[0] ?? '', /apps\/api\/\.env\.example/);
+  });
+
+  test("the landing's address is the port its dev server keeps", () => {
+    const config = readFileSync(
+      new URL('../apps/landing/astro.config.mjs', import.meta.url),
+      'utf8',
+    );
+    const port = /server: \{ port: (\d+) \}/.exec(config)?.[1];
+    assert.equal(devSettings({ api: {}, compose: {} }).landing, `http://localhost:${String(port)}`);
+    assert.match(config, /server: \{ strictPort: true \}/);
   });
 
   test('the default ports are the ones docker-compose.yml publishes', () => {
@@ -141,6 +152,7 @@ describe('renderBanner', () => {
     const text = lines.join('\n');
     assert.match(text, /project-template 1\.2\.3 · development/);
     for (const value of [
+      settings.landing,
       settings.web,
       settings.api,
       settings.docs,
