@@ -179,11 +179,13 @@ Abre el proyecto en tu editor (`code .`) y cambia:
 | `README.md`                       | el título y el primer párrafo                                                        |
 | `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (el idioma de tu interfaz) |
 | `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Producto> API')`                                   |
+| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → el nombre del producto, tal como lo muestra el sitio público           |
 | `SECURITY.md`                     | `security@example.com` → tu contacto de seguridad                                    |
 | `.github/CODEOWNERS`              | sustituye `@your-org/...` por usuarios o equipos reales y quita el `#`               |
 | `CHANGELOG.md`                    | deja solo el título `# Changelog`: la historia de la plantilla no es la tuya         |
 
-Los paquetes `apps/api` y `apps/web` conservan sus nombres (`api`, `web`): son privados.
+Los paquetes `apps/api`, `apps/web` y `apps/landing` conservan sus nombres (`api`, `web`,
+`landing`): son privados.
 
 **Comprueba:** al buscar `example.com` en el proyecto solo aparecen ejemplos y marcadores para más
 adelante: los ficheros `.env.example` (también los de `deploy/vps`), tests, las cuentas del seed de
@@ -256,14 +258,15 @@ pnpm dev
 
 **Comprueba**, en tu navegador:
 
-| Abre                                                                          | Deberías ver                                            |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------- |
-| http://localhost:5173                                                         | la página de inicio de sesión                           |
-| inicia sesión como `admin@example.com` / `admin-password`                     | la app, con la sesión iniciada como Admin               |
-| cierra la sesión, inicia sesión como `member@example.com` / `member-password` | la app como Member, sin las pantallas de administración |
-| http://localhost:3000/api/docs                                                | la documentación de la API (Swagger)                    |
-| http://127.0.0.1:3000/api/health/ready                                        | una respuesta JSON con `"status":"ok"`                  |
-| http://localhost:8035                                                         | Mailpit, adonde llegan los correos de la app            |
+| Abre                                                                          | Deberías ver                                                                               |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| http://localhost:4321                                                         | la landing, el sitio público; sus enlaces de idioma cambian a español (`/es/`) y de vuelta |
+| http://localhost:5173                                                         | la página de inicio de sesión                                                              |
+| inicia sesión como `admin@example.com` / `admin-password`                     | la app, con la sesión iniciada como Admin                                                  |
+| cierra la sesión, inicia sesión como `member@example.com` / `member-password` | la app como Member, sin las pantallas de administración                                    |
+| http://localhost:3000/api/docs                                                | la documentación de la API (Swagger)                                                       |
+| http://127.0.0.1:3000/api/health/ready                                        | una respuesta JSON con `"status":"ok"`                                                     |
+| http://localhost:8035                                                         | Mailpit, adonde llegan los correos de la app                                               |
 
 La terminal muestra la primera línea de la API:
 `Starting release unversioned in development: … error tracking off, Redis off, email on`, y un
@@ -302,8 +305,8 @@ pnpm test:e2e
 
 **Comprueba:** los dos informan de que pasaron sus tests (`passed`, ningún `failed`); la ejecución
 de integración además lista como saltada la suite de los adaptadores de Redis, que se ejecuta donde
-`REDIS_TEST_URL` está definida (CI). Los tests end-to-end usan los puertos 3100 y 4173: para
-`pnpm dev` antes.
+`REDIS_TEST_URL` está definida (CI). Los tests end-to-end usan los puertos 3100, 4173 y 4321:
+para `pnpm dev` antes.
 
 ### 4.3 Las comprobaciones con Docker
 
@@ -459,7 +462,10 @@ A partir de aquí, cada cambio sigue [el ciclo diario](#fase-11-el-ciclo-diario)
 request, CI, revisión, merge. Los primeros suelen ser:
 
 1. **Diseño e idioma.** `apps/web/src/index.css` contiene estilos provisionales; los textos de las
-   pantallas están en `apps/web/src`. Sustitúyelos por los del producto.
+   pantallas están en `apps/web/src`. Sustitúyelos por los del producto. El sitio público trae
+   textos de ejemplo, en inglés y en español, en `apps/landing/src/i18n/`, y su aspecto en
+   `apps/landing/src/styles/global.css`: escribe los tuyos
+   ([how-to.md](how-to.md#change-the-landing)).
 2. **Tu dominio de negocio** (los datos y las reglas de tu producto, no el dominio web). Añade tus tablas y tus módulos de la API junto a `users`, siguiendo las recetas:
    [how-to.md](how-to.md) (añadir una tabla, un módulo de la API, un endpoint, una pantalla, un
    rol, una variable de entorno).

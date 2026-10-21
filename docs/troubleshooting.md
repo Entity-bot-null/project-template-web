@@ -27,6 +27,17 @@ the error.
 | `Drift detected: Your database schema is not in sync with your migration history`    | The dev database was changed by hand, or a migration was edited | Never edit applied migrations; for a development database with nothing to keep, reset it: `pnpm --filter api exec prisma migrate reset` |
 | `P2002` answered as `409 A record with this value already exists`                    | Unique constraint                                               | Expected behavior; validate earlier or handle the 409 in the client                                                                     |
 
+## Landing
+
+| Message                                                                                             | Cause                                                                               | Fix                                                                                                                            |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `Port 4321 is already in use` (`pnpm dev`, `pnpm test:e2e`)                                         | Another landing server: a `pnpm dev` still running, or an earlier preview           | Stop it (`Ctrl+C` in its terminal); the port is fixed (`strictPort`) so the box of `pnpm dev` and the tests can rely on it     |
+| `pnpm typecheck` in `src/i18n/es.ts`: `Property '<text>' is missing in type ...`                    | A text declared in `messages.ts` is not written in one language                     | Write it in every dictionary ([how-to.md](how-to.md#change-the-landing))                                                       |
+| `pnpm --filter landing test`: `translates the texts rather than copying English into Spanish` fails | A Spanish text is the English one, copied                                           | Translate it; a word that is the same in both languages (a product name) belongs in `src/lib/site.ts`, not in the dictionaries |
+| `PUBLIC_URL must be an origin such as https://example.com, without a path or a trailing slash`      | The landing's build got a URL with a path, a trailing slash, or no URL              | Set the origin only: `PUBLIC_URL=https://example.com` ([environment.md](environment.md#landing-variables))                     |
+| `A page path starts and ends with one slash, such as "/" or "/pricing/"`                            | `localePath` or `Base` got a page address like `/pricing`                           | Write the page's address in the default language, between slashes: `/pricing/`                                                 |
+| `pnpm perf:check`: `OVER BUDGET  JavaScript (none: the pages are HTML and CSS)`                     | A script reached the landing's build (a `<script>` in a component, a client island) | Remove it, or raise the budget in a reviewed pull request that says why ([how-to.md](how-to.md#change-the-landing))            |
+
 ## API at runtime
 
 | Message                                                                                                   | Cause                                                                                                                                  | Fix                                                                                                         |
