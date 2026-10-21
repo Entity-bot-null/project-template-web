@@ -27,7 +27,8 @@ Client (browser)
 CDN / WAF / load balancer        TLS, HSTS, DDoS protection           REQUIRES CONFIGURATION
    │
    ▼
-web server (nginx)               SPA, security headers + CSP, /app-config.json, /healthz
+web server (nginx)               / the landing (static pages), /app/ the SPA and its
+   │                                /app/app-config.json, security headers + CSP, /healthz
    │  /api (one origin for the browser)
    ▼
 API (NestJS), N instances        stateless; request ids, redaction, error classification
@@ -44,11 +45,12 @@ traces and metrics (OTLP → collector or provider, OPTIONAL), uptime checks and
 (REQUIRES CONFIGURATION)
 ```
 
-The browser only ever talks to its own origin: the web server forwards `/api` to the API (in
-development the Vite dev server does the same). So the refresh cookie is same-origin, CORS stays
-off, and `SameSite=Strict` works. Several API instances need the shared rate limit store
-(`RATE_LIMIT_STORE=redis`, docs/security.md#rate-limiting); everything else in the API is already
-stateless.
+The browser only ever talks to its own origin: the web server serves the landing at `/` and the app
+at `/app/`, and forwards `/api` to the API (in development the landing's dev server is that entry:
+it forwards `/app` to the web app's dev server and `/api` to the API). So the refresh cookie is
+same-origin, CORS stays off, and `SameSite=Strict` works. Several API instances need the shared rate
+limit store (`RATE_LIMIT_STORE=redis`, docs/security.md#rate-limiting); everything else in the API
+is already stateless.
 
 ## API (`apps/api`)
 
@@ -339,7 +341,8 @@ src/
   main.tsx, App.tsx    mount, boot refresh, router
   router.tsx           every route, guarded as layout routes
   api/                 client.ts (openapi-fetch), errors.ts (call, describeFailure), schema.d.ts (generated)
-  monitoring/          runtime config (/app-config.json), error tracking (Sentry), Web Vitals; lazy chunks
+  monitoring/          runtime config (/app/app-config.json), error tracking (Sentry), Web Vitals;
+                       lazy chunks
   auth/                session store (token in memory), 401 middleware, guards, useAuth,
                        capabilities (what the deployment offers), new-password rules
   hooks/               useLoader (load, retry, stale-response protection)
@@ -348,6 +351,10 @@ src/
                        account) load when opened (lazy routes)
   test/                setup, HTTP mocks, fixtures, render helper
 ```
+
+The app is built for `/app/` (Vite's `base`) and its router uses the same path as its basename
+(`BASENAME` in `router.tsx`): routes, links and the Web Vitals labels stay written from the app's
+root (`/sign-in`), and the API builds the links in emails with `APP_BASE_PATH`.
 
 Styling is plain CSS on purpose (`index.css`): the design system is a product decision (OPCIONAL:
 Tailwind, CSS modules, a component library).
@@ -376,6 +383,11 @@ besides files. The default language lives at the root and every other one under 
 i18n routing, `prefixDefaultLocale: false`); a page in one language has its twins as alternate
 links (`hreflang`, `x-default`), so search engines show each visitor the right one. Its texts are
 typed: a text declared in `messages.ts` and missing in one language stops the build.
+
+The web image serves it at `/` (`apps/web/Dockerfile`). It is built once, for a placeholder origin,
+and nginx writes the deployment's `APP_ORIGIN` into its absolute links as it serves them, so the
+same image runs in every environment; an address the site does not have answers 404 with the
+not-found page of its language.
 
 It follows the same constraints as the rest of the template: one origin (it links to the app as
 `/app/`, `src/lib/links.ts`), the strict Content-Security-Policy of the web image (no inline script

@@ -75,7 +75,7 @@ pnpm --filter api test:watch / pnpm --filter web test:watch / pnpm --filter land
   run. A spec that changes an account creates its own (`e2e/support/accounts.ts`, through the built
   `user:create` CLI, a new address per attempt), so the seeded accounts other specs sign in with
   never change and a retry is not held back by the one-message-a-minute limit. The API runs in
-  production mode with links to `http://localhost:4173` and Mailpit's SMTP: both allowed in
+  production mode with links to `http://localhost:4173/app/` and Mailpit's SMTP: both allowed in
   production on loopback only ([security.md](security.md#email)). The landing runs on its own
   preview server (port 4321, `e2e/support/landing.ts`), built for that address. Every spec imports
   `test` from `e2e/support/fixtures.ts`, which gives each test its own client address

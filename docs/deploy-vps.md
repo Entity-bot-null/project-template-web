@@ -32,8 +32,11 @@ the deploy user, the database and its roles), and the same server results:
 ## How it works
 
 ```
-browser ──HTTPS──▶ Caddy (TLS, HSTS) ──▶ web (nginx: the app, /api forwarded) ──▶ api ──▶ PostgreSQL (managed)
-                   ports 80/443            edge network only                       edge network only
+browser ──HTTPS──▶ Caddy (TLS, HSTS) ──▶ web (nginx) ──────────▶ api ──▶ PostgreSQL (managed)
+                   ports 80/443          / the landing,          edge network only
+                                         /app/ the app,
+                                         /api forwarded;
+                                         edge network only
 ```
 
 The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
@@ -82,7 +85,7 @@ files on the server, readable by the deploy user only.
 
 | File                   | What it is                                                                                                                         | Committed        |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `compose.yaml`         | the services: `proxy` (Caddy), `api`, `web`, `migrate` (run once per deployment)                                                   | yes              |
+| `compose.yaml`         | the services: `proxy` (Caddy), `api`, `web` (its `APP_ORIGIN` is `https://` + `APP_DOMAIN`), `migrate` (run once per deployment)   |
 | `Caddyfile`            | TLS for `APP_DOMAIN`, HSTS, compression, forward to `web`                                                                          | yes              |
 | `realip.conf`          | mounted into the web image: the client address comes from Caddy, not from the connection                                           | yes              |
 | `deploy.sh`            | one deployment (the steps above)                                                                                                   | yes              |
@@ -307,7 +310,7 @@ The run shows, in order: Resolve the commit, Gates, Publish api / api-migrate / 
 staging (server). The first publish makes the three packages private in `ghcr.io`; nothing to do.
 At the end, the smoke test prints `Smoke test passed (public URL only).` and the site answers at
 `PUBLIC_URL` with a valid certificate (Caddy obtains it on the first request; port 80 must be open
-for that).
+for that): the landing at `/`, the app at `/app/`.
 
 ## 9. Create the first administrator
 
@@ -325,7 +328,7 @@ unset PASSWORD
 ```
 
 It prints `Created the admin account owner@your-company.com (<id>).` and refuses an email that
-already has an account. Sign in at `PUBLIC_URL` with it.
+already has an account. Sign in with it at `PUBLIC_URL/app/` (the landing's **Sign in**).
 
 ## Provision with Terraform (DigitalOcean)
 
@@ -556,7 +559,8 @@ docker compose --env-file server.env --env-file release.env up -d --force-recrea
 
 `rollback.sh` runs the previous release with the files now on the server: a change to
 `compose.yaml` that the previous release cannot run with needs the same care as a migration
-(expand first, contract in a later release).
+(expand first, contract in a later release). Adding a variable an older image ignores, as
+`APP_ORIGIN` on `web` is for the images from before the landing, is safe both ways.
 
 ### Roll back
 

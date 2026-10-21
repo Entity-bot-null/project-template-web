@@ -159,16 +159,19 @@ It starts the database and Mailpit (`pnpm services:up`, if stopped), then the AP
 the landing (the public site) with live reload, and prints these addresses in a box under their
 logs, again after every restart:
 
-| What                        | URL                                             |
-| --------------------------- | ----------------------------------------------- |
-| Landing (the public site)   | http://localhost:4321, in Spanish at `/es/`     |
-| Web app                     | http://localhost:5173                           |
-| API                         | http://127.0.0.1:3000/api                       |
-| API documentation (Swagger) | http://localhost:3000/api/docs                  |
-| API liveness / readiness    | http://127.0.0.1:3000/api/health/live, `/ready` |
-| Email the API sent          | http://localhost:8035 (Mailpit)                 |
+| What                                        | URL                                             |
+| ------------------------------------------- | ----------------------------------------------- |
+| The site: the landing, in Spanish at `/es/` | http://localhost:4321                           |
+| The web app, through the site               | http://localhost:4321/app/                      |
+| API                                         | http://127.0.0.1:3000/api                       |
+| API documentation (Swagger)                 | http://localhost:3000/api/docs                  |
+| API liveness / readiness                    | http://127.0.0.1:3000/api/health/live, `/ready` |
+| Email the API sent                          | http://localhost:8035 (Mailpit)                 |
 
-Open the web app and sign in with a seeded account. The API's first log line says what is on:
+The landing's server is the site's single entry, as the web image is in production: it forwards
+`/app` to the web app's dev server (also reachable on its own at http://localhost:5173/app/) and
+`/api` to the API. Open http://localhost:4321, follow **Sign in** and sign in with a seeded account.
+The API's first log line says what is on:
 `Starting release unversioned in development: tracing and metrics off, error tracking off, Redis off, email on`.
 
 Stop with `Ctrl+C`. `pnpm db:down` removes the database and Mailpit containers; the database's data
@@ -189,7 +192,7 @@ pnpm sast                                # Semgrep (Docker; a few minutes, see 1
 pnpm lint:workflows                      # actionlint + zizmor + shellcheck (Docker)
 pnpm observability:check                 # dashboards and alert rules, promtool tests (Docker)
 pnpm iac:check                           # Terraform, TFLint, Trivy, cloud-init, database roles (Docker)
-docker compose --profile stack up --build   # production images at http://localhost:8080
+docker compose --profile stack up --build   # production images: the site at http://localhost:8080, the app at /app/
 ```
 
 For the last one, the root `.env` needs `JWT_ACCESS_SECRET`. In another terminal:
@@ -443,31 +446,35 @@ value: `Environment variable JWT_ACCESS_SECRET is invalid: ...`.
 Required: `NODE_ENV`, `DATABASE_URL`, `JWT_ACCESS_SECRET`; in production also `TRUST_PROXY`.
 Everything else has a safe default. The full table with every rule: [environment.md](environment.md).
 
-| Group               | Variables (default)                                                                                                                                                                                                                                   |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime             | `NODE_ENV` (none), `HOST` (127.0.0.1; every interface in production), `PORT` (3000)                                                                                                                                                                   |
-| Database            | `DATABASE_URL` (none), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                                                |
-| Authentication      | `JWT_ACCESS_SECRET` (none), `JWT_ACCESS_SECRET_PREVIOUS` (unset), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                                                     |
-| HTTP                | `CORS_ORIGINS` (empty), `APP_ORIGIN` (unset; set it in production; required with email), `TRUST_PROXY` (loopback; required in production), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60)                                                       |
-| Logs and identity   | `LOG_LEVEL` (log), `LOG_FORMAT` (json in production, else text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (from the image, else unversioned)                                                                                                       |
-| Error tracking      | `SENTRY_DSN` (unset: off), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                   |
-| Tracing and metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` (unset: off), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES` |
-| Redis               | `REDIS_URL` (unset: off), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                  |
-| Email               | `MAIL_SMTP_URL` (unset: off), `MAIL_FROM` (required with it), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10), `SIGN_UP_ENABLED` (false; requires email)                                                                                 |
+| Group               | Variables (default)                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime             | `NODE_ENV` (none), `HOST` (127.0.0.1; every interface in production), `PORT` (3000)                                                                                                                                                                           |
+| Database            | `DATABASE_URL` (none), `DB_SLOW_QUERY_MS` (500), `DB_POOL_MAX` (10), `DB_STATEMENT_TIMEOUT_MS` (30000)                                                                                                                                                        |
+| Authentication      | `JWT_ACCESS_SECRET` (none), `JWT_ACCESS_SECRET_PREVIOUS` (unset), `AUTH_COOKIE_SAMESITE` (strict)                                                                                                                                                             |
+| HTTP                | `CORS_ORIGINS` (empty), `APP_ORIGIN` (unset; set it in production; required with email), `APP_BASE_PATH` (/app: where the web app is served under it), `TRUST_PROXY` (loopback; required in production), `RATE_LIMIT_MAX` (100), `RATE_LIMIT_WINDOW_SEC` (60) |
+| Logs and identity   | `LOG_LEVEL` (log), `LOG_FORMAT` (json in production, else text), `APP_ENVIRONMENT` (NODE_ENV), `APP_RELEASE` (from the image, else unversioned)                                                                                                               |
+| Error tracking      | `SENTRY_DSN` (unset: off), `SENTRY_SAMPLE_RATE` (1)                                                                                                                                                                                                           |
+| Tracing and metrics | `OTEL_EXPORTER_OTLP_ENDPOINT` (unset: off), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SDK_DISABLED` (false), `OTEL_SERVICE_NAME` (api), `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_METRIC_EXPORT_INTERVAL` (60000), `OTEL_RESOURCE_ATTRIBUTES`         |
+| Redis               | `REDIS_URL` (unset: off), `REDIS_KEY_PREFIX` (app:), `REDIS_REQUIRED` (false), `REDIS_COMMAND_TIMEOUT_MS` (500), `RATE_LIMIT_STORE` (memory), `CACHE_STORE` (memory)                                                                                          |
+| Email               | `MAIL_SMTP_URL` (unset: off), `MAIL_FROM` (required with it), `MAIL_MAX_ATTEMPTS` (8), `MAIL_DAILY_LIMIT_PER_ADDRESS` (10), `SIGN_UP_ENABLED` (false; requires email)                                                                                         |
 
 ### 6.3 Web variables
 
-Set on the web container (the production image), served to the app as `/app-config.json`; the
+Set on the web container (the production image), served to the app as `/app/app-config.json`; the
 Vite dev and preview servers read the same names from their environment:
 
-`API_UPSTREAM` (http://api:3000, the API the web server forwards `/api` to), `APP_ENVIRONMENT`
+`APP_ORIGIN` (required, no default: the site's public origin, written into the landing's absolute
+links as nginx serves them; the VPS target derives it from `APP_DOMAIN`), `API_UPSTREAM`
+(http://api:3000, the API the web server forwards `/api` to), `APP_ENVIRONMENT`
 (production), `APP_RELEASE` (set by the image build), `WEB_SENTRY_DSN` (empty: off),
 `WEB_SENTRY_SAMPLE_RATE` (1), `WEB_VITALS_SAMPLE_RATE` (1, share of page loads that report their
 Web Vitals; 0: off). Development only: `API_PROXY_TARGET` (http://127.0.0.1:3000).
 Anything named `VITE_*` is compiled into the public bundle: never a secret.
 
 The landing reads one variable, when it is built: `PUBLIC_URL` (http://localhost:4321), the public
-origin of its canonical and alternate links, its sitemap and its robots.txt
+origin of its canonical and alternate links, its sitemap and its robots.txt (the web image builds it
+for a placeholder that `APP_ORIGIN` replaces). Its dev server's forwarding moves with
+`API_PROXY_TARGET` (http://127.0.0.1:3000) and `WEB_PROXY_TARGET` (http://localhost:5173)
 ([environment.md](environment.md#landing-variables)).
 
 ### 6.4 Compose variables (root `.env`)
@@ -552,28 +559,28 @@ Every command the template ships.
 
 ### 7.3 Web scripts (`pnpm --filter web <script>`)
 
-| Script          | What it does                                                                            |
-| --------------- | --------------------------------------------------------------------------------------- |
-| `dev`           | Vite dev server on http://localhost:5173, `/api` forwarded to the API                   |
-| `build`         | `tsc -b`, then `vite build` into `apps/web/dist`                                        |
-| `preview`       | serves the build on http://localhost:4173, `/api` forwarded                             |
-| `typecheck`     | checks `schema.d.ts` against the contract, then `tsc -b`                                |
-| `test`          | Vitest component and unit tests                                                         |
-| `test:watch`    | watch mode                                                                              |
-| `test:coverage` | with the coverage thresholds of `vite.config.ts`                                        |
-| `api:types`     | regenerates `src/api/schema.d.ts` from `openapi/openapi.json` (half of `pnpm contract`) |
+| Script          | What it does                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------------- |
+| `dev`           | Vite dev server on http://localhost:5173/app/ (the app is built for `/app/`), `/api` forwarded to the API |
+| `build`         | `tsc -b`, then `vite build` into `apps/web/dist`                                                          |
+| `preview`       | serves the build on http://localhost:4173/app/, `/api` forwarded                                          |
+| `typecheck`     | checks `schema.d.ts` against the contract, then `tsc -b`                                                  |
+| `test`          | Vitest component and unit tests                                                                           |
+| `test:watch`    | watch mode                                                                                                |
+| `test:coverage` | with the coverage thresholds of `vite.config.ts`                                                          |
+| `api:types`     | regenerates `src/api/schema.d.ts` from `openapi/openapi.json` (half of `pnpm contract`)                   |
 
 ### 7.4 Landing scripts (`pnpm --filter landing <script>`)
 
-| Script          | What it does                                                                                  |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| `dev`           | Astro dev server on http://localhost:4321                                                     |
-| `build`         | `astro check`, then `astro build` into `apps/landing/dist`: the pages, sitemap and robots.txt |
-| `preview`       | serves the build on http://localhost:4321                                                     |
-| `typecheck`     | `astro check`: the types of the `.astro` and `.ts` files, failing on warnings too             |
-| `test`          | Vitest unit tests and page tests                                                              |
-| `test:watch`    | watch mode                                                                                    |
-| `test:coverage` | with the coverage thresholds of `vitest.config.ts`                                            |
+| Script          | What it does                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`           | Astro dev server on http://localhost:4321, the site's single entry: `/app` forwarded to the web app's dev server, `/api` to the API |
+| `build`         | `astro check`, then `astro build` into `apps/landing/dist`: the pages, sitemap and robots.txt                                       |
+| `preview`       | serves the build on http://localhost:4321                                                                                           |
+| `typecheck`     | `astro check`: the types of the `.astro` and `.ts` files, failing on warnings too                                                   |
+| `test`          | Vitest unit tests and page tests                                                                                                    |
+| `test:watch`    | watch mode                                                                                                                          |
+| `test:coverage` | with the coverage thresholds of `vitest.config.ts`                                                                                  |
 
 Every script runs the Astro CLI through `apps/landing/scripts/astro.mjs`, which turns Astro's usage
 telemetry off and keeps its servers in the foreground, where `pnpm dev` and Playwright stop them.
@@ -599,7 +606,7 @@ telemetry off and keeps its servers in the foreground, where `pnpm dev` and Play
 | `pnpm services:up`                                                                  | `db`, and `mailpit`: the mail catcher, SMTP on `127.0.0.1:${MAILPIT_SMTP_PORT:-1035}`, web UI on http://localhost:8035 (`MAILPIT_UI_PORT`), messages in memory                    |
 | `docker compose --profile redis up -d`                                              | `redis`: Redis 8 with a password, `127.0.0.1:${REDIS_PORT:-6379}`, data in the volume `redis_data`                                                                                |
 | `docker compose --profile observability up -d`                                      | `otel-lgtm`: collector, Prometheus, Tempo, Loki and Grafana with the dashboards and rules of `observability/`; OTLP on 4318, Grafana on http://localhost:3001, Prometheus on 9090 |
-| `docker compose --profile stack up --build`                                         | `migrate` (runs once), `api`, `web`: the production images at http://localhost:8080                                                                                               |
+| `docker compose --profile stack up --build`                                         | `migrate` (runs once), `api`, `web`: the production images, the site at http://localhost:8080 and the app at `/app/`                                                              |
 | `docker compose --profile stack --profile redis --profile observability up --build` | the stack with every optional service (set the `STACK_*` variables, [6.4](#64-compose-variables-root-env))                                                                        |
 | `docker compose ps`                                                                 | what runs, with health                                                                                                                                                            |
 | `docker compose logs -f <service>`                                                  | follows a service's log (`api`, `web`, `db`, `mailpit`, `redis`, `migrate`)                                                                                                       |
@@ -739,14 +746,17 @@ release tag, a branch or a commit SHA on `main`). Staging first; verify; then th
 pnpm smoke --url https://<public host> --api http://<api inside the platform>:3000 --release <sha>
 ```
 
-| Check                      | Passes when                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------- |
-| web server health          | `/healthz` answers 200                                                          |
-| app shell                  | `/` is the app, with the CSP and `X-Content-Type-Options` headers               |
-| runtime configuration      | `/app-config.json` answers, with the expected release when `--release` is given |
-| API through the web server | an unknown `/api/...` route answers the API's JSON 404 with a request id        |
-| probes not public          | `/api/health/ready` answers 404 through the public URL                          |
-| API liveness and readiness | 200 on the API itself (`degraded` is reported, not a failure)                   |
+| Check                           | Passes when                                                                                                                                    |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| web server health               | `/healthz` answers 200                                                                                                                         |
+| landing                         | `/` is the landing, its links on this deployment's origin (`APP_ORIGIN`), with the CSP and `X-Content-Type-Options` headers; `/es/` in Spanish |
+| not-found page                  | an unknown address answers 404 with the not-found page                                                                                         |
+| app shell                       | `/app/` and a deep link under it are the app                                                                                                   |
+| emailed links of before `/app/` | `/reset-password` redirects to `/app/reset-password`                                                                                           |
+| runtime configuration           | `/app/app-config.json` answers, with the expected release when `--release` is given                                                            |
+| API through the web server      | an unknown `/api/...` route answers the API's JSON 404 with a request id                                                                       |
+| probes not public               | `/api/health/ready` answers 404 through the public URL                                                                                         |
+| API liveness and readiness      | 200 on the API itself (`degraded` is reported, not a failure)                                                                                  |
 
 It signs nobody in and writes nothing; any failure exits with status 1. Either URL can be left out
 to check one side only.
@@ -786,8 +796,8 @@ Shared rate limits across instances, a shared cache, locks and idempotency claim
 1. Create two Sentry projects: Node.js (API) and browser JavaScript (web).
 2. API: `SENTRY_DSN` (secret store; locally in `apps/api/.env`). Web: `WEB_SENTRY_DSN` on the web
    container (locally in the environment of `pnpm dev`). `APP_ENVIRONMENT` on both.
-3. Check: the boot line says `error tracking on`; `/app-config.json` shows the DSN; the CSP allows
-   Sentry's ingest host.
+3. Check: the boot line says `error tracking on`; `/app/app-config.json` shows the DSN; the CSP
+   allows Sentry's ingest host.
 4. Alert rules in Sentry ([alerting.md](alerting.md)). What is never sent: [security.md](security.md#error-tracking-data).
 
 ### 11.3 Tracing and metrics (OpenTelemetry)
@@ -821,7 +831,7 @@ STACK_OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
 docker compose --profile stack --profile redis --profile observability up --build
 ```
 
-Web at http://localhost:8080, Grafana at http://localhost:3001. Stop with
+The site at http://localhost:8080 (the app at `/app/`), Grafana at http://localhost:3001. Stop with
 `docker compose --profile stack --profile redis --profile observability down`.
 
 ### 11.5 Email
@@ -852,10 +862,10 @@ APP_ORIGIN=https://<your domain>
 ```
 
 or `smtp://...:587`: production requires STARTTLS on it and refuses a server without TLS (Mailpit
-among them), except one on the machine itself (`localhost`, `127.0.0.1`, `[::1]`).
-`APP_ORIGIN` is where links in messages point: never a request's Host. Before the
-first message, authenticate the sending domain at the provider (SPF, DKIM, DMARC): without them
-messages land in spam or are refused. Then, from the API image:
+among them), except one on the machine itself (`localhost`, `127.0.0.1`, `[::1]`). `APP_ORIGIN` and
+`APP_BASE_PATH` (/app) are where links in messages point: never a request's Host. Before the first
+message, authenticate the sending domain at the provider (SPF, DKIM, DMARC): without them messages
+land in spam or are refused. Then, from the API image:
 
 ```
 docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js test --to <you>
@@ -963,21 +973,21 @@ first:
 
 ### 15.1 Ports and URLs
 
-| Port | What                                       | Started by                                                   |
-| ---- | ------------------------------------------ | ------------------------------------------------------------ |
-| 3000 | API (development)                          | `pnpm dev`                                                   |
-| 5173 | web app (development)                      | `pnpm dev`                                                   |
-| 4321 | landing (development, `astro preview`)     | `pnpm dev`, `pnpm test:e2e`, `pnpm --filter landing preview` |
-| 5442 | PostgreSQL (`DB_PORT`)                     | `pnpm db:up`                                                 |
-| 1035 | Mailpit SMTP (`MAILPIT_SMTP_PORT`)         | `pnpm services:up` (and `pnpm dev`)                          |
-| 8035 | Mailpit web UI (`MAILPIT_UI_PORT`)         | `pnpm services:up` (and `pnpm dev`)                          |
-| 3100 | API (end-to-end tests)                     | `pnpm test:e2e`                                              |
-| 4173 | web app (end-to-end tests, `vite preview`) | `pnpm test:e2e`, `pnpm --filter web preview`                 |
-| 8080 | production-like stack (`WEB_PORT`)         | `docker compose --profile stack up`                          |
-| 6379 | Redis (`REDIS_PORT`)                       | `docker compose --profile redis up -d`                       |
-| 4318 | OTLP/HTTP (`OTLP_HTTP_PORT`)               | `docker compose --profile observability up -d`               |
-| 3001 | Grafana (`GRAFANA_PORT`)                   | `docker compose --profile observability up -d`               |
-| 9090 | Prometheus (`PROMETHEUS_PORT`)             | `docker compose --profile observability up -d`               |
+| Port | What                                                                                               | Started by                                                   |
+| ---- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 3000 | API (development)                                                                                  | `pnpm dev`                                                   |
+| 5173 | web app's dev server (`/app/`; `pnpm dev` reaches it through 4321)                                 | `pnpm dev`                                                   |
+| 4321 | the site: landing, with `/app` and `/api` forwarded (development); landing alone (`astro preview`) | `pnpm dev`, `pnpm test:e2e`, `pnpm --filter landing preview` |
+| 5442 | PostgreSQL (`DB_PORT`)                                                                             | `pnpm db:up`                                                 |
+| 1035 | Mailpit SMTP (`MAILPIT_SMTP_PORT`)                                                                 | `pnpm services:up` (and `pnpm dev`)                          |
+| 8035 | Mailpit web UI (`MAILPIT_UI_PORT`)                                                                 | `pnpm services:up` (and `pnpm dev`)                          |
+| 3100 | API (end-to-end tests)                                                                             | `pnpm test:e2e`                                              |
+| 4173 | web app (end-to-end tests, `vite preview`, `/app/`)                                                | `pnpm test:e2e`, `pnpm --filter web preview`                 |
+| 8080 | production-like stack (`WEB_PORT`): the site, the app at `/app/`                                   | `docker compose --profile stack up`                          |
+| 6379 | Redis (`REDIS_PORT`)                                                                               | `docker compose --profile redis up -d`                       |
+| 4318 | OTLP/HTTP (`OTLP_HTTP_PORT`)                                                                       | `docker compose --profile observability up -d`               |
+| 3001 | Grafana (`GRAFANA_PORT`)                                                                           | `docker compose --profile observability up -d`               |
+| 9090 | Prometheus (`PROMETHEUS_PORT`)                                                                     | `docker compose --profile observability up -d`               |
 
 Every published port listens on 127.0.0.1 only.
 
