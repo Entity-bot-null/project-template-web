@@ -78,11 +78,13 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: docker/library/redis
         update-types: [version-update:semver-major]
-      # The Ubuntu release of the cloud-init check is the servers': the next
-      # LTS moves CI, the servers and this image together, by hand
-      # (docs/ci-cd.md#ubuntu).
+      # The Ubuntu release of the cloud-init check is the servers' LTS: only
+      # new digests of it. Dependabot reads an interim release (24.10, whose
+      # archive closes when its nine months of support end) as a minor update
+      # and the next LTS as a major one; the next LTS moves CI, the servers and
+      # this image together, by hand (docs/ci-cd.md#ubuntu).
       - dependency-name: docker/library/ubuntu
-        update-types: [version-update:semver-major]
+        update-types: [version-update:semver-major, version-update:semver-minor]
     groups:
       tools:
         patterns: ['*']
