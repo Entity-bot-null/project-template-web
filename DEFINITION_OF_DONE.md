@@ -51,6 +51,8 @@ reviewers check the whole list before approving.
 ## Documentation and delivery
 
 - [ ] README, docs or ADRs updated when behavior, setup or decisions changed.
+- [ ] Texts of the landing changed in every language of the site together
+      (`apps/landing/src/i18n/`).
 - [ ] The pull request title is a Conventional Commit that describes the change for the changelog;
       breaking changes are marked (`!` and a `BREAKING CHANGE:` footer).
 - [ ] CI is green (**CI passed**, **Conventions**), the review is approved, the branch is

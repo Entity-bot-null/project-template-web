@@ -46,6 +46,7 @@ export function mailTestOptions(overrides: Partial<MailOptions> = {}): MailOptio
     smtpUrl,
     from: { name: 'Integration', address: 'no-reply@example.test' },
     appOrigin: 'https://app.example.com',
+    appBasePath: '/app',
     maxAttempts: 8,
     dailyLimitPerAddress: 10,
     production: false,

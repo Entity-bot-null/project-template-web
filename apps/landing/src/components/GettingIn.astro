@@ -1,0 +1,54 @@
+---
+// How a person gets in, as what they give and what comes back: the
+// administrator's invitation and the email it sends, the page where they
+// choose a password, then the app itself, wider than the column.
+import { messages, type Locale } from '../i18n';
+import AcceptForm from './fragments/AcceptForm.astro';
+import HomeScreen from './fragments/HomeScreen.astro';
+import InvitationEmail from './fragments/InvitationEmail.astro';
+import InviteForm from './fragments/InviteForm.astro';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = messages(locale);
+const { pictures } = t.gettingIn;
+---
+
+<section
+  aria-labelledby="getting-in-heading"
+  class="overflow-x-clip bg-surface px-(--margin) py-[clamp(7.5rem,16vh,12rem)]"
+>
+  <div class="md:grid md:grid-cols-12 md:gap-x-(--gutter)">
+    <div class="md:col-start-4 md:col-end-13">
+      <h2 id="getting-in-heading" class="reveal text-lead font-bold">
+        {t.gettingIn.heading}
+      </h2>
+      <ol class="mt-14 flex flex-col gap-22" role="list">
+        <li>
+          <p class="reveal max-w-140 text-lead font-medium">{t.gettingIn.invited}</p>
+          <div class="reveal mt-4 [--i:1]">
+            <InviteForm label={pictures.inviteForm} />
+          </div>
+          <div class="reveal mt-6 [--i:2] md:ml-14">
+            <InvitationEmail label={pictures.invitationEmail} />
+          </div>
+        </li>
+        <li>
+          <p class="reveal max-w-140 text-lead font-medium">{t.gettingIn.accepted}</p>
+          <div class="reveal mt-4 [--i:1]">
+            <AcceptForm label={pictures.acceptForm} />
+          </div>
+        </li>
+        <li>
+          <p class="reveal max-w-140 text-lead font-medium">{t.gettingIn.signedIn}</p>
+          <div class="reveal mt-4 [--i:1]">
+            <HomeScreen label={pictures.home} />
+          </div>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>

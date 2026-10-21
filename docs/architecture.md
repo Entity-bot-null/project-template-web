@@ -1,11 +1,13 @@
 # Architecture
 
-A pnpm workspace with two applications that ship together and share one contract.
+A pnpm workspace with three applications that ship together: the API and the web app share one
+contract; the landing is the public site in front of them.
 
 ```
 apps/
   api/          NestJS HTTP API, Prisma (PostgreSQL), Zod, served under /api
   web/          React single-page app (Vite, React Router), typed client from the contract
+  landing/      public site (Astro, Tailwind CSS): static pages in English and Spanish
 openapi/        openapi.json: the committed API contract
 e2e/            Playwright end-to-end suite (whole stack)
 scripts/        repository tooling (branch names, hooks, bundle budget, env guard)
@@ -25,7 +27,8 @@ Client (browser)
 CDN / WAF / load balancer        TLS, HSTS, DDoS protection           REQUIRES CONFIGURATION
    │
    ▼
-web server (nginx)               SPA, security headers + CSP, /app-config.json, /healthz
+web server (nginx)               / the landing (static pages), /app/ the SPA and its
+   │                                /app/app-config.json, security headers + CSP, /healthz
    │  /api (one origin for the browser)
    ▼
 API (NestJS), N instances        stateless; request ids, redaction, error classification
@@ -42,11 +45,12 @@ traces and metrics (OTLP → collector or provider, OPTIONAL), uptime checks and
 (REQUIRES CONFIGURATION)
 ```
 
-The browser only ever talks to its own origin: the web server forwards `/api` to the API (in
-development the Vite dev server does the same). So the refresh cookie is same-origin, CORS stays
-off, and `SameSite=Strict` works. Several API instances need the shared rate limit store
-(`RATE_LIMIT_STORE=redis`, docs/security.md#rate-limiting); everything else in the API is already
-stateless.
+The browser only ever talks to its own origin: the web server serves the landing at `/` and the app
+at `/app/`, and forwards `/api` to the API (in development the landing's dev server is that entry:
+it forwards `/app` to the web app's dev server and `/api` to the API). So the refresh cookie is
+same-origin, CORS stays off, and `SameSite=Strict` works. Several API instances need the shared rate
+limit store (`RATE_LIMIT_STORE=redis`, docs/security.md#rate-limiting); everything else in the API
+is already stateless.
 
 ## API (`apps/api`)
 
@@ -120,6 +124,12 @@ a code change, and feature code never depends on the provider (ESLint keeps `@re
 | Email                     | off: nothing queued                    | an outbox in PostgreSQL, delivered over SMTP       | `MAIL_SMTP_URL`                |
 | Job queues                | not included (integration point below) | BullMQ or a managed queue, when a project needs it | code                           |
 
+Redis is OPTIONAL for the application, not in the template's own setups: development
+(`pnpm services:up`) and the reference server (`deploy/vps`) run it, with `RATE_LIMIT_STORE=redis`,
+`CACHE_STORE=redis` and `REDIS_REQUIRED=true`, as a deployment of more than one instance needs.
+Without `REDIS_URL` everything above still runs in process. Decision record:
+[ADR 0006](adr/0006-postgresql-and-redis-on-the-server.md).
+
 ### Redis
 
 `infrastructure/redis/redis.service.ts` owns the one connection (node-redis). Only the adapters in
@@ -145,12 +155,13 @@ a code change, and feature code never depends on the provider (ESLint keeps `@re
   `app:ratelimit:{default:<hash>}:hits`, `app:lock:jobs:report`. One prefix per application and
   environment when they share a Redis. Every key the template writes has a TTL (cache generations
   excepted: a few bytes per namespace).
-- **ACL for production:** a user limited to `~<prefix>*` and the commands the adapters run:
+- **ACL for production** (`deploy/vps/compose.yaml` writes this one): a user limited to
+  `~<prefix>*` and the commands the adapters run:
   `+get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zrange +zremrangebyscore`
   (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake).
-- **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development uses
-  `redis:8-alpine` (`docker compose --profile redis up -d`); production settings:
-  [docs/security.md#redis](security.md#redis).
+- **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development
+  (`pnpm services:up`) and the reference server (`deploy/vps/compose.yaml`) run `redis:8-alpine`,
+  pinned by digest; production settings: [docs/security.md#redis](security.md#redis).
 
 ### Degradation
 
@@ -337,7 +348,8 @@ src/
   main.tsx, App.tsx    mount, boot refresh, router
   router.tsx           every route, guarded as layout routes
   api/                 client.ts (openapi-fetch), errors.ts (call, describeFailure), schema.d.ts (generated)
-  monitoring/          runtime config (/app-config.json), error tracking (Sentry), Web Vitals; lazy chunks
+  monitoring/          runtime config (/app/app-config.json), error tracking (Sentry), Web Vitals;
+                       lazy chunks
   auth/                session store (token in memory), 401 middleware, guards, useAuth,
                        capabilities (what the deployment offers), new-password rules
   hooks/               useLoader (load, retry, stale-response protection)
@@ -347,8 +359,50 @@ src/
   test/                setup, HTTP mocks, fixtures, render helper
 ```
 
+The app is built for `/app/` (Vite's `base`) and its router uses the same path as its basename
+(`BASENAME` in `router.tsx`): routes, links and the Web Vitals labels stay written from the app's
+root (`/sign-in`), and the API builds the links in emails with `APP_BASE_PATH`.
+
 Styling is plain CSS on purpose (`index.css`): the design system is a product decision (OPCIONAL:
 Tailwind, CSS modules, a component library).
+
+## Landing (`apps/landing`)
+
+```
+src/
+  pages/               one file per page and language: index.astro (/), es/index.astro (/es/),
+                       404.astro and es/404.astro (not-found pages), robots.txt.ts
+  components/          the sections, each taking the page's locale; Home.astro and NotFound.astro
+                       put them together; fragments/ draws screens of the app in HTML
+  layouts/Base.astro   the document: language, title, description, canonical and alternate links
+  i18n/                locales.ts (the languages), messages.ts (the shape), en.ts and es.ts (every
+                       text), index.ts (messages, localePath, alternates)
+  lib/                 site.ts (the product's name), links.ts (appPath: links into the web app),
+                       robots.ts
+  styles/global.css    Tailwind CSS and the design tokens: colours with their dark values, five
+                       type sizes, motion
+scripts/astro.mjs      the Astro CLI with telemetry off and its servers in the foreground
+```
+
+The landing is built to static files: HTML, one stylesheet, the sitemap and robots.txt. It runs no
+code in the browser and no server: nothing to patch at run time, nothing an attacker can reach
+besides files. The default language lives at the root and every other one under its code (Astro's
+i18n routing, `prefixDefaultLocale: false`); a page in one language has its twins as alternate
+links (`hreflang`, `x-default`), so search engines show each visitor the right one. Its texts are
+typed: a text declared in `messages.ts` and missing in one language stops the build.
+
+The web image serves it at `/` (`apps/web/Dockerfile`). It is built once, for a placeholder origin,
+and nginx writes the deployment's `APP_ORIGIN` into its absolute links as it serves them, so the
+same image runs in every environment; an address the site does not have answers 404 with the
+not-found page of its language.
+
+It follows the same constraints as the rest of the template: one origin (it links to the app as
+`/app/`, `src/lib/links.ts`), the strict Content-Security-Policy of the web image (no inline script
+or style: `build.inlineStylesheets: 'never'`; fonts are the system's, nothing loads from another
+origin), the performance budget (`performance-budget.json`, 0 kB of JavaScript) and accessibility
+(landmarks, a skip link, one `h1`, contrast of 4.5:1 or more, motion only without
+`prefers-reduced-motion`, and pictures of the app as labelled images). Decision record:
+[ADR 0005](adr/0005-public-landing-site.md).
 
 ## Key decisions
 

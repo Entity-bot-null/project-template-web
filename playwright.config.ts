@@ -1,9 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
+import { LANDING_URL } from './e2e/support/landing.js';
 
-// End-to-end suite (e2e/*.e2e.ts): a real browser against the built web app
-// and the built API on their own ports, the API on its own database
-// (`<db>_e2e`, reseeded every run). Needs `pnpm build` and the database
-// (`pnpm db:up`) first, and the browser once: `pnpm exec playwright install chromium`.
+// End-to-end suite (e2e/*.e2e.ts): a real browser against the built web app,
+// the built landing and the built API on their own ports, the API on its own database
+// (`<db>_e2e`, reseeded every run). Needs `pnpm build` and the development
+// services (`pnpm services:up`: the database, and Mailpit for the email flows)
+// first, and the browser once: `pnpm exec playwright install chromium`.
 const CI = process.env.CI !== undefined;
 const API_PORT = 3100;
 const WEB_URL = 'http://localhost:4173';
@@ -34,10 +36,18 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      // The built SPA, with /api forwarded to the API above: one origin, as in production.
+      // The built SPA under /app/, with /api forwarded to the API above: one
+      // origin, as in production. The specs open /app/... on it.
       command: 'pnpm --filter web preview',
-      url: WEB_URL,
+      url: `${WEB_URL}/app/`,
       env: { API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}` },
+      timeout: 60_000,
+      reuseExistingServer: false,
+    },
+    {
+      // The built landing: static pages, built for this address.
+      command: 'pnpm --filter landing preview',
+      url: LANDING_URL,
       timeout: 60_000,
       reuseExistingServer: false,
     },

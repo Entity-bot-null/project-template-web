@@ -16,6 +16,7 @@
 **/node_modules
 **/dist
 **/dist-dev
+**/.astro
 **/coverage
 **/*.tsbuildinfo
 **/*.log

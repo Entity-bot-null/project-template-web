@@ -17,8 +17,12 @@ export interface ComposeContext {
   message: ClaimedMessage;
   /** The product's name, as messages call it (productName). */
   product: string;
-  /** Where links point: the configured public origin, never a request's Host. */
-  appOrigin: string;
+  /**
+   * Where links point: the web app's public address, from configuration
+   * (APP_ORIGIN and APP_BASE_PATH, appUrl below), never a request's Host. A
+   * link is this address followed by the screen: `${appUrl}/reset-password`.
+   */
+  appUrl: string;
 }
 
 export interface MailTemplate {
@@ -43,6 +47,11 @@ export const MAIL_TEMPLATE_REGISTRY: MailTemplates = {
   email_changed: emailChangedTemplate,
   invitation: invitationTemplate,
 };
+
+/** The web app's public address: its origin and its path, without a trailing slash. */
+export function appUrl(origin: string, basePath: string): string {
+  return basePath === '/' ? origin : `${origin}${basePath}`;
+}
 
 /** What messages call the product: the sender's display name, else the public host. */
 export function productName(options: Pick<MailOptions, 'from' | 'appOrigin'>): string {

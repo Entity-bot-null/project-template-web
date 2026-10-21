@@ -1,12 +1,16 @@
 # Reference deployment on one Linux server with Docker (docs/deploy-vps.md):
 # Caddy terminates TLS (automatic certificates) and forwards to the web image,
-# which serves the app and forwards /api to the API. The database is a managed
-# PostgreSQL outside this file (backups, point-in-time recovery).
+# which serves the landing at /, the app at /app/ and forwards /api to the
+# API. Redis runs here. The database runs here too, with nightly backups, when
+# server.env sets COMPOSE_PROFILES=db; otherwise it is a managed PostgreSQL
+# outside this file (backups, point-in-time recovery).
 #
-# The images come from the registry by digest, written by deploy.sh into
-# release.env (never edited by hand). Configuration comes from server.env
-# (the domain) and api.env, migrate.env, web.env (the containers); none is
-# committed: copy the .example files on the server and fill them in.
+# The release's images come from the registry by digest, written by deploy.sh
+# into release.env (never edited by hand); PostgreSQL's and Redis's are pinned
+# below. Configuration comes from server.env (the domain, the profiles) and
+# api.env, migrate.env, web.env, redis.env, and with the database db.env and
+# backup.env (the containers); none is committed: copy the .example files on
+# the server and fill them in.
 name: app
 
 # Container logs rotate (Docker keeps them forever otherwise and they fill the
@@ -64,7 +68,13 @@ services:
     tmpfs: ['/tmp:size=64m']
     mem_limit: 512m
     env_file: migrate.env
-    networks: [edge]
+    depends_on:
+      # When this server runs the database (deploy.sh starts it before).
+      db:
+        condition: service_healthy
+        required: false
+    # edge: a managed database is reached through it; data: the server's own.
+    networks: [edge, data]
 
   api:
     <<: *hardening
@@ -81,7 +91,16 @@ services:
       # from Caddy (realip.conf).
       TRUST_PROXY: '1'
     stop_grace_period: 30s
-    networks: [edge]
+    depends_on:
+      # When this server runs the database.
+      db:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+    # edge: the web image, and what the API calls on the internet (email,
+    # error tracking, telemetry, a managed database); data: PostgreSQL, Redis.
+    networks: [edge, data]
 
   web:
     <<: *hardening
@@ -97,6 +116,9 @@ services:
     env_file: web.env
     environment:
       API_UPSTREAM: http://api:3000
+      # The public origin, written into the landing's absolute links (its
+      # canonical and alternate links, sitemap and robots.txt).
+      APP_ORIGIN: https://${APP_DOMAIN}
     volumes:
       # The client address comes from Caddy's X-Forwarded-For (the realip
       # module), not from the connection: otherwise every user would look
@@ -107,13 +129,151 @@ services:
         condition: service_healthy
     networks: [edge]
 
+  # ---- The data tier: on the network data only, never published ----
+
+  # PostgreSQL, when this server runs the database (COMPOSE_PROFILES=db in
+  # server.env): the database `app` and its roles are created the first time
+  # its volume is empty (db-init.sh). Without the profile, DATABASE_URL in
+  # api.env and migrate.env points at a managed PostgreSQL.
+  db:
+    <<: *hardening
+    logging: *logging
+    profiles: [db]
+    # Tag for readers, digest for the server (Dependabot updates both): the
+    # PostgreSQL of development and CI.
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    restart: unless-stopped
+    # As the postgres user from the start: no privilege to drop, and the data
+    # directory is its own.
+    user: postgres
+    # The superuser's password (no application uses that role) and the
+    # passwords of the roles db-init.sh creates.
+    env_file: db.env
+    environment:
+      # The superuser's own database; db-init.sh creates `app`.
+      POSTGRES_DB: postgres
+    # The server's socket and temporary files; the data lives on db_data.
+    tmpfs:
+      - /var/run/postgresql:size=1m,uid=70,gid=70
+      - /tmp:size=64m,uid=70,gid=70
+    # Parallel queries share memory through /dev/shm (64 MB in Docker by default).
+    shm_size: 256m
+    mem_limit: 1g
+    volumes:
+      - db_data:/var/lib/postgresql
+      - ./db-init.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    healthcheck:
+      # The database app, over TCP (loopback needs no password in this image).
+      # TCP: during the first initdb the server listens on the Unix socket
+      # only, which would pass a socket check and then restart. app: a first
+      # start whose db-init.sh failed restarts on the volume initdb left, a
+      # server without app (docs/troubleshooting.md#deployment-and-operations),
+      # which must never look healthy.
+      test: ['CMD-SHELL', 'psql -h 127.0.0.1 -U postgres -d app -tAc "SELECT 1" > /dev/null']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    # Time for a clean shutdown (a checkpoint) instead of recovery at the next start.
+    stop_grace_period: 60s
+    networks: [data]
+
+  # The nightly backup of that database (backup.sh): pg_dump as app_backup, a
+  # read-only role, kept BACKUP_KEEP_DAYS days (7) on db_backups. Unhealthy
+  # when the newest backup is over 26 hours old. These copies stay on the
+  # server: copy them elsewhere too (docs/disaster-recovery.md).
+  backup:
+    <<: *hardening
+    logging: *logging
+    profiles: [db]
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    restart: unless-stopped
+    user: postgres
+    entrypoint: ['/bin/sh', '/usr/local/bin/backup.sh']
+    # PGPASSWORD, app_backup's: pg_dump reads it from its environment.
+    env_file: backup.env
+    environment:
+      PGHOST: db
+      PGUSER: app_backup
+      PGDATABASE: app
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+      BACKUP_AT: ${BACKUP_AT:-03:00}
+    tmpfs: ['/tmp:size=16m,uid=70,gid=70']
+    mem_limit: 256m
+    volumes:
+      # The image's /var/lib/postgresql, writable by postgres, holds the volume.
+      - db_backups:/var/lib/postgresql
+      - ./backup.sh:/usr/local/bin/backup.sh:ro
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'find /var/lib/postgresql/backups -name "app-*.dump" -mmin -1560 | grep -q .']
+      interval: 5m
+      timeout: 10s
+      retries: 1
+      # Checked every 10 s at first: healthy once the backup it takes at
+      # start is written.
+      start_period: 10m
+      start_interval: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [data]
+
+  # Redis: the API's shared rate limits, cache, locks and idempotency
+  # (docs/architecture.md#redis). An ACL user, app, limited to the API's key
+  # prefix (REDIS_KEY_PREFIX, app: by default) and the commands its adapters
+  # run; the default user is off. It keeps its data (AOF, fsync every second)
+  # and, when full, evicts only keys that have a TTL. Plain redis:// on the
+  # data network, which nothing outside this server reaches.
+  redis:
+    <<: *hardening
+    logging: *logging
+    # Tag for readers, digest for the server (Dependabot updates both): the
+    # Redis of development and CI.
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    restart: unless-stopped
+    user: redis
+    # REDIS_PASSWORD, the app user's; the API's REDIS_URL carries the same.
+    env_file: redis.env
+    # The ACL is written where only this container reads it, and `exec` makes
+    # redis-server PID 1: SIGTERM reaches it and it saves before exiting.
+    command:
+      - sh
+      - -c
+      - |
+        printf '%s' "$$REDIS_PASSWORD" | grep -Eq '^[A-Za-z0-9._~-]{24,}$$' || { echo 'REDIS_PASSWORD in redis.env must be 24 or more letters and digits (openssl rand -hex 24)' >&2; exit 1; }
+        printf 'user default off\nuser app on >%s ~app:* resetchannels -@all +get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zrange +zremrangebyscore +client|setinfo +hello +auth\n' "$$REDIS_PASSWORD" > /tmp/users.acl
+        exec redis-server --aclfile /tmp/users.acl --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy volatile-lru
+    tmpfs: ['/tmp:size=1m,uid=999,gid=1000,mode=0700']
+    mem_limit: 512m
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # As the app user; its password reaches redis-cli through the
+      # environment, not the command line.
+      test:
+        ['CMD-SHELL', 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli --user app ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    stop_grace_period: 10s
+    networks: [data]
+
 networks:
   edge:
     ipam:
       config:
         # Fixed, so realip.conf can trust exactly this network.
         - subnet: 172.30.0.0/24
+  # The data tier's own: internal, so PostgreSQL, Redis and the backup reach
+  # nothing outside this server, and only migrate and api reach them.
+  data:
+    internal: true
 
 volumes:
   caddy_data:
   caddy_config:
+  db_data:
+  db_backups:
+  redis_data:

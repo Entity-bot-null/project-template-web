@@ -13,6 +13,7 @@ When something fails along the way, see [troubleshooting.md](troubleshooting.md)
 - [Change the API contract](#change-the-api-contract)
 - [Add a screen to the web app](#add-a-screen-to-the-web-app)
 - [Add an end-to-end test](#add-an-end-to-end-test)
+- [Change the landing: a text, a section, a page, a language](#change-the-landing)
 - [Add an environment variable](#add-an-environment-variable)
 - [Add a role](#add-a-role)
 - [Add a dependency](#add-a-dependency)
@@ -20,7 +21,7 @@ When something fails along the way, see [troubleshooting.md](troubleshooting.md)
 - [Call an external service](#call-an-external-service)
 - [Run a job on one instance, or process a message once](#run-a-job-on-one-instance-or-process-a-message-once)
 - [Send an email](#send-an-email)
-- [Turn on Redis](#turn-on-redis)
+- [Run with or without Redis](#run-with-or-without-redis)
 - [Turn on error tracking](#turn-on-error-tracking)
 - [Turn on tracing and metrics](#turn-on-tracing-and-metrics)
 - [Pull changes from the team](#pull-changes-from-the-team)
@@ -663,6 +664,53 @@ test('a member adds a note and finds it again after a reload', async ({ page }) 
 Run: `pnpm build && pnpm test:e2e` (database up). The suite reseeds `<db>_e2e` on every run, so
 tests may create data freely; keep them independent of each other.
 
+## Change the landing
+
+The landing (`apps/landing`) is the public site: static pages built by Astro and styled with
+Tailwind CSS, in English at `/` and in Spanish at `/es/`. It is HTML and CSS only: no script in the
+browser, no inline `style`, nothing loaded from another origin, so the strict
+Content-Security-Policy of the web server (`apps/web/nginx/security-headers.conf`) needs no
+exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at http://localhost:4321.
+
+- **A text.** Every text lives in `apps/landing/src/i18n/en.ts` and `es.ts`, in the shape
+  `messages.ts` declares. Change both languages in the same commit. A new text goes into
+  `messages.ts` first: the site does not compile until both dictionaries have it, and
+  `pnpm --filter landing test` fails on an empty text, stray spaces or English left in the Spanish
+  dictionary.
+- **The product's name.** `SITE_NAME` in `src/lib/site.ts`; the icon is `public/favicon.svg`, and
+  the picture a shared link shows is `public/og.png`, with the name drawn in it: replace it with the
+  product's, at 1200 × 630 (`SHARE_IMAGE` in the same file; a spec checks the size).
+- **The look.** Colours (each with its light and dark value), the five type sizes and the motion
+  live in `src/styles/global.css`; components use them through Tailwind classes (`bg-ground`,
+  `text-ink`, `text-display`). Keep body text in the full ink and contrast at 4.5:1 or more.
+  `pnpm lint` checks the classes against that stylesheet: an unknown, duplicate or conflicting class
+  fails, and so does an order other than Tailwind's, which `pnpm lint:fix` and the pre-commit hook
+  write. A new motion class, kept outside `@layer components` like the others, is listed in
+  `eslint.config.js`.
+- **A section.** A component in `src/components/` that takes `locale` and reads its texts with
+  `messages(locale)`, added to `Home.astro`. Give it a heading (`h2`, named by `aria-labelledby`
+  on the section) and the `reveal` class on the parts that should arrive as it scrolls in.
+- **A page.** One file per language, both rendering one shared component, as the home page does:
+  `src/pages/pricing.astro` (`/pricing/`) and `src/pages/es/pricing.astro` (`/es/pricing/`). The
+  component passes `path="/pricing/"` (its address in the default language) to `Base`, which writes
+  its canonical and alternate links; the sitemap lists it. Link to it with
+  `localePath(locale, '/pricing/')`.
+- **A language.** Its code in `src/i18n/locales.ts`, its dictionary next to `en.ts` (registered in
+  `src/i18n/index.ts`), its pages under `src/pages/<code>/`, its not-found page as
+  `src/pages/<code>/404.astro`. Routing, the sitemap and the alternate links follow `LOCALES`.
+- **A link into the app.** `appPath('sign-in')` from `src/lib/links.ts`, never a written path.
+- **A picture.** Vector images (SVG) work as they are. Raster images would need an optimizer
+  (sharp), which `pnpm-workspace.yaml` keeps out because its binaries are LGPL: put a WebP or AVIF
+  in `public/` with its `width`, `height` and `alt`. A picture of the app is drawn in HTML, in
+  `src/components/fragments/`, with `data-ui`, `role="img"` and a label in each language.
+- **A script.** There is none: `apps/landing/performance-budget.json` holds JavaScript at 0 kB.
+  A script that becomes necessary must reach the page as a file of this origin, never inline (the
+  Content-Security-Policy refuses inline scripts: check the built HTML), and its budget is raised
+  in the same reviewed pull request.
+
+Check: `pnpm --filter landing test`, `pnpm verify` and `pnpm build && pnpm test:e2e`
+(`e2e/landing.e2e.ts` covers both languages, the 404 and the sitemap).
+
 ## Add an environment variable
 
 1. Declare it in `apps/api/src/env/env.schema.ts` with its type, default and rules, and a comment
@@ -690,7 +738,7 @@ tests may create data freely; keep them independent of each other.
    environment or the platform's secret store, never in a committed file). A new **required**
    variable stops the API at boot until it is set: deploy the configuration first.
 
-The web app's deployment settings are set on the web container and served as `/app-config.json`
+The web app's deployment settings are set on the web container and served as `/app/app-config.json`
 (docs/environment.md#web-variables); a `VITE_*` variable is public (compiled into the bundle).
 
 ## Add a role
@@ -906,19 +954,25 @@ the transaction of the change it reports, never send it from the request.
    integration spec that queues it and reads it back from Mailpit (`apps/api/test/mailpit.ts`);
    an end-to-end test for a flow a person follows from the message.
 
-## Turn on Redis
+## Run with or without Redis
 
-1. Locally: in the root `.env`, `REDIS_PASSWORD=<the output of openssl rand -hex 24>`; then
-   `docker compose --profile redis up -d`.
-2. In `apps/api/.env`: `REDIS_URL=redis://:<that password>@127.0.0.1:6379`, and the features to
-   move to it: `RATE_LIMIT_STORE=redis`, `CACHE_STORE=redis` (locks and idempotency follow
-   `REDIS_URL`).
-3. `pnpm dev`: the log says `Redis connected (redis://127.0.0.1:6379)`; readiness shows
-   `"redis": "ok"`. Stop the container to see the degraded mode, start it again to see the
-   recovery.
-4. Production: a private Redis with TLS and an ACL user, `REDIS_URL=rediss://...` from the secret
-   store, `REDIS_KEY_PREFIX` per environment ([security.md](security.md#redis)). Set
-   `REDIS_REQUIRED=true` only if the application cannot work without it.
+Redis is on in development: `pnpm services:up` (and `pnpm dev`) starts it with the database, on
+127.0.0.1:6389 with the password `app`, and `apps/api/.env.example` points the API at it with the
+shared rate limits, the shared cache and a readiness that requires it, as on the reference server.
+
+1. Check: the `pnpm dev` box shows `Redis localhost:6389`, the API logs
+   `Redis connected (redis://localhost:6389)` and readiness shows `"redis": "ok"`.
+   `docker compose stop redis` shows the degraded mode, `docker compose start redis` the recovery.
+2. Without Redis: remove `REDIS_URL`, `RATE_LIMIT_STORE`, `CACHE_STORE` and `REDIS_REQUIRED` from
+   `apps/api/.env`. The in-process stores take over (one instance only), and the Redis integration
+   specs are skipped.
+3. Another port or password: `REDIS_PORT` and `REDIS_PASSWORD` in the root `.env`, and the same in
+   `REDIS_URL` (the `pnpm dev` box warns when the ports differ).
+4. Production: the reference server runs its own Redis with an ACL user
+   ([deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)). Elsewhere, or for more than one
+   server: a private Redis with TLS and an ACL user, `REDIS_URL=rediss://...` from the secret store,
+   `REDIS_KEY_PREFIX` per environment ([security.md](security.md#redis)). `REDIS_REQUIRED=true` only
+   where the application must not run without it.
 
 ## Turn on error tracking
 
@@ -926,7 +980,7 @@ the transaction of the change it reports, never send it from the request.
 2. API: `SENTRY_DSN` from the secret store. Web: `WEB_SENTRY_DSN` on the web container (or in the
    environment of `pnpm dev` to try it locally). `APP_ENVIRONMENT` on both.
 3. Deploy images built by CI: their release is the commit SHA.
-4. Check: the API logs `error tracking on` at boot; in the browser, `/app-config.json` shows the
+4. Check: the API logs `error tracking on` at boot; in the browser, `/app/app-config.json` shows the
    DSN and the CSP header allows Sentry's ingest host. Then set alert rules in Sentry
    (docs/observability.md#alerting).
 
@@ -960,12 +1014,14 @@ the editor still shows old types, run "TypeScript: Restart TS Server".
 ## Raise coverage thresholds or the performance budget
 
 - **Coverage:** when a pull request raises coverage, raise the thresholds in
-  `apps/api/vitest.config.ts` and `apps/web/vite.config.ts` to the new values, rounded down, in the
-  same pull request. When new code lowers coverage below the floor, the gate fails: add the missing
+  `apps/api/vitest.config.ts`, `apps/web/vite.config.ts` and `apps/landing/vitest.config.ts` to the
+  new values, rounded down, in the same pull request. When new code lowers coverage below the floor, the gate fails: add the missing
   tests (usually error paths and every service method). Lowering a threshold needs a reviewed
   reason ([testing.md](testing.md#coverage)).
-- **Performance budget:** `apps/web/performance-budget.json`. Before raising it, try lazy-loading
-  the route (`React.lazy`) or a lighter dependency.
+- **Performance budget:** `apps/web/performance-budget.json` and
+  `apps/landing/performance-budget.json`. Before raising the web app's, try lazy-loading the route
+  (`React.lazy`) or a lighter dependency; the landing's JavaScript budget of 0 kB is a decision, not
+  a measurement.
 
 ## Add another app or a background worker
 

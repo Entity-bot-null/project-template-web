@@ -1,0 +1,44 @@
+---
+// The top of every page: the name (home in this language), the language
+// links and the way into the app. No bar around it: the page's ground.
+import { LOCALES, localePath, messages, type Locale } from '../i18n';
+import { appPath } from '../lib/links';
+import { SITE_NAME } from '../lib/site';
+
+interface Props {
+  locale: Locale;
+  /** This page's address in the default language, for the language links. */
+  path: string;
+}
+
+const { locale, path } = Astro.props;
+const t = messages(locale);
+---
+
+<header class="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-3">
+  <a href={localePath(locale)} class="link text-body font-bold tracking-tight">
+    {SITE_NAME}
+  </a>
+  <nav aria-label={t.header.navigation}>
+    <ul class="flex flex-wrap items-baseline gap-x-5 gap-y-2" role="list">
+      {LOCALES.map((other) => (
+        <li>
+          <a
+            href={localePath(other, path)}
+            hreflang={other}
+            lang={other}
+            aria-current={other === locale ? 'true' : undefined}
+            class="link"
+          >
+            {messages(other).languageName}
+          </a>
+        </li>
+      ))}
+      <li>
+        <a href={appPath('sign-in')} class="link font-semibold">
+          {t.header.signIn}
+        </a>
+      </li>
+    </ul>
+  </nav>
+</header>

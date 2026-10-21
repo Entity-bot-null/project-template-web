@@ -60,6 +60,15 @@ and the test commands also regenerate it before running. Step by step, with an e
   job connects to the database directly, never through a pooler in transaction mode (PgBouncer, a
   provider's connection pool), which would share the session with others. The guide's
   `migrate.env` and the Terraform outputs connect directly.
+- **The engine and its network.** The schema engine connects to the database itself: with
+  `sslmode=require`, over TLS without checking the certificate, as libpq's `require` does (checked
+  against a PostgreSQL that accepts TLS only, its certificate from a private CA). The `api-migrate`
+  image installs Debian's `libssl3`, so Prisma chooses the engine built for OpenSSL 3, which links
+  that library: patched with the image, seen by its scan. Without it Prisma guesses OpenSSL 1.1,
+  says so at every run (`Prisma failed to detect the libssl/openssl version`), and uses an engine
+  with its own copy of OpenSSL; the image build stops instead. The CLI's update check and usage data
+  are off in the image, its builds and CI (`CHECKPOINT_DISABLE=1`); set the same in your shell to
+  keep it quiet locally.
 
 ### Expand and contract
 

@@ -113,7 +113,8 @@ needs a compliance claim verifies it itself.
   account's `security_version`. Valid for 30 minutes and once; a new link replaces the earlier
   unused ones; a credential change ends every outstanding one. Expired and used tokens are swept
   after a day.
-- **The link** is `APP_ORIGIN/reset-password#token=...` (never built from a request's Host). The
+- **The link** is `APP_ORIGIN` + `APP_BASE_PATH` + `/reset-password#token=...`
+  (`https://app.example.com/app/reset-password#token=...`, never built from a request's Host). The
   token travels after `#`, which browsers never send to a server or in a `Referer`; the page reads
   it, removes it from the address bar and the history at once (`replace`), keeps it in memory only
   (never browser storage) and drops it once used. Opening the link changes nothing: only the
@@ -162,10 +163,10 @@ fails otherwise); off, accounts are created by an operator (`user:create`). When
   sign-up and its link (and the route is limited per IP like a sign-in). The confirmation creates the account (role `member`)
   and signs it in, ending any session the browser had, like a sign-in.
 - **The token:** 256 random bits, minted when the message is sent, only its SHA-256 stored on the
-  sign-up; 24 hours, once (the sign-up row is deleted in the transaction that creates the
-  account, under its row lock: two confirmations, one account). The link is
-  `APP_ORIGIN/confirm-sign-up#token=...`, handled like a reset link (fragment, removed from the
-  address bar and history, memory only, opening it changes nothing).
+  sign-up; 24 hours, once (the sign-up row is deleted in the transaction that creates the account,
+  under its row lock: two confirmations, one account). The link is
+  `APP_ORIGIN/app/confirm-sign-up#token=...` (with `APP_BASE_PATH`), handled like a reset link
+  (fragment, removed from the address bar and history, memory only, opening it changes nothing).
 - **Limits:** 5 sign-ups per 15 minutes per IP, 10 confirmations per 15 minutes per IP; per
   address, one message a minute and `MAIL_DAILY_LIMIT_PER_ADDRESS` a day, shared with password
   recovery. An address that gets an account by other means after the link was sent answers 409.
@@ -192,7 +193,8 @@ the role is checked by the API on every route, whatever the web app shows):
 - **The token:** 256 bits minted when the message is sent, only its SHA-256 stored on the
   invitation, 7 days, once (the invitation row is deleted in the transaction that creates the
   account: two acceptances, one account; an address that got an account meanwhile answers 409).
-  The link is `APP_ORIGIN/accept-invitation#token=...`, handled like every emailed link.
+  The link is `APP_ORIGIN/app/accept-invitation#token=...` (with `APP_BASE_PATH`), handled like
+  every emailed link.
 - **Limits:** 30 invitations per 15 minutes per IP; per address, one message a minute and
   `MAIL_DAILY_LIMIT_PER_ADDRESS` a day (an administrator who resends too soon gets 429, and the
   earlier invitation stands); 10 acceptances per 15 minutes per IP. Expired invitations are swept.
@@ -336,7 +338,9 @@ API decides what is **allowed**. Never rely on a hidden link or a client guard a
   such a client a proxy to the API on its own origin instead.
 - **XSS:** React escapes output; never use `dangerouslySetInnerHTML` without a sanitizer (OPCIONAL:
   DOMPurify). The web image sends a strict CSP (`default-src 'self'`, no inline scripts, no
-  framing); widen it per directive, in review, when a feature needs it.
+  framing) on the landing and the app alike; widen it per directive, in review, when a feature
+  needs it. The landing keeps within it by construction: static HTML, stylesheets as files, no
+  script, nothing from another origin (its JavaScript budget is 0 kB).
 
 ## Security headers and caching
 
@@ -344,8 +348,11 @@ API: helmet defaults (CSP, HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `R
 CORP/COOP, no `X-Powered-By`) and `Cache-Control: no-store` on every response (they carry tokens
 and personal data). Web image: CSP, `X-Content-Type-Options`, `X-Frame-Options: DENY`,
 `Referrer-Policy: no-referrer` (pages are opened from one-time links), `Permissions-Policy`, COOP
-(`apps/web/nginx/security-headers.conf`); hashed
-assets cached for a year, never an error response. The CSP's `connect-src` gains exactly one origin
+(`apps/web/nginx/security-headers.conf`), on every page of the landing and the app; hashed
+assets (`/app/assets/`, `/_astro/`) cached for a year, never an error response. Redirects carry a
+path only (`absolute_redirect off`): never an address built from the request's `Host`. The landing's
+absolute links take the configured `APP_ORIGIN`, written in by nginx as it serves them, never the
+request's `Host` either. The CSP's `connect-src` gains exactly one origin
 when browser error tracking is configured: Sentry's ingest host, derived from `WEB_SENTRY_DSN` by
 the web server (nothing else can widen it at runtime).
 
@@ -395,10 +402,10 @@ The counters live in a **store** chosen by `RATE_LIMIT_STORE`
 (`infrastructure/rate-limit/rate-limit.store.ts`); the guard, the limits and the routes are the same
 with either:
 
-| Store              | When                                            | Behavior                                                                                                                                    |
-| ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory` (default) | one instance                                    | the throttler's in-memory store, as the template always had                                                                                 |
-| `redis`            | several instances (OPTIONAL, needs `REDIS_URL`) | shared counters: a client cannot multiply its allowance by the number of instances; same algorithm, atomically in a Lua script, server time |
+| Store              | When                                                                         | Behavior                                                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory` (default) | one instance                                                                 | the throttler's in-memory store, as the template always had                                                                                 |
+| `redis`            | several instances (needs `REDIS_URL`; development and the VPS target use it) | shared counters: a client cannot multiply its allowance by the number of instances; same algorithm, atomically in a Lua script, server time |
 
 While Redis is unreachable the Redis store does **not fail open**: each instance falls back to its
 own in-memory counters (limits become per instance), logs the switch once, counts it
@@ -418,6 +425,19 @@ never the `*Unsafe`variants with interpolated input: an ESLint rule refuses them
 scripts and tests included. The one use,`$executeRawUnsafe` in the test reset helper, interpolates
 table names read from the database catalog (identifiers cannot be bound as parameters) and carries
 a disable comment that says so.
+
+## Database access
+
+The API connects as a role that reads and writes data and cannot change the schema (`app_runtime`),
+the migration job as the schema's owner (`app_migrator`): neither is a superuser, and each gets only
+its own `DATABASE_URL` ([disaster-recovery.md](disaster-recovery.md#backup-strategy)). The same
+roles everywhere, made three ways: by hand on a managed database, by `pnpm iac:database` on
+Terraform's, and by `deploy/vps/db-init.sh` on the VPS target's own
+([deploy-vps.md](deploy-vps.md#5-the-database)), which adds `app_backup`, read-only, for the nightly
+backup. There PostgreSQL is on the server's internal network only, never published, and asks every
+container for its password; its superuser is reached only through the database container.
+`pnpm iac:check` runs both role scripts on PostgreSQL in CI and fails when a role can do more than
+its share ([ci-cd.md](ci-cd.md#infrastructure-as-code)).
 
 ## Secrets
 
@@ -442,7 +462,9 @@ a disable comment that says so.
   out of git (`*.tfstate*` in `.gitignore`), on the operator's disk or in a private Spaces bucket
   ([deploy-vps.md](deploy-vps.md#state)).
 - In production: the platform's secret store or the GitHub environment secrets, one value per
-  environment (docs/environment.md#secrets). Rotation: [Secret rotation](#secret-rotation).
+  environment (docs/environment.md#secrets); on the VPS target, files on the server readable by the
+  deploy user only, one per container with only what it needs
+  ([deploy-vps.md](deploy-vps.md#the-files)). Rotation: [Secret rotation](#secret-rotation).
 - A leaked secret is rotated first, then removed from history if needed; removal alone is not enough.
 
 ## Logging
@@ -520,18 +542,19 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
 
 ## Redis
 
-OPTIONAL infrastructure (docs/architecture.md#redis). Secure defaults, development and production:
+OPTIONAL for the application (docs/architecture.md#redis), and on by default in development and on
+the VPS target. Secure defaults in all three places:
 
-| Concern             | Development (`docker compose --profile redis`)                                                                       | Production (REQUIRES CONFIGURATION)                                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Where               | a container on this machine                                                                                          | a managed or private Redis (ElastiCache, Memorystore, Azure Cache, Upstash...) on the private network only, never a public endpoint              |
-| Network             | published on 127.0.0.1 only                                                                                          | reachable from the API's network only (security groups, private endpoints)                                                                       |
-| Authentication      | password required (`REDIS_PASSWORD` in the root `.env`, never committed); the container refuses to start without one | an ACL user limited to the key prefix and the commands the adapters run (list in docs/architecture.md#redis), its password from the secret store |
-| Encryption          | none (loopback)                                                                                                      | TLS: `rediss://` (the API warns at boot about `redis://` in production)                                                                          |
-| Credentials in logs | never: the URL is logged as host:port, errors are redacted                                                           | same                                                                                                                                             |
-| Persistence         | AOF every second, a volume                                                                                           | per use: cache and rate limits can lose data; locks and idempotency claims should survive a restart (AOF or the provider's persistence)          |
-| Memory              | 256 MB, evicts only keys with a TTL (`volatile-lru`)                                                                 | sized to the workload, with the same policy: every key the template writes has a TTL, so keys without one (a future job queue) are never evicted |
-| Process             | runs as the `redis` user; password passed through a file, not the command line                                       | the provider's hardening                                                                                                                         |
+| Concern             | Development (`pnpm services:up`)                                                     | The VPS target (`deploy/vps`)                                                                                                | Elsewhere (REQUIRES CONFIGURATION)                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Where               | a container on this machine                                                          | a container on the server, beside the API                                                                                    | a managed or private Redis (ElastiCache, Memorystore, Azure Cache, Upstash...) on the private network only, never a public endpoint              |
+| Network             | published on 127.0.0.1 only (port 6389)                                              | the internal network `data` only, never published                                                                            | reachable from the API's network only (security groups, private endpoints)                                                                       |
+| Authentication      | a password (`REDIS_PASSWORD` in the root `.env`; `app` when unset, development only) | an ACL user, `app`, limited to `~app:*` and the commands the adapters run; the default user off; its password in `redis.env` | an ACL user limited to the key prefix and the commands the adapters run (list in docs/architecture.md#redis), its password from the secret store |
+| Encryption          | none (loopback)                                                                      | none: the internal network stays on the server (the boot warning about `redis://` is expected)                               | TLS: `rediss://` (the API warns at boot about `redis://` in production)                                                                          |
+| Credentials in logs | never: the URL is logged as host:port, errors are redacted                           | same                                                                                                                         | same                                                                                                                                             |
+| Persistence         | AOF every second, a volume                                                           | AOF every second, the volume `app_redis_data`                                                                                | per use: cache and rate limits can lose data; locks and idempotency claims should survive a restart (AOF or the provider's persistence)          |
+| Memory              | 256 MB, evicts only keys with a TTL (`volatile-lru`)                                 | the same, in a container limited to 512 MB                                                                                   | sized to the workload, with the same policy: every key the template writes has a TTL, so keys without one (a future job queue) are never evicted |
+| Process             | runs as the `redis` user; password passed through a file, not the command line       | the same, with the server's hardening ([Container images](#container-images)); the ACL file on a `tmpfs` only Redis reads    | the provider's hardening                                                                                                                         |
 
 The application treats Redis as untrusted for correctness: losing it degrades features but never
 authorizes a request, and no session or authorization data lives there.
@@ -546,7 +569,7 @@ mail without authentication: it is published on 127.0.0.1 only and is never part
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Transport              | Production requires encryption: `smtps://`, or `smtp://` with STARTTLS required (a server without it, Mailpit among them, is refused); TLS 1.2 or later; the server's certificate is verified. The one exception is a server on the machine itself (`localhost`, `127.0.0.1`, `[::1]`: a local relay, the end-to-end suite's Mailpit): that traffic never crosses a network, and `localhost` is connected to as `127.0.0.1`, never through a DNS answer. In production the API warns at boot when it uses the exception (a copied development setting). |
 | Credentials            | In `MAIL_SMTP_URL`, a secret of the platform's store; the logger redacts `user:password@` in any URL, and the SMTP server's own text is never logged (only a category such as `smtp_5xx_535`).                                                                                                                                                                                                                                                                                                                                                          |
-| Links                  | Built from `APP_ORIGIN` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                                                                                                                                                                   |
+| Links                  | Built from `APP_ORIGIN` and `APP_BASE_PATH` only (required with email; https in production, http only on a loopback origin, where links open on that machine alone), never from a request's Host or forwarded headers: no password-reset poisoning (see [HTTPS](#https)).                                                                                                                                                                                                                                                                               |
 | What the outbox stores | No message body and no token: the worker renders a message when it sends it, and a link's token is minted then, only its hash stored. The address is cleared once the message is sent or dropped (a CHECK constraint enforces it), a keyed hash (HMAC-SHA256, key derived from `JWT_ACCESS_SECRET`) stays for the per-address limits.                                                                                                                                                                                                                   |
 | Logs, metrics, errors  | A message is named by its id and kind; an address appears at most as the first 12 characters of its keyed hash. Metric attributes are the kind and the outcome only. `mail status` prints no address. Database errors are logged by class and code, never their message (it can quote a query's arguments).                                                                                                                                                                                                                                             |
 | Content                | Every value in a template is HTML-escaped; subjects carry no line break (no header injection); nothing remote is loaded (no image, font or stylesheet: no tracking pixel); nodemailer may not read files or URLs named in a message. `MAIL_FROM` is validated at boot, quotes and line breaks refused.                                                                                                                                                                                                                                                  |
@@ -588,16 +611,17 @@ Enforced on every install (pnpm settings in `pnpm-workspace.yaml`) and by `pnpm 
 of `pnpm security`, so of `pnpm verify` and CI), with the policy in
 `scripts/dependency-policy.json`:
 
-| Control                     | What it stops                                                                                                                         | Where                                                                        |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Frozen lockfile             | Installing anything the reviewed `pnpm-lock.yaml` does not list, with its sha512 integrity                                            | `.github/actions/setup` (`--frozen-lockfile`)                                |
-| Registry sources only       | A dependency from a git repository, a tarball URL or a folder (no registry integrity, no release delay)                               | `blockExoticSubdeps` (transitive), `deps:check` (direct)                     |
-| Release delay (seven days)  | A hijacked release, usually detected and unpublished within days; exemptions are exact versions that expire                           | `minimumReleaseAge`, Dependabot `cooldown`, `deps:check` (exemptions)        |
-| Trust downgrade refused     | A new version published with weaker evidence than earlier ones (provenance lost: a stolen token)                                      | `trustPolicy: no-downgrade`                                                  |
-| Install scripts allowlisted | Code running at install time without a reviewed decision                                                                              | `allowBuilds`                                                                |
-| License policy              | A license the product cannot ship: production dependencies need a permissive license, tools may also use weak copyleft; unknown fails | `deps:check`, `scripts/dependency-policy.json`                               |
-| Known vulnerabilities       | High and critical advisories                                                                                                          | `pnpm audit`, Trivy on the images                                            |
-| Weakened settings           | Lowering the delay, dropping the trust policy or the block on exotic sources; removing the Dependabot cooldown                        | `deps:check` (floors in `scripts/dependency-policy.json`); zizmor (cooldown) |
+| Control                        | What it stops                                                                                                                            | Where                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Frozen lockfile                | Installing anything the reviewed `pnpm-lock.yaml` does not list, with its sha512 integrity                                               | `.github/actions/setup` (`--frozen-lockfile`)                                |
+| Registry sources only          | A dependency from a git repository, a tarball URL or a folder (no registry integrity, no release delay)                                  | `blockExoticSubdeps` (transitive), `deps:check` (direct)                     |
+| Release delay (seven days)     | A hijacked release, usually detected and unpublished within days; exemptions are exact versions that expire                              | `minimumReleaseAge`, Dependabot `cooldown`, `deps:check` (exemptions)        |
+| Trust downgrade refused        | A new version published with weaker evidence than earlier ones (provenance lost: a stolen token)                                         | `trustPolicy: no-downgrade`                                                  |
+| Install scripts allowlisted    | Code running at install time without a reviewed decision                                                                                 | `allowBuilds`                                                                |
+| Optional dependencies left out | An optional package nobody uses, with its install-time binaries and their licenses (sharp, Astro's raster image optimizer: LGPL libvips) | `ignoredOptionalDependencies`                                                |
+| License policy                 | A license the product cannot ship: production dependencies need a permissive license, tools may also use weak copyleft; unknown fails    | `deps:check`, `scripts/dependency-policy.json`                               |
+| Known vulnerabilities          | High and critical advisories                                                                                                             | `pnpm audit`, Trivy on the images                                            |
+| Weakened settings              | Lowering the delay, dropping the trust policy or the block on exotic sources; removing the Dependabot cooldown                           | `deps:check` (floors in `scripts/dependency-policy.json`); zizmor (cooldown) |
 
 **License expressions** are read as SPDX defines them: `WITH` binds tighter than `AND`, `AND`
 tighter than `OR`, parentheses group. One passes when some way to comply with it (every license of
@@ -643,17 +667,22 @@ workflow commands, with the tool-images Dockerfile instead. A project that needs
   manager: npm, corepack and yarn are removed from the Node.js base (unused attack surface with
   advisories of their own); the operating system's package manager stays (apt in the Debian base,
   apk in the Alpine one; a distroless base would remove it too, OPCIONAL). The runtime image holds
-  the production dependencies and the compiled API; the migration image the production
-  dependencies (the Prisma CLI is one), the CLI's schema engine and the migrations, with no source
-  code and no development tools. Every image applies the operating system fixes published after
-  its base was built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web
-  image), so a fixed advisory in the base does not wait for the next base release. CI passes the
-  day as `OS_UPGRADE_DATE`, part of that step's cache key: the build cache replays an upgrade for
-  one day at most, never until the base digest changes.
+  the production dependencies and the compiled API; the migration image the production dependencies
+  (the Prisma CLI is one), the CLI's schema engine and the migrations, with no source code and no
+  development tools. That engine is the one built for OpenSSL 3 and links Debian's `libssl3`, so the
+  TLS of the migrations gets the system's fixes and the image scan sees it (the engine Prisma picks
+  on a system without OpenSSL carries its own copy, out of reach of both: the build refuses it). The
+  Prisma CLI's update check and usage data are off there (`CHECKPOINT_DISABLE=1`), in the image
+  builds and in CI. Every image applies the operating system fixes published after its base was
+  built (`apt-get upgrade` in the API and migration images, `apk upgrade` in the web image), so a
+  fixed advisory in the base does not wait for the next base release. CI passes the day as
+  `OS_UPGRADE_DATE`, part of that step's cache key: the build cache replays an upgrade for one day
+  at most, never until the base digest changes.
 - The files of an image belong to root: the user it runs as can read and run them, never change
   them. On the server (`deploy/vps/compose.yaml`) every container also runs with:
-  - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`, and
-    nginx's generated configuration), emptied at every restart;
+  - a read-only root filesystem, with a small `tmpfs` only where the process writes (`/tmp`,
+    nginx's generated configuration, PostgreSQL's socket directory), emptied at every restart; the
+    data of PostgreSQL, its backups and Redis on their own volumes;
   - no Linux capability (`cap_drop: [ALL]`), except Caddy's `NET_BIND_SERVICE` for ports 80
     and 443;
   - `no-new-privileges`, so a setuid binary grants nothing;
@@ -843,8 +872,10 @@ Accepted on purpose, each with its way out:
 - [ ] TLS and HSTS at the edge; `TRUST_PROXY` (and nginx realip) for the real topology.
 - [ ] `CORS_ORIGINS` / `AUTH_COOKIE_SAMESITE` only for another browser client on another origin;
       the web app itself is served on the API's origin ([CSRF, CORS, XSS](#csrf-cors-xss)).
-- [ ] `RATE_LIMIT_STORE=redis` (with a private, authenticated, TLS Redis) if more than one API
-      instance runs.
+- [ ] More than one server: `RATE_LIMIT_STORE=redis` on a Redis they all reach, private,
+      authenticated and over TLS (the VPS target's own Redis serves one server).
+- [ ] The VPS target's own database: its nightly backups copied off the server
+      ([deploy-vps.md](deploy-vps.md#backups)).
 - [ ] Error tracking (Sentry projects for API and web), its access and retention; tracing backend
       and its credentials in `OTEL_EXPORTER_OTLP_HEADERS`.
 - [ ] Production secrets per environment; who can read them; rotation.

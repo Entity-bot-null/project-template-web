@@ -49,8 +49,10 @@ had when it was needed.
 - [ ] **Domains**: one for production (`app.acme.com`) and one for staging (`staging.acme.com`).
       You need access to the domain's DNS settings.
 - [ ] **Where it runs.** This guide uses the ready-made target: **one Linux server per
-      environment** with Docker and a managed PostgreSQL ([deploy-vps.md](deploy-vps.md)). It suits
-      a first product (one instance of the API). For Kubernetes or a container platform, phases
+      environment** with Docker, running Redis and, by default, PostgreSQL with its nightly backup;
+      or a managed PostgreSQL instead. Decide which now
+      ([deploy-vps.md](deploy-vps.md#1-what-you-need) compares them). It suits a first product
+      (one instance of the API). For Kubernetes or a container platform, phases
       0–6 are the same and phase 7 is replaced by your platform ([ci-cd.md](ci-cd.md#deployment)).
 - [ ] **Who** approves production deployments (at least one person besides the author), who
       reviews code (CODEOWNERS), who receives security reports and alerts.
@@ -60,35 +62,37 @@ had when it was needed.
 
 ### 0.2 Create the accounts
 
-| Account                                                    | For                                        | Notes                                                                                                                                                                                                                                              |
-| ---------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub (an organization is better than a personal account) | code, CI, images, deployments              | A **private** repository needs **GitHub Team** (organization) or **Pro** (personal): environments with required reviewers and their secrets, rulesets and branch protection depend on it. On the Free plan they exist only for public repositories |
-| A cloud or VPS provider                                    | the servers (2 vCPU, 4 GB RAM each)        | any provider with Ubuntu 24.04 and a public IPv4                                                                                                                                                                                                   |
-| A managed PostgreSQL                                       | the databases (16 or newer)                | often the same provider; automated backups and point-in-time recovery required                                                                                                                                                                     |
-| The domain's DNS                                           | `A` records to the servers                 | the registrar or a DNS service                                                                                                                                                                                                                     |
-| Sentry (optional)                                          | error reports from the API and the browser | free tier is enough to start                                                                                                                                                                                                                       |
-| An uptime monitor (optional but recommended)               | an alert when the site is down             | any service that checks a URL from several places                                                                                                                                                                                                  |
-| A password manager                                         | the secrets of this guide                  | shared vault for the team                                                                                                                                                                                                                          |
+| Account                                                    | For                                                                              | Notes                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub (an organization is better than a personal account) | code, CI, images, deployments                                                    | A **private** repository needs **GitHub Team** (organization) or **Pro** (personal): environments with required reviewers and their secrets, rulesets and branch protection depend on it. On the Free plan they exist only for public repositories |
+| A cloud or VPS provider                                    | the servers (2 vCPU, 4 GB RAM each, disk for the database and a week of backups) | any provider with Ubuntu 24.04 and a public IPv4                                                                                                                                                                                                   |
+| A managed PostgreSQL (if you chose one)                    | the databases (16 or newer)                                                      | often the same provider; automated backups and point-in-time recovery required                                                                                                                                                                     |
+| Storage for backups (with the database on the server)      | a copy of each night's backup, away from the server                              | another account; encrypted, write-once where available ([deploy-vps.md](deploy-vps.md#backups))                                                                                                                                                    |
+| The domain's DNS                                           | `A` records to the servers                                                       | the registrar or a DNS service                                                                                                                                                                                                                     |
+| Sentry (optional)                                          | error reports from the API and the browser                                       | free tier is enough to start                                                                                                                                                                                                                       |
+| An uptime monitor (optional but recommended)               | an alert when the site is down                                                   | any service that checks a URL from several places                                                                                                                                                                                                  |
+| A password manager                                         | the secrets of this guide                                                        | shared vault for the team                                                                                                                                                                                                                          |
 
 ### The worksheet
 
 Copy this into your password manager or notes and fill it in as you go. Secrets go only in the
 password manager.
 
-| Item                                                            | Value            | Phase |
-| --------------------------------------------------------------- | ---------------- | ----- |
-| Product name                                                    |                  | 0     |
-| GitHub owner / repository                                       | `OWNER/REPO`     | 0     |
-| Production domain / staging domain                              |                  | 0     |
-| Production server IP / staging server IP                        |                  | 7     |
-| Database host (production / staging)                            |                  | 7     |
-| `app_migrator` password (per environment)                       | password manager | 7     |
-| `app_runtime` password (per environment)                        | password manager | 7     |
-| `JWT_ACCESS_SECRET` (per environment, and one for your machine) | password manager | 3, 7  |
-| Deploy SSH key (per environment)                                | password manager | 7     |
-| `RELEASE_PLEASE_TOKEN` (optional)                               | password manager | 5     |
-| Sentry DSNs (API, web)                                          |                  | 9     |
-| First administrator's email                                     |                  | 8     |
+| Item                                                                          | Value                                   | Phase |
+| ----------------------------------------------------------------------------- | --------------------------------------- | ----- |
+| Product name                                                                  |                                         | 0     |
+| GitHub owner / repository                                                     | `OWNER/REPO`                            | 0     |
+| Production domain / staging domain                                            |                                         | 0     |
+| Production server IP / staging server IP                                      |                                         | 7     |
+| Managed database host (production / staging)                                  |                                         | 7     |
+| `app_migrator` password (managed database, per environment)                   | password manager                        | 7     |
+| `app_runtime` password (managed database, per environment)                    | password manager                        | 7     |
+| The server's database and Redis passwords                                     | on the server only (7.6 generates them) | 7     |
+| `JWT_ACCESS_SECRET` of your machine (the servers' are generated on them, 7.6) | password manager                        | 3     |
+| Deploy SSH key (per environment)                                              | password manager                        | 7     |
+| `RELEASE_PLEASE_TOKEN` (optional)                                             | password manager                        | 5     |
+| Sentry DSNs (API, web)                                                        |                                         | 9     |
+| First administrator's email                                                   |                                         | 8     |
 
 **Check:** every account above exists and you can sign in to each one; the decisions of 0.1 have
 an answer.
@@ -168,17 +172,20 @@ git init -b main
 
 Open the project in your editor (`code .`) and change:
 
-| File                              | Change                                                                       |
-| --------------------------------- | ---------------------------------------------------------------------------- |
-| `package.json` (root)             | `"name"` → `REPO`, `"description"` → one sentence about the product          |
-| `README.md`                       | the title and the first paragraph                                            |
-| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (your UI language) |
-| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                            |
-| `SECURITY.md`                     | `security@example.com` → your security contact                               |
-| `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`          |
-| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours     |
+| File                              | Change                                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `package.json` (root)             | `"name"` → `REPO`, `"description"` → one sentence about the product                               |
+| `README.md`                       | the title and the first paragraph                                                                 |
+| `apps/web/index.html`             | `<title>`, `<meta name="description">`, `<html lang="…">` (your UI language)                      |
+| `apps/api/src/openapi/openapi.ts` | `.setTitle('API')` → `.setTitle('<Product> API')`                                                 |
+| `apps/landing/src/lib/site.ts`    | `SITE_NAME` → the product's name, as the public site shows it                                     |
+| `apps/landing/public/`            | `favicon.svg` and `og.png` (1200 × 630) → your product's icon and the picture a shared link shows |
+| `SECURITY.md`                     | `security@example.com` → your security contact                                                    |
+| `.github/CODEOWNERS`              | replace `@your-org/...` with real users or teams and remove the `#`                               |
+| `CHANGELOG.md`                    | keep only the `# Changelog` heading: the template's history is not yours                          |
 
-The packages `apps/api` and `apps/web` keep their names (`api`, `web`): they are private.
+The packages `apps/api`, `apps/web` and `apps/landing` keep their names (`api`, `web`,
+`landing`): they are private.
 
 **Check:** searching the project for `example.com` finds only examples and placeholders for later:
 the `.env.example` files (those of `deploy/vps` too), tests, the development seed accounts, comments
@@ -221,15 +228,16 @@ locally.
 set, without printing it). `git status` does **not** list `apps/api/.env` (it is ignored: never
 commit it).
 
-### 3.3 Start the database
+### 3.3 Start the database and the local services
 
 ```
-pnpm db:up
+pnpm services:up
 pnpm db:migrate
 pnpm db:seed
 ```
 
-**Check:** `db:up` ends with `Container … Healthy`; `db:migrate` says the migrations were applied;
+**Check:** `services:up` ends with `Container … Healthy` for the database, Redis and Mailpit;
+`db:migrate` says the migrations were applied;
 `db:seed` prints the two development accounts:
 
 ```
@@ -239,7 +247,9 @@ member  member@example.com / member-password
 
 **If it fails:** `port is already allocated` (port 5442 taken or, on Windows, reserved) → create
 the root `.env` with `cp .env.example .env`, set `DB_PORT=5443` in it, change the port in
-`DATABASE_URL` of `apps/api/.env` to `5443`, and repeat.
+`DATABASE_URL` of `apps/api/.env` to `5443`, and repeat. The same for Redis (6389: `REDIS_PORT`,
+and `REDIS_URL`) and Mailpit (1035 and 8035: `MAILPIT_SMTP_PORT`, `MAILPIT_UI_PORT`, and
+`MAIL_SMTP_URL`).
 
 ### 3.4 Start the app
 
@@ -249,17 +259,18 @@ pnpm dev
 
 **Check**, in your browser:
 
-| Open                                                          | You should see                           |
-| ------------------------------------------------------------- | ---------------------------------------- |
-| http://localhost:5173                                         | the sign-in page                         |
-| sign in as `admin@example.com` / `admin-password`             | the app, signed in as Admin              |
-| sign out, sign in as `member@example.com` / `member-password` | the app as Member, without admin screens |
-| http://localhost:3000/api/docs                                | the API documentation (Swagger)          |
-| http://127.0.0.1:3000/api/health/ready                        | a JSON answer with `"status":"ok"`       |
-| http://localhost:8035                                         | Mailpit, where the app's email lands     |
+| Open                                                          | You should see                                                                       |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| http://localhost:4321                                         | the landing, the public site; its language links switch to Spanish (`/es/`) and back |
+| **Sign in** on the landing                                    | the sign-in page, at http://localhost:4321/app/sign-in                               |
+| sign in as `admin@example.com` / `admin-password`             | the app, signed in as Admin                                                          |
+| sign out, sign in as `member@example.com` / `member-password` | the app as Member, without admin screens                                             |
+| http://localhost:3000/api/docs                                | the API documentation (Swagger)                                                      |
+| http://127.0.0.1:3000/api/health/ready                        | a JSON answer with `"status":"ok"` (its checks: `"database":"ok"`, `"redis":"ok"`)   |
+| http://localhost:8035                                         | Mailpit, where the app's email lands                                                 |
 
 The terminal shows the API's first line:
-`Starting release unversioned in development: … error tracking off, Redis off, email on`, and a
+`Starting release unversioned in development: … error tracking off, Redis on, email on`, and a
 box with these addresses under the logs. `pnpm --filter api mail test --to you@example.test`
 queues a test message: it appears in Mailpit within seconds.
 
@@ -292,9 +303,9 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-**Check:** both report their tests passed (`passed`, no `failed`); the integration run also lists
-the Redis adapter suite as skipped, which runs where `REDIS_TEST_URL` is set (CI). The end-to-end
-tests use ports 3100 and 4173: stop `pnpm dev` first.
+**Check:** both report their tests passed (`passed`, no `failed`); the integration run includes
+the Redis adapter suite, against the Redis of 3.3. The end-to-end tests use ports 3100, 4173 and
+4321: stop `pnpm dev` first.
 
 ### 4.3 The Docker-based checks
 
@@ -326,9 +337,10 @@ In a second terminal:
 pnpm smoke --url http://localhost:8080
 ```
 
-**Check:** the smoke test ends with `Smoke test passed (public URL only).` and http://localhost:8080
-shows the app. The stack uses the development database (the same `db` service and volume), so the
-accounts of 3.3 sign in there too.
+**Check:** the smoke test ends with `Smoke test passed (public URL only).`, http://localhost:8080
+shows the landing and http://localhost:8080/app/ the app. The stack uses the development database
+and Redis (the same `db` and `redis` services and volumes), so the accounts of 3.3 sign in there
+too.
 
 Stop: `Ctrl+C`, then `docker compose --profile stack down`.
 
@@ -445,7 +457,9 @@ From here on, every change follows [the daily loop](#phase-11-the-daily-loop): a
 request, CI, review, merge. The first ones usually are:
 
 1. **Design and language.** `apps/web/src/index.css` holds placeholder styles; the copy of the
-   screens is in `apps/web/src`. Replace them with the product's.
+   screens is in `apps/web/src`. Replace them with the product's. The public site has example
+   copy, in English and Spanish, in `apps/landing/src/i18n/`, and its look in
+   `apps/landing/src/styles/global.css`: write your own ([how-to.md](how-to.md#change-the-landing)).
 2. **Your domain.** Add your tables and API modules next to `users`, following the recipes:
    [how-to.md](how-to.md) (add a table, an API module, an endpoint, a screen, a role, an
    environment variable).
@@ -454,8 +468,8 @@ request, CI, review, merge. The first ones usually are:
    sign-up confirmed by email (`SIGN_UP_ENABLED`, off by default): adjust it to what 0.1 decided.
    The first administrator, and every account while email is off, are created with the
    `create-user` command ([phase 8](#84-create-the-first-administrator)).
-4. **Optional services**, only if needed: Redis (more than one API instance), OpenTelemetry
-   (traces and metrics): [manual.md](manual.md#11-optional-infrastructure).
+4. **Optional services**: Redis is on already, locally and on the server; OpenTelemetry (traces
+   and metrics) only if needed: [manual.md](manual.md#11-optional-infrastructure).
 
 **Check, for each change:** `pnpm verify` passes locally and **CI passed** is green on its pull
 request.
@@ -471,7 +485,8 @@ Do this phase twice: once for **staging**, once for **production**. The commands
 `app.acme.com`; use the domain of the environment you are setting up.
 
 Steps 7.1 to 7.5 build the server and the database by hand, with any provider. On DigitalOcean,
-Terraform can build the same ones instead: do 7.0, skip 7.1 to 7.5, and go on at 7.6.
+Terraform can build the same server and a managed database instead: do 7.0, skip 7.1 to 7.5, and
+go on at 7.6.
 
 ### 7.0 On DigitalOcean, 7.1 to 7.5 with Terraform (optional)
 
@@ -604,7 +619,12 @@ console shows (or run `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the 
 
 ### 7.5 Create the database
 
-In your provider's console, a managed **PostgreSQL 16 or newer**: same region as the server,
+**On the server** (the default): nothing to do here. 7.6 keeps `COMPOSE_PROFILES=db` in
+`server.env`, and the first deployment starts PostgreSQL there and creates the database `app` and
+its roles, with the passwords 7.6 generates ([deploy-vps.md](deploy-vps.md#on-this-server)).
+
+**A managed database:** in your provider's console, a managed **PostgreSQL 16 or newer**: same
+region as the server,
 **automated backups** and **point-in-time recovery** on, **deletion protection** on, access only
 from the server's IP (or a private network). Note its host name.
 
@@ -642,39 +662,55 @@ From the project folder on your computer:
 scp deploy/vps/* deploy@app.acme.com:/srv/app/
 ```
 
-Later, when a release changes one of these files (Dependabot updates the Caddy image in
-`deploy/vps`), the Deploy workflow stops at **Check the server's deploy files** until you copy them
-again ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
+Later, when a release changes one of these files (Dependabot updates the Caddy, PostgreSQL and Redis
+images in `deploy/vps`), the Deploy workflow stops at **Check the server's deploy files** until you
+copy them again ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
 
-On the server, as `deploy` (`ssh -i deploy_production deploy@app.acme.com`):
+On the server, as `deploy` (`ssh -i deploy_production deploy@app.acme.com`), each file from its
+example (with a managed database, skip `db.env` and `backup.env`):
 
 ```
 cd /srv/app
-chmod 755 deploy.sh rollback.sh
+chmod 755 deploy.sh rollback.sh db-init.sh backup.sh
 cp server.env.example server.env
 cp api.env.example api.env
 cp migrate.env.example migrate.env
 cp web.env.example web.env
-chmod 600 api.env migrate.env
-openssl rand -hex 32
+cp redis.env.example redis.env
+cp db.env.example db.env
+cp backup.env.example backup.env
+chmod 600 *.env
+```
+
+Then the secrets: generated on the server and written into every file that needs them, they never
+show on the screen (with a managed database, leave out the `db.env` and `backup.env` lines):
+
+```
+migrator=$(openssl rand -hex 24) runtime=$(openssl rand -hex 24) backup=$(openssl rand -hex 24) redis=$(openssl rand -hex 24)
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|; s|^APP_MIGRATOR_PASSWORD=.*|APP_MIGRATOR_PASSWORD=$migrator|; s|^APP_RUNTIME_PASSWORD=.*|APP_RUNTIME_PASSWORD=$runtime|; s|^APP_BACKUP_PASSWORD=.*|APP_BACKUP_PASSWORD=$backup|" db.env
+sed -i "s|^PGPASSWORD=.*|PGPASSWORD=$backup|" backup.env
+sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$redis|" redis.env
+sed -i "s|<APP_RUNTIME_PASSWORD>|$runtime|; s|<REDIS_PASSWORD>|$redis|; s|^JWT_ACCESS_SECRET=.*|JWT_ACCESS_SECRET=$(openssl rand -hex 32)|" api.env
+sed -i "s|<APP_MIGRATOR_PASSWORD>|$migrator|" migrate.env
+unset migrator runtime backup redis
 ```
 
 Edit each file (`nano <file>`, save with `Ctrl+O`, exit with `Ctrl+X`):
 
-| File          | Set                                                                                                                                                                                                                            |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `server.env`  | `APP_DOMAIN=app.acme.com`                                                                                                                                                                                                      |
-| `api.env`     | `DATABASE_URL=postgresql://app_runtime:<runtime password>@<db host>:5432/app?sslmode=require`, `JWT_ACCESS_SECRET=<the value openssl printed>`, `APP_ENVIRONMENT=production` (or `staging`), `APP_ORIGIN=https://app.acme.com` |
-| `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<migrator password>@<db host>:5432/app?sslmode=require`                                                                                                                                |
-| `web.env`     | `APP_ENVIRONMENT=production` (or `staging`)                                                                                                                                                                                    |
+| File          | Set                                                                                                                                                                                                        |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.env`  | `APP_DOMAIN=app.acme.com`; keep `COMPOSE_PROFILES=db` (the database on the server), or delete that line (a managed database)                                                                               |
+| `api.env`     | `APP_ENVIRONMENT=production` (or `staging`), `APP_ORIGIN=https://app.acme.com`; with a managed database also `DATABASE_URL=postgresql://app_runtime:<runtime password>@<db host>:5432/app?sslmode=require` |
+| `migrate.env` | nothing, with the database on the server; with a managed one, `DATABASE_URL=postgresql://app_migrator:<migrator password>@<db host>:5432/app?sslmode=require`                                              |
+| `web.env`     | `APP_ENVIRONMENT=production` (or `staging`)                                                                                                                                                                |
 
 With Terraform (7.0), the two `DATABASE_URL` values are complete already: in
 `infra/terraform/digitalocean` on your computer, `terraform output -raw database_runtime_url`
 (`api.env`) and `terraform output -raw database_migrator_url` (`migrate.env`).
 
-On DigitalOcean or Amazon RDS, whose certificates come from the provider's own CA, end both URLs
-with `?sslmode=require&uselibpqcompat=true` instead (the Terraform outputs already do): the API
-would otherwise refuse the certificate (a certificate error such as
+With a managed database on DigitalOcean or Amazon RDS, whose certificates come from the provider's
+own CA, end both URLs with `?sslmode=require&uselibpqcompat=true` instead (the Terraform outputs
+already do): the API would otherwise refuse the certificate (a certificate error such as
 `self-signed certificate in certificate chain`,
 [deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)).
 
@@ -688,8 +724,9 @@ must print `Delivered`. If it ends in `connection` or a timeout, the server may 
 send SMTP (DigitalOcean blocks ports 25, 465 and 587 on many accounts): use the provider's port 2525
 (`smtp://<user>:<password>@<provider host>:2525`, STARTTLS) or ask DigitalOcean's support.
 
-**Check:** `ls -l /srv/app` shows `api.env` and `migrate.env` as `-rw-------` (only `deploy` can
-read them), and `grep -c '<' *.env` prints `0` for each file (no placeholder left).
+**Check:** `ls -l /srv/app` shows every `.env` file as `-rw-------` (only `deploy` can read them),
+and `grep -nE '^[^#].*(<|example\.com)|^[A-Z_]+=$' *.env` prints nothing (no placeholder, example
+domain or empty value left).
 
 ### 7.7 Tell GitHub about the server
 
@@ -735,29 +772,31 @@ It takes 15–25 minutes the first time. The jobs, in order: Resolve the commit 
 api / api-migrate / web → Release to staging (server).
 
 **Check:** the run ends green; its summary lists the three image digests; the last step prints
-`Smoke test passed (public URL only).`; https://staging.acme.com opens the sign-in page with a
-valid certificate (the padlock).
+`Smoke test passed (public URL only).`; https://staging.acme.com opens the landing with a valid
+certificate (the padlock).
 
 **If it fails:**
 
-| Failing step                                                | Cause and fix                                                                                                                                                               |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gates                                                       | the same as a red CI: open the failing job's log ([troubleshooting.md](troubleshooting.md))                                                                                 |
-| Publish: "The registry is ghcr.io"                          | `IMAGE_PREFIX` must be `ghcr.io/<owner>/<repo>` in lowercase (7.7)                                                                                                          |
-| Publish: "Scan the pushed image"                            | a fixable HIGH or CRITICAL advisory in the pushed image, as in the gates' image scan: update the base image or the dependency ([security.md](security.md#container-images)) |
-| Environment settings                                        | a variable or secret of the environment is missing (7.7)                                                                                                                    |
-| Deploy on the server: `Permission denied (publickey)`       | the public key is not in `/home/deploy/.ssh/authorized_keys`, or the wrong private key in `DEPLOY_SSH_KEY` (7.4)                                                            |
-| `Host key verification failed`                              | `DEPLOY_KNOWN_HOSTS` does not match the server (7.4)                                                                                                                        |
-| Check the server's deploy files: "Server files out of date" | a release changed a file in `deploy/vps`: copy the files again ([deploy-vps.md](deploy-vps.md#update-the-server-files))                                                     |
-| `server.env is missing`                                     | 7.6 not done on that server                                                                                                                                                 |
-| The migration failed                                        | `migrate.env`: wrong password, host, or the database is not reachable from the server (7.5)                                                                                 |
-| The rollout failed                                          | the step's log ends with the new containers' last log lines, then the previous release starts again; usually `api.env` (`DATABASE_URL`, `JWT_ACCESS_SECRET`)                |
-| Smoke test, certificate errors                              | DNS does not point at the server yet, or ports 80/443 are closed (7.2, 7.3)                                                                                                 |
+| Failing step                                                     | Cause and fix                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Gates                                                            | the same as a red CI: open the failing job's log ([troubleshooting.md](troubleshooting.md))                                                                                                                                    |
+| Publish: "The registry is ghcr.io"                               | `IMAGE_PREFIX` must be `ghcr.io/<owner>/<repo>` in lowercase (7.7)                                                                                                                                                             |
+| Publish: "Scan the pushed image"                                 | a fixable HIGH or CRITICAL advisory in the pushed image, as in the gates' image scan: update the base image or the dependency ([security.md](security.md#container-images))                                                    |
+| Environment settings                                             | a variable or secret of the environment is missing (7.7)                                                                                                                                                                       |
+| Deploy on the server: `Permission denied (publickey)`            | the public key is not in `/home/deploy/.ssh/authorized_keys`, or the wrong private key in `DEPLOY_SSH_KEY` (7.4)                                                                                                               |
+| `Host key verification failed`                                   | `DEPLOY_KNOWN_HOSTS` does not match the server (7.4)                                                                                                                                                                           |
+| Check the server's deploy files: "Server files out of date"      | a release changed a file in `deploy/vps`: copy the files again ([deploy-vps.md](deploy-vps.md#update-the-server-files))                                                                                                        |
+| `server.env is missing` (or `redis.env`, `db.env`, `backup.env`) | 7.6 not done, or not completely, on that server                                                                                                                                                                                |
+| `the data services did not start`                                | PostgreSQL or Redis did not start: their logs on the server (`docker logs app-db-1`, `docker logs app-redis-1`) name the cause, usually a password of 7.6 ([troubleshooting.md](troubleshooting.md#deployment-and-operations)) |
+| The migration failed                                             | `migrate.env`: wrong password, host, or the database is not reachable from the server (7.5)                                                                                                                                    |
+| The rollout failed                                               | the step's log ends with the new containers' last log lines, then the previous release starts again; usually `api.env` (`DATABASE_URL`, `JWT_ACCESS_SECRET`)                                                                   |
+| Smoke test, certificate errors                                   | DNS does not point at the server yet, or ports 80/443 are closed (7.2, 7.3)                                                                                                                                                    |
 
 ### 8.2 Look at it
 
-Open https://staging.acme.com. The sign-in page loads; nobody can sign in yet: production databases
-have no accounts.
+Open https://staging.acme.com: the landing, in English, and in Spanish at `/es/`. Its **Sign in**
+leads to https://staging.acme.com/app/sign-in; nobody can sign in yet: production databases have
+no accounts.
 
 ### 8.3 Cut the first release and deploy it to production
 
@@ -780,7 +819,8 @@ have no accounts.
    reviewer opens the run on GitHub → **Review deployments** → **Approve and deploy**.
 
 **Check:** both runs end green; production builds nothing (its summary lists the three digests of
-the staging run, "built and scanned by run <its id>"); https://app.acme.com opens the sign-in page.
+the staging run, "built and scanned by run <its id>"); https://app.acme.com opens the landing and
+https://app.acme.com/app/ the sign-in page.
 
 ### 8.4 Create the first administrator
 
@@ -817,8 +857,8 @@ cd /srv/app
 ./rollback.sh
 ```
 
-**Check:** it prints `rollback: running <commit of 8.1>`; https://staging.acme.com/app-config.json
-shows that commit as `release`; the site still works.
+**Check:** it prints `rollback: running <commit of 8.1>`;
+https://staging.acme.com/app/app-config.json shows that commit as `release`; the site still works.
 
 Then bring staging back to the release through the workflow, as for any deployment:
 
@@ -846,7 +886,7 @@ back is now something you have done, not something you read about.
    docker compose --env-file server.env --env-file release.env up -d --wait api web
    ```
 
-**Check:** `https://app.acme.com/app-config.json` shows the web DSN; the API's log line
+**Check:** `https://app.acme.com/app/app-config.json` shows the web DSN; the API's log line
 `Starting release … error tracking on` (`docker compose --env-file server.env --env-file release.env logs api | head`).
 In Sentry, set alert rules: [alerting.md](alerting.md).
 
@@ -855,7 +895,7 @@ In Sentry, set alert rules: [alerting.md](alerting.md).
 In your uptime monitor, add two checks every minute from several regions:
 
 - `https://app.acme.com/healthz` (the web server),
-- `https://app.acme.com/app-config.json` (the app's configuration is served).
+- `https://app.acme.com/app/app-config.json` (the app's configuration is served).
 
 Send the alerts to the people of 0.1 (email and a phone notification).
 
@@ -875,9 +915,12 @@ to search them, send them to a log service ([observability.md](observability.md)
 Go through [production-readiness.md](production-readiness.md) with the team and tick each line
 with its evidence. The ones this guide has not covered yet:
 
-1. **A restore drill** of the database: restore the latest backup into a new instance with your
-   provider's tool and check the data ([disaster-recovery.md](disaster-recovery.md#checklist)).
-   Write down how long it took.
+1. **A restore drill** of the database. On the server: the latest nightly backup into a new database
+   there, steps 1 to 4 of [disaster-recovery.md](disaster-recovery.md#the-servers-own-database),
+   then drop it; and the copy of the backups off the server in place
+   ([deploy-vps.md](deploy-vps.md#backups)). A managed database: the latest backup into a new
+   instance with your provider's tool. Check the data ([checklist](disaster-recovery.md#checklist))
+   and write down how long it took.
 2. **Alerts and SLOs** agreed ([alerting.md](alerting.md)).
 3. **The contacts table** of [incident-response.md](incident-response.md) filled in.
 4. **Legal**: privacy policy, terms, cookie notice, as your market requires.
@@ -916,6 +959,7 @@ new pull request ([deploy-vps.md](deploy-vps.md#roll-back)).
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Every week                    | Approve Dependabot's update pull requests: patch and minor ones merge themselves once CI is green; majors and workflow updates you merge by hand.                                                                                                              |
 | Every week                    | Read the DAST results (the **DAST** workflow runs on Mondays).                                                                                                                                                                                                 |
+| Every week                    | With the database on the server: `backup` healthy (`docker compose ... ps`) and the latest backup copied off the server ([deploy-vps.md](deploy-vps.md#backups)).                                                                                              |
 | Every month                   | On each server: `docker image prune`, and `docker image rm` the release images not named in `release.env` or `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reboot if `/var/run/reboot-required` exists.                                 |
 | Every quarter                 | A database restore drill; review the alerts; check `RELEASE_PLEASE_TOKEN`'s expiration, if you set it; what Dependabot never proposes: a Node.js LTS major (each October), pnpm, PostgreSQL and Redis majors ([ci-cd.md](ci-cd.md#keeping-the-stack-current)). |
 | When a secret may have leaked | Rotate it at once ([security.md](security.md#secret-rotation)).                                                                                                                                                                                                |

@@ -3,7 +3,8 @@ import { testDatabaseUrl } from './test/db-url.js';
 
 // Integration specs (*.int.spec.ts): the real Nest application over HTTP
 // against a real PostgreSQL database, `<db>_test`, created and migrated by
-// the global setup. Needs the database running: `pnpm db:up`.
+// the global setup. Needs the development services running (`pnpm services:up`):
+// the database, and Redis and Mailpit for their specs.
 export default defineConfig({
   test: {
     include: ['src/**/*.int.spec.ts'],

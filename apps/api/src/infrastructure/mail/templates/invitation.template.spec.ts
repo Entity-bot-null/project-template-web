@@ -38,7 +38,7 @@ function txWith({
   return { tx, client: tx as unknown as Prisma.TransactionClient };
 }
 
-const context = { product: 'Acme', appOrigin: 'https://app.acme.test' };
+const context = { product: 'Acme', appUrl: 'https://app.acme.test/app' };
 
 describe('the invitation message', () => {
   it('mints its token when it is sent, after # in a link to the configured origin, only its hash stored', async () => {
@@ -49,9 +49,10 @@ describe('the invitation message', () => {
       message: message(),
       ...context,
     });
-    const token = /https:\/\/app\.acme\.test\/accept-invitation#token=([A-Za-z0-9_-]{43})/.exec(
-      rendered?.text ?? '',
-    )?.[1];
+    const token =
+      /https:\/\/app\.acme\.test\/app\/accept-invitation#token=([A-Za-z0-9_-]{43})/.exec(
+        rendered?.text ?? '',
+      )?.[1];
     expect(token).toBeDefined();
     const [[{ where, data }]] = tx.invitation.update.mock.calls as unknown as [
       [{ where: unknown; data: { tokenHash: string; expiresAt: Date } }],

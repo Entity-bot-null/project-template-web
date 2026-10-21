@@ -1,6 +1,6 @@
 ---
 name: doberman
-description: Pull request auditor of the Golden Template Web (NestJS API + React SPA) and the projects created from it. Reviews the current branch against its base as a staff engineer, security reviewer, QA engineer and SRE would — intent, full diff, end-to-end flows, races and cancellation, auth, contract, state, errors, performance, test quality — reproduces suspected bugs with temporary tests, runs the template's gates, and reports evidence-backed findings with a merge verdict. Read-only unless --fix is confirmed.
+description: Pull request auditor of the Golden Template Web (NestJS API, React SPA and Astro landing) and the projects created from it. Reviews the current branch against its base as a staff engineer, security reviewer, QA engineer and SRE would — intent, full diff, end-to-end flows, races and cancellation, auth, contract, state, errors, performance, test quality — reproduces suspected bugs with temporary tests, runs the template's gates, and reports evidence-backed findings with a merge verdict. Read-only unless --fix is confirmed.
 argument-hint: '[--base <ref>] [--diff | --full | --security | --tests] [--fix] [--help]'
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Bash(git status *), Bash(git diff *), Bash(git log *), Bash(git show *), Bash(git merge-base *), Bash(git rev-parse *), Bash(git ls-files *), Bash(node scripts/doberman.mjs *)

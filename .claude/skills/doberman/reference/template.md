@@ -24,7 +24,8 @@ When this file and those disagree, they win; say so in the report.
 
 pnpm workspace: `apps/api` (NestJS, Prisma + PostgreSQL, Zod DTOs, optional Redis behind
 adapters, OpenTelemetry and Sentry behind `observability/`), `apps/web` (React + Vite SPA,
-openapi-fetch client, React Router), OpenAPI contract first (`pnpm contract` writes
+openapi-fetch client, React Router), `apps/landing` (Astro + Tailwind CSS public site, static
+pages in English and Spanish, no client JavaScript), OpenAPI contract first (`pnpm contract` writes
 `openapi/openapi.json` and `apps/web/src/api/schema.d.ts`), TypeScript strict, Vitest (unit,
 component, integration with supertest), Playwright (E2E), Docker images scanned by Trivy, VPS
 deployment (`deploy/vps`).
@@ -86,6 +87,19 @@ replay of an already rotated refresh token (outside the race leeway) → the who
   errors come from `ApiFailure` messages; nothing renders untrusted HTML.
 - Role-gated routes in the router are a convenience: the API decides.
 
+**Landing** (`apps/landing/**`)
+
+- Every visible text comes from the dictionaries (`src/i18n/en.ts`, `es.ts`), written in both
+  languages in the same change; a page exists in every language (`src/pages/`, `src/pages/es/`).
+- Static HTML and CSS only: no client script, no inline `style` attribute or `<style>` tag
+  rendered into a page (the web server's Content-Security-Policy refuses them), no font or asset
+  from another origin; the JavaScript budget of `apps/landing/performance-budget.json` is 0 kB.
+- One `h1` per page, a heading on every section, landmarks, the skip link, `lang` on the page and
+  on each language link; a picture of the app (`data-ui`) carries `role="img"` and a label in the
+  page's language.
+- Links into the app through `src/lib/links.ts` (`appPath`), never a hard-coded origin; canonical
+  and alternate links, the sitemap and robots.txt from the build's `site`.
+
 **API authorization and input** (`apps/api/src/**`)
 
 - `@Auth(...)` on every non-public route (no roles = any signed-in user); a public route has a
@@ -132,7 +146,8 @@ replay of an already rotated refresh token (outside the race leeway) → the who
 **Gates and supply chain**
 
 - No threshold (`vitest.config.ts`, `vite.config.ts`), lint rule, budget
-  (`apps/web/performance-budget.json`), ignore file, supply-chain setting (`pnpm-workspace.yaml`),
+  (`apps/web/performance-budget.json`, `apps/landing/performance-budget.json`), ignore file,
+  supply-chain setting (`pnpm-workspace.yaml`),
   dependency policy or workflow permission weakened; `nosemgrep`/`eslint-disable` carry their reason.
 - Dependencies go to the app that uses them; the root only gets repository tooling.
 - A deployment change updates docs/deploy-vps.md and both step-by-step guides; the manual and the
@@ -177,9 +192,11 @@ The plan comes from `doberman.mjs start` (`verify` in `package.json`, plus the C
   security, build, performance budget. Run them one by one so each gets its own result.
 - `pnpm test:integration` needs PostgreSQL: `DATABASE_URL` from the environment or `apps/api/.env`
   (without it: `SKIPPED — REQUIRES CONFIGURATION`; never create the file), and the server running.
-  The plan's `services` says when to start it (`pnpm db:up`) and how to stop it
-  (`docker compose stop db`). The Redis adapter specs only run with `REDIS_TEST_URL`: report them
-  as not run locally.
+  The plan's `services` says when to start the development services (`pnpm services:up`:
+  PostgreSQL, Redis and Mailpit) and how to stop them (`docker compose stop db redis mailpit`). The
+  Redis adapter specs and the outbox specs use `REDIS_URL` and `MAIL_SMTP_URL` of `apps/api/.env`
+  (or `REDIS_TEST_URL` and `MAIL_TEST_SMTP_URL`); without a URL they are skipped locally: report
+  them as not run.
 - `pnpm test:e2e` after `pnpm build`; Playwright starts the API (`<db>_e2e`) and the web preview by
   itself, and needs Chromium installed (never install it on the user's behalf).
 - Images: only when the change touches what goes into them (paths in the plan); build with the
@@ -187,8 +204,9 @@ The plan comes from `doberman.mjs start` (`verify` in `package.json`, plus the C
   images.
 - `pnpm test:scripts` (CI only, outside `verify`): the tests of the repository's own scripts, the
   Doberman engine and Semgrep's file selection. On Windows the POSIX signal test is skipped.
-- `pnpm iac:check` (Docker and the network) only when the change touches `infra/`, the tool images
-  or its scripts: Terraform checks, TFLint, Trivy, cloud-init and the roles script. Never a real
+- `pnpm iac:check` (Docker and the network) only when the change touches `infra/`,
+  `deploy/vps/db-init.sh`, the tool images or its scripts: Terraform checks, TFLint, Trivy,
+  cloud-init and the two roles scripts (Terraform's and the server's). Never a real
   `terraform plan` or `apply`: they need a DigitalOcean account and token.
 - `pnpm sast` and `pnpm lint:workflows` need Docker; `pnpm security` needs the network. gitleaks
   needs commits; on Windows (Git Bash) the plan's `commandWindows` passes a Windows path to Docker.

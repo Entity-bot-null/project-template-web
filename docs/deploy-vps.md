@@ -1,18 +1,18 @@
 # Deploying to a Linux server (reference target)
 
-One ready-made deployment target: a Linux server (a VPS or a dedicated machine) running Docker,
-with a managed PostgreSQL. It is the simplest setup that keeps every rule of
-[ci-cd.md](ci-cd.md#deployment): images built once per commit and deployed by digest, migrations
-before the rollout, the smoke test after it, and an automatic rollback. For a container platform
-(Kubernetes, ECS, Cloud Run, Render, Fly.io…), implement the generic `release` job of
-`deploy.yml` instead, following the same steps.
+One ready-made deployment target: a Linux server (a VPS or a dedicated machine) running Docker, with
+Redis and PostgreSQL on the same server, or a managed PostgreSQL instead. It is the simplest setup
+that keeps every rule of [ci-cd.md](ci-cd.md#deployment): images built once per commit and deployed
+by digest, migrations before the rollout, the smoke test after it, and an automatic rollback. For a
+container platform (Kubernetes, ECS, Cloud Run, Render, Fly.io…), implement the generic `release`
+job of `deploy.yml` instead, following the same steps.
 
 The step-by-step setup, with what to check after each step, is in
 [step-by-step.md](step-by-step.md#phase-7-production-servers) (Spanish:
 [step-by-step.es.md](step-by-step.es.md)). This page describes the pieces and the operations.
 
 On DigitalOcean, Terraform can set up sections 2 to 5 instead (the server, its firewalls, Docker,
-the deploy user, the database and its roles), and the same server results:
+the deploy user, a managed database and its roles), and the same server results:
 [Provision with Terraform (DigitalOcean)](#provision-with-terraform-digitalocean).
 
 - [How it works](#how-it-works)
@@ -32,9 +32,17 @@ the deploy user, the database and its roles), and the same server results:
 ## How it works
 
 ```
-browser ──HTTPS──▶ Caddy (TLS, HSTS) ──▶ web (nginx: the app, /api forwarded) ──▶ api ──▶ PostgreSQL (managed)
-                   ports 80/443            edge network only                       edge network only
+browser ──HTTPS──▶ Caddy (TLS, HSTS) ──▶ web (nginx) ──────▶ api ──────▶ Redis and PostgreSQL
+                   ports 80/443          / the landing,      edge and    (db profile, with its
+                                         /app/ the app,      data        nightly backup);
+                                         /api forwarded;     networks    data network only
+                                         edge network only
 ```
+
+Two Docker networks: `edge` joins Caddy, the web image and the API; `data`, internal, joins the API
+and the migration job to Redis and PostgreSQL, and reaches nothing outside the server. Only Caddy
+publishes ports. Without the `db` profile, PostgreSQL is a managed one outside the server, reached
+through `edge`.
 
 The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
 
@@ -55,6 +63,9 @@ The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
      say): two at once would move the release pointers under each other,
    - pulls the images by digest with the run's short-lived token (then logs out: the server keeps
      no registry credential); Docker refuses content whose digest is not the one asked for,
+   - starts the data services, or leaves them running as they are: Redis, and with the `db` profile
+     PostgreSQL and its nightly backup; it waits until Redis and PostgreSQL are healthy, and a new
+     pinned image of one (a Dependabot update) restarts it here, before the migration,
    - runs the migration (`api-migrate` with the migrator role) and stops there if it fails, the
      running release untouched,
    - starts the new `api` and `web`, waits until both are healthy and the API is ready,
@@ -70,31 +81,39 @@ database): first deployment, migration with the two roles, HTTPS and HSTS, the s
 client address through Caddy, the first administrator, a second release, `rollback.sh`, a broken
 release rolled back automatically, a failed migration (the running release untouched), two
 deployments at once (the second refused) and a registry serving content that does not match its
-digest (the pull refused). In CI, `scripts/deploy-vps.test.mjs` runs both scripts against a
-stand-in for Docker.
+digest (the pull refused). With the database on the server too: its roles created at the first
+start, Redis's ACL user, the nightly backup and a restore of it
+([disaster-recovery.md](disaster-recovery.md#the-servers-own-database)), and a deployment on a
+managed database instead. In CI, `scripts/deploy-vps.test.mjs` runs both scripts against a
+stand-in for Docker, and `pnpm iac:check` runs `db-init.sh` on PostgreSQL.
 
-Nothing in the repository or in GitHub holds a database password or a JWT secret: they live in
-files on the server, readable by the deploy user only.
+Nothing in the repository or in GitHub holds a database or Redis password or a JWT secret: they live
+in files on the server, readable by the deploy user only.
 
 ## The files
 
 `deploy/vps/` in the repository, copied to `/srv/app` on the server:
 
-| File                   | What it is                                                                                                                         | Committed        |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `compose.yaml`         | the services: `proxy` (Caddy), `api`, `web`, `migrate` (run once per deployment)                                                   | yes              |
-| `Caddyfile`            | TLS for `APP_DOMAIN`, HSTS, compression, forward to `web`                                                                          | yes              |
-| `realip.conf`          | mounted into the web image: the client address comes from Caddy, not from the connection                                           | yes              |
-| `deploy.sh`            | one deployment (the steps above)                                                                                                   | yes              |
-| `rollback.sh`          | back to the previous release, without the registry                                                                                 | yes              |
-| `*.env.example`        | the settings to fill in                                                                                                            | yes              |
-| `server.env`           | `APP_DOMAIN`                                                                                                                       | no (server only) |
-| `api.env`              | `DATABASE_URL` (runtime role), `JWT_ACCESS_SECRET`, `APP_ENVIRONMENT`, `APP_ORIGIN`, optional `MAIL_SMTP_URL` and `MAIL_FROM`, ... | no (server only) |
-| `migrate.env`          | `DATABASE_URL` (migrator role)                                                                                                     | no (server only) |
-| `web.env`              | `APP_ENVIRONMENT`, optional `WEB_SENTRY_DSN`, `WEB_VITALS_SAMPLE_RATE`                                                             | no (server only) |
-| `release.env`          | the digests and release running now (written by `deploy.sh`)                                                                       | no (server only) |
-| `release.previous.env` | the release before it                                                                                                              | no (server only) |
-| `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                                                                  | no (server only) |
+| File                   | What it is                                                                                                                                                      | Committed        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `compose.yaml`         | the services: `proxy` (Caddy), `web` (`APP_ORIGIN` from `APP_DOMAIN`), `api`, `migrate` (once per deployment), `redis`; `db` and `backup` with the `db` profile | yes              |
+| `Caddyfile`            | TLS for `APP_DOMAIN`, HSTS, compression, forward to `web`                                                                                                       | yes              |
+| `realip.conf`          | mounted into the web image: the client address comes from Caddy, not from the connection                                                                        | yes              |
+| `deploy.sh`            | one deployment (the steps above)                                                                                                                                | yes              |
+| `rollback.sh`          | back to the previous release, without the registry                                                                                                              | yes              |
+| `db-init.sh`           | creates the database `app` and its roles at PostgreSQL's first start, on an empty volume (`db` profile)                                                         | yes              |
+| `backup.sh`            | the nightly backup (`db` profile), and one at once with `now`                                                                                                   | yes              |
+| `*.env.example`        | the settings to fill in                                                                                                                                         | yes              |
+| `server.env`           | `APP_DOMAIN`, `COMPOSE_PROFILES=db` (the database on this server), optional `BACKUP_KEEP_DAYS` and `BACKUP_AT`                                                  | no (server only) |
+| `api.env`              | `DATABASE_URL` (runtime role), `REDIS_URL`, `JWT_ACCESS_SECRET`, `APP_ENVIRONMENT`, `APP_ORIGIN`, optional `MAIL_SMTP_URL` and `MAIL_FROM`, ...                 | no (server only) |
+| `migrate.env`          | `DATABASE_URL` (migrator role)                                                                                                                                  | no (server only) |
+| `web.env`              | `APP_ENVIRONMENT`, optional `WEB_SENTRY_DSN`, `WEB_VITALS_SAMPLE_RATE`                                                                                          | no (server only) |
+| `redis.env`            | `REDIS_PASSWORD`, the password of Redis's one user                                                                                                              | no (server only) |
+| `db.env`               | the superuser's password and the three roles' (`db` profile)                                                                                                    | no (server only) |
+| `backup.env`           | `PGPASSWORD`, the backup role's (`db` profile)                                                                                                                  | no (server only) |
+| `release.env`          | the digests and release running now (written by `deploy.sh`)                                                                                                    | no (server only) |
+| `release.previous.env` | the release before it                                                                                                                                           | no (server only) |
+| `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                                                                                               | no (server only) |
 
 Why `realip.conf`: the web image replaces `X-Forwarded-For` with the address that connected to it
 (so a client cannot choose its own address). Behind Caddy that address would be Caddy's, and the
@@ -103,12 +122,18 @@ the address from Caddy, and only from Caddy's network.
 
 ## 1. What you need
 
-| Item                                                                                                  | Example                                  |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| A server per environment, Ubuntu 24.04 LTS, public IPv4, at least 2 vCPU and 4 GB RAM                 | staging and production                   |
-| A domain per environment, its DNS editable                                                            | `staging.example.com`, `app.example.com` |
-| A managed PostgreSQL per environment (16 or newer), with automated backups and point-in-time recovery | the cloud provider's                     |
-| The GitHub repository, with the CI passing                                                            |                                          |
+| Item                                                                                                                                     | Example                                  |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| A server per environment, Ubuntu 24.04 LTS, public IPv4, at least 2 vCPU and 4 GB RAM, disk for the database and a week of its backups   | staging and production                   |
+| A domain per environment, its DNS editable                                                                                               | `staging.example.com`, `app.example.com` |
+| Optional: a managed PostgreSQL per environment (16 or newer), with automated backups and point-in-time recovery, instead of the server's | the cloud provider's                     |
+| The GitHub repository, with the CI passing                                                                                               |                                          |
+
+**Which database.** On the server, the default: nothing more to pay for or to run, and a nightly
+backup kept on the server for a week; up to a day of data can be lost, and the copy off the server
+is yours to set up ([Backups](#backups)). A managed PostgreSQL: point-in-time recovery (minutes of
+data at most), backups away from the server, upgrades by the provider; it costs extra, and Terraform
+sets it up on DigitalOcean. Redis runs on the server either way.
 
 ## 2. Create the server
 
@@ -191,10 +216,44 @@ the workflow from talking to an impostor.
 
 ## 5. The database
 
-Create the PostgreSQL instance in the provider's console (same region as the server, automated
-backups and point-in-time recovery on, deletion protection on where the provider has it, access
-limited to the server's address or a private network). Then, connected as the provider's
-administrator (`psql` with the connection string the console gives):
+Choose, per environment, where PostgreSQL runs ([section 1](#1-what-you-need) compares the two): on
+this server, the default, or a managed one. Redis runs on the server in both cases
+([section 6](#6-the-files-on-the-server)). Why:
+[ADR 0006](adr/0006-postgresql-and-redis-on-the-server.md).
+
+### On this server
+
+Nothing to create by hand. With `COMPOSE_PROFILES=db` in `server.env` (section 6), `compose.yaml`
+runs PostgreSQL 18 (`db`) and its nightly backup (`backup`), and `deploy.sh` starts them before the
+migration. At its first start, on an empty volume, `db-init.sh` creates the database `app` and three
+roles, with the passwords of `db.env`:
+
+| Role           | Can                                                                   | Used by                           |
+| -------------- | --------------------------------------------------------------------- | --------------------------------- |
+| `app_migrator` | owns the database and its schema                                      | the migration job (`migrate.env`) |
+| `app_runtime`  | reads and writes data, never changes the schema; 50 connections       | the API (`api.env`)               |
+| `app_backup`   | reads every table (`pg_read_all_data`), writes nothing; 2 connections | the nightly backup (`backup.env`) |
+
+No application uses the superuser, `postgres`. PostgreSQL is on the internal network `data` only:
+never published, reached by the API, the migration job and the backup, each with its own password
+(`scram-sha-256`). The data lives in the volume `app_db_data`, the backups in `app_db_backups`
+([Backups](#backups)). In CI, `pnpm iac:check` runs `db-init.sh` on the same PostgreSQL image and
+checks what it leaves ([ci-cd.md](ci-cd.md#infrastructure-as-code)).
+
+`db-init.sh` runs once: PostgreSQL's image skips it when the volume already holds a database. A
+password changed later in `db.env` must be changed in PostgreSQL too
+([Change a setting or a secret](#change-a-setting-or-a-secret)). If it stops at the first start (a
+password it refuses), the volume keeps a database without `app`:
+[troubleshooting.md](troubleshooting.md#deployment-and-operations) says how to start again.
+
+### A managed PostgreSQL
+
+Leave `COMPOSE_PROFILES` out of `server.env` (section 6): `db` and `backup` do not run, `db.env` and
+`backup.env` are not needed, and the backups are the provider's. Create the PostgreSQL instance in
+the provider's console (same region as the server, automated backups and point-in-time recovery on,
+deletion protection on where the provider has it, access limited to the server's address or a
+private network). Then, connected as the provider's administrator (`psql` with the connection string
+the console gives):
 
 ```sql
 CREATE ROLE app_migrator LOGIN PASSWORD '<password 1>';
@@ -229,23 +288,49 @@ From the repository, on your machine:
 scp deploy/vps/* deploy@app.example.com:/srv/app/
 ```
 
-On the server, as `deploy`, in `/srv/app`:
+On the server, as `deploy`, in `/srv/app`, each file from its example (with a managed database,
+skip `db.env` and `backup.env`):
 
 ```
 cd /srv/app
-chmod 755 deploy.sh rollback.sh
+chmod 755 deploy.sh rollback.sh db-init.sh backup.sh
 cp server.env.example server.env
 cp api.env.example api.env
 cp migrate.env.example migrate.env
 cp web.env.example web.env
-chmod 600 api.env migrate.env
-nano server.env      # APP_DOMAIN=app.example.com
-nano api.env         # DATABASE_URL (app_runtime, ?sslmode=require), JWT_ACCESS_SECRET, APP_ENVIRONMENT, APP_ORIGIN; email: MAIL_SMTP_URL, MAIL_FROM
-nano migrate.env     # DATABASE_URL (app_migrator, ?sslmode=require)
-nano web.env         # APP_ENVIRONMENT
+cp redis.env.example redis.env
+cp db.env.example db.env
+cp backup.env.example backup.env
+chmod 600 *.env
 ```
 
-`JWT_ACCESS_SECRET`: `openssl rand -hex 32`, a different one per environment. Every other API
+Then the secrets, generated on the server and written where each one is needed: the four database
+passwords into `db.env`, the backup's into `backup.env`, Redis's into `redis.env`, and the same
+values into the URLs of `api.env` and `migrate.env`, which carry them as placeholders
+(`<APP_RUNTIME_PASSWORD>`, `<REDIS_PASSWORD>`, `<APP_MIGRATOR_PASSWORD>`). They never appear on a
+command line or in the shell history:
+
+```
+migrator=$(openssl rand -hex 24) runtime=$(openssl rand -hex 24) backup=$(openssl rand -hex 24) redis=$(openssl rand -hex 24)
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|; s|^APP_MIGRATOR_PASSWORD=.*|APP_MIGRATOR_PASSWORD=$migrator|; s|^APP_RUNTIME_PASSWORD=.*|APP_RUNTIME_PASSWORD=$runtime|; s|^APP_BACKUP_PASSWORD=.*|APP_BACKUP_PASSWORD=$backup|" db.env
+sed -i "s|^PGPASSWORD=.*|PGPASSWORD=$backup|" backup.env
+sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$redis|" redis.env
+sed -i "s|<APP_RUNTIME_PASSWORD>|$runtime|; s|<REDIS_PASSWORD>|$redis|; s|^JWT_ACCESS_SECRET=.*|JWT_ACCESS_SECRET=$(openssl rand -hex 32)|" api.env
+sed -i "s|<APP_MIGRATOR_PASSWORD>|$migrator|" migrate.env
+unset migrator runtime backup redis
+```
+
+With a managed database, leave the `db.env` and `backup.env` lines out, and write its URLs into
+`api.env` and `migrate.env` instead (below). Then the rest, by hand:
+
+```
+nano server.env      # APP_DOMAIN=app.example.com; without COMPOSE_PROFILES=db for a managed database
+nano api.env         # APP_ENVIRONMENT, APP_ORIGIN; email: MAIL_SMTP_URL, MAIL_FROM
+nano web.env         # APP_ENVIRONMENT
+grep -nE '^[^#].*(<|example\.com)|^[A-Z_]+=$' *.env      # what is still a placeholder: nothing
+```
+
+`JWT_ACCESS_SECRET` is one per environment (`openssl rand -hex 32`, as above). Every other API
 variable is in [environment.md](environment.md); none is needed to start. Email is off until
 `MAIL_SMTP_URL` and `MAIL_FROM` name your provider's SMTP server and sender (encrypted: `smtps://`,
 or `smtp://` with STARTTLS); after the first deployment,
@@ -255,12 +340,23 @@ checks the whole path ([manual](manual.md#115-email)). DigitalOcean blocks outbo
 the port your provider offers for that case (2525 with STARTTLS: `smtp://...:2525`, at Postmark,
 SendGrid, Mailgun or Brevo, among others) or ask DigitalOcean's support to lift the block.
 
-The API's database driver (node-postgres) reads `sslmode=require` as `verify-full`: it refuses a
-certificate signed by the provider's own CA (DigitalOcean, Amazon RDS), and the rollout stops with
-a certificate error in the API's log (`self-signed certificate in certificate chain`). With such a
-provider, end both URLs with `?sslmode=require&uselibpqcompat=true`: TLS as libpq means `require`,
-encrypted without checking the certificate, on a network where the database admits only this
-server. The Terraform outputs are written that way.
+**The database's URLs.** On this server, `db:5432` on the internal network, without TLS: the
+connection never leaves the server. A managed database: its host, over TLS, as `api.env.example` and
+`migrate.env.example` show (`?sslmode=require`), the runtime role in `api.env` and the migrator in
+`migrate.env`. The API's database driver (node-postgres) reads `sslmode=require` as `verify-full`:
+it refuses a certificate signed by the provider's own CA (DigitalOcean, Amazon RDS), and the rollout
+stops with a certificate error in the API's log (`self-signed certificate in certificate chain`).
+With such a provider, end both URLs with `?sslmode=require&uselibpqcompat=true`: TLS as libpq means
+`require`, encrypted without checking the certificate, on a network where the database admits only
+this server. The Terraform outputs are written that way.
+
+**Redis.** One user, `app`, with the password of `redis.env`, limited to the API's keys (`app:*`,
+the default `REDIS_KEY_PREFIX`) and the commands its adapters run; the default user is off
+([security.md](security.md#redis)). `REDIS_URL` in `api.env` names it,
+`redis://app:<password>@redis:6379`: plain `redis://` on the internal network, so the API warns once
+at boot, `REDIS_URL is not encrypted (redis://)`: expected here, where only this server reaches
+Redis. Another `REDIS_KEY_PREFIX` needs the same prefix in the ACL line of `compose.yaml`: Redis
+refuses every other key (`NOPERM`).
 
 ## 7. GitHub settings
 
@@ -307,7 +403,7 @@ The run shows, in order: Resolve the commit, Gates, Publish api / api-migrate / 
 staging (server). The first publish makes the three packages private in `ghcr.io`; nothing to do.
 At the end, the smoke test prints `Smoke test passed (public URL only).` and the site answers at
 `PUBLIC_URL` with a valid certificate (Caddy obtains it on the first request; port 80 must be open
-for that).
+for that): the landing at `/`, the app at `/app/`.
 
 ## 9. Create the first administrator
 
@@ -325,14 +421,16 @@ unset PASSWORD
 ```
 
 It prints `Created the admin account owner@your-company.com (<id>).` and refuses an email that
-already has an account. Sign in at `PUBLIC_URL` with it.
+already has an account. Sign in with it at `PUBLIC_URL/app/` (the landing's **Sign in**).
 
 ## Provision with Terraform (DigitalOcean)
 
-`infra/terraform/digitalocean/` builds on DigitalOcean what sections 2 to 5 build by hand: the
-same server, firewall, users, Docker and database roles. Choose one path per environment. Sections
-6 to 9 (the files and their secrets, GitHub, the first deployment, the first administrator) are the
-same for both.
+`infra/terraform/digitalocean/` builds on DigitalOcean what sections 2 to 5 build by hand: the same
+server, firewall, users and Docker, and a managed database with its roles
+([A managed PostgreSQL](#a-managed-postgresql)). Choose one path per environment. Sections 6 to 9
+(the files and their secrets, GitHub, the first deployment, the first administrator) are the same
+for both, with the files of a managed database: no `COMPOSE_PROFILES` in `server.env`, no `db.env`
+or `backup.env`. Redis runs on the server on both paths.
 
 ### What it creates
 
@@ -462,9 +560,10 @@ Then, in order:
    with `Done: the database app (owner app_migrator) and the role app_runtime.` Running it again is
    safe.
 
-4. **Sections 6 to 9** as written. From section 4, only the checks remain (the deploy key is on the
-   server already): `ssh -i deploy_production deploy@app.example.com 'docker ps'` and
-   `known_hosts_production`. The values Terraform gives:
+4. **Sections 6 to 9** as written, for a managed database. From section 4, only the checks remain
+   (the deploy key is on the server already):
+   `ssh -i deploy_production deploy@app.example.com 'docker ps'` and `known_hosts_production`. The
+   values Terraform gives:
 
    | Where                                     | Value                                           |
    | ----------------------------------------- | ----------------------------------------------- |
@@ -534,20 +633,27 @@ gh workflow run deploy.yml --ref main -f environment=production -f ref=v1.4.0
 
 ### Update the server files
 
-The server runs its own copy of `compose.yaml`, `Caddyfile`, `realip.conf`, `deploy.sh` and
-`rollback.sh` (section 6). A release that changes one of them (a Dependabot update of the Caddy
-image, a fix to `deploy.sh`) must not run with the old copy, so the Deploy workflow compares the
-server's files with the release's before it changes anything, and stops with **Server files out of
-date** when they differ. Copy them from a checkout of the ref you deploy, then run Deploy again:
+The server runs its own copy of `compose.yaml`, `Caddyfile`, `realip.conf`, `deploy.sh`,
+`rollback.sh`, `db-init.sh` and `backup.sh` (section 6). A release that changes one of them (a
+Dependabot update of the Caddy, PostgreSQL or Redis image, a fix to `deploy.sh`) must not run with
+the old copy, so the Deploy workflow compares the server's files with the release's before it
+changes anything, and stops with **Server files out of date** when they differ. Copy them from a
+checkout of the ref you deploy, then run Deploy again:
 
 ```
 git switch --detach v1.4.0
-scp deploy/vps/compose.yaml deploy/vps/Caddyfile deploy/vps/realip.conf deploy/vps/deploy.sh   deploy/vps/rollback.sh deploy@app.example.com:/srv/app/
+scp deploy/vps/compose.yaml deploy/vps/Caddyfile deploy/vps/realip.conf deploy/vps/deploy.sh \
+  deploy/vps/rollback.sh deploy/vps/db-init.sh deploy/vps/backup.sh deploy@app.example.com:/srv/app/
 ```
 
 The deployment then pulls and starts a new Caddy image by itself, and `web`, which reads
-`realip.conf`, is recreated by every deployment. A change to the `Caddyfile` alone takes effect
-when the proxy restarts (a few seconds without the site):
+`realip.conf`, is recreated by every deployment. A new PostgreSQL or Redis image restarts that
+service during the deployment, before the migration: for a few seconds the requests that need it
+fail and readiness answers 503 (a minor version; a major one moves by hand,
+[ci-cd.md](ci-cd.md#postgresql-and-redis)). A change to `backup.sh` takes effect when the backup
+restarts (`up -d --force-recreate backup`), and `db-init.sh` only ever runs on an empty volume. A
+change to the `Caddyfile` alone takes effect when the proxy restarts (a few seconds without the
+site):
 
 ```
 cd /srv/app
@@ -556,15 +662,18 @@ docker compose --env-file server.env --env-file release.env up -d --force-recrea
 
 `rollback.sh` runs the previous release with the files now on the server: a change to
 `compose.yaml` that the previous release cannot run with needs the same care as a migration
-(expand first, contract in a later release).
+(expand first, contract in a later release). Adding a variable an older image ignores, as
+`APP_ORIGIN` on `web` is for the images from before the landing, is safe both ways.
 
 ### Roll back
 
 - **Automatic**: a failed rollout or smoke test puts the previous release back.
 - **By hand**, on the server: `cd /srv/app && ./rollback.sh` (uses the images already there; no
-  registry access needed). It ends once the API is ready, and fails, saying so, when the release it
-  put back is not (a database credential changed since, for example). While a deployment runs it
-  stops at once: a failed deployment puts the running release back by itself.
+  registry access needed). Like `deploy.sh`, it first starts the data services, or leaves them
+  running, and stops before changing the release when they do not start. It ends once the API is
+  ready, and fails, saying so, when the release it put back is not (a database credential changed
+  since, for example). While a deployment runs it stops at once: a failed deployment puts the
+  running release back by itself.
 - **Planned**: run Deploy with the previous tag.
 
 Migrations are never reversed: the previous release runs on the current schema
@@ -582,6 +691,47 @@ docker compose --env-file server.env --env-file release.env exec api \
   node -e "fetch('http://127.0.0.1:3000/api/health/ready').then(async (r) => console.log(r.status, await r.text()))"
 ```
 
+**A profile on the command line** replaces `COMPOSE_PROFILES` of `server.env`: with the database on
+the server, `--profile migrate` alone leaves `db` and `backup` out of the command, so `down` or
+`stop` would leave them running and `up` would not start them. Name it too:
+`docker compose --env-file server.env --env-file release.env --profile db --profile migrate down`.
+Running the migration job alone (`--profile migrate run --rm migrate`, as `deploy.sh` does) needs
+nothing more.
+
+### Backups
+
+With the database on this server (the `db` profile), `backup` takes a `pg_dump` of `app` every night
+at `BACKUP_AT` (03:00 UTC), and at its start when the newest is more than a day old, and keeps
+`BACKUP_KEEP_DAYS` days of them (7) in the volume `app_db_backups`. Both settings live in
+`server.env` (then `up -d backup`). It connects as `app_backup`, which can only read. Its health
+check fails when the newest backup is more than 26 hours old, so `docker compose ps` shows a missed
+night as `unhealthy`:
+
+```
+cd /srv/app
+docker compose --env-file server.env --env-file release.env ps backup
+docker compose --env-file server.env --env-file release.env exec backup ls -lh /var/lib/postgresql/backups
+docker compose --env-file server.env --env-file release.env logs backup                     # each backup written, each one deleted
+docker compose --env-file server.env --env-file release.env exec backup sh /usr/local/bin/backup.sh now     # one now: before an upgrade or a risky change
+```
+
+**A copy off the server (REQUIERE CONFIGURACIÓN).** These backups share the server's fate: a lost
+disk, a deleted server or an intruder takes them with the database. Copy each night's to storage in
+another account, encrypted and, where the provider has it, write-once (object lock), with
+credentials that can add a backup and not delete one: a job on another machine that fetches it, or a
+tool on the server (restic, rclone). By hand, the newest one to your machine:
+
+```
+ssh deploy@app.example.com 'cd /srv/app && docker compose --env-file server.env --env-file release.env exec -T backup sh -c "cat \$(ls -1t /var/lib/postgresql/backups/app-*.dump | head -n 1)"' > app-latest.dump
+head -c 5 app-latest.dump      # PGDMP: a custom-format dump
+```
+
+A backup counts once it has been restored: the procedure on this server is in
+[disaster-recovery.md](disaster-recovery.md#the-servers-own-database), with a drill every quarter
+([Restore testing](disaster-recovery.md#restore-testing)). One logical backup a night means up to a
+day of data lost; for minutes, a managed PostgreSQL with point-in-time recovery
+([section 5](#a-managed-postgresql)).
+
 ### Change a setting or a secret
 
 Edit the `.env` file on the server, then recreate the service:
@@ -593,15 +743,41 @@ docker compose --env-file server.env --env-file release.env up -d --wait api web
 
 To undo the change, copy the previous file back and recreate the service again.
 
+**A password of the database on this server.** `db.env` is read at the first start only: change the
+role's password in PostgreSQL itself, then write the same one into `db.env` and into the file of the
+service that uses it, then recreate that service. For the API's role:
+
+```
+docker compose --env-file server.env --env-file release.env exec db psql -U postgres -c '\password app_runtime'
+nano db.env          # APP_RUNTIME_PASSWORD
+nano api.env         # the password in DATABASE_URL
+docker compose --env-file server.env --env-file release.env up -d --wait api
+```
+
+`\password` asks for the new password twice and sends PostgreSQL its hash only: generate it with
+`openssl rand -hex 24` in another terminal and paste it. The API keeps the connections it has open
+and needs the new password for the next ones: recreate it right away. The same for `app_migrator`
+(`APP_MIGRATOR_PASSWORD`, `migrate.env`, read by the next deployment) and `app_backup`
+(`APP_BACKUP_PASSWORD`, `backup.env`, then `up -d backup`).
+
+**Redis's password.** `REDIS_PASSWORD` in `redis.env` and the password in the `REDIS_URL` of
+`api.env`, then both services. For the few seconds between the two restarts the API runs without
+Redis ([architecture.md](architecture.md#degradation)):
+
+```
+docker compose --env-file server.env --env-file release.env up -d --wait redis api
+```
+
 Rotating `JWT_ACCESS_SECRET` without signing everyone out: [security.md](security.md#secret-rotation)
 (`JWT_ACCESS_SECRET_PREVIOUS`).
 
 ### Recover a lost server
 
-The server holds the only copy of its settings (the `*.env` files) and of the release pointers;
-the database, the images and the code live elsewhere. A server that is gone (deleted, its disk
-lost) or compromised comes back like this; never reuse a compromised one: keep it off for the
-investigation ([incident-response.md](incident-response.md#11-authentication-or-security-attack)).
+The server holds the only copy of its settings (the `*.env` files) and of the release pointers, and
+with the `db` profile its database and the backups kept on it; the images, the code and a managed
+database live elsewhere. A server that is gone (deleted, its disk lost) or compromised comes back
+like this; never reuse a compromised one: keep it off for the investigation
+([incident-response.md](incident-response.md#11-authentication-or-security-attack)).
 
 1. **A new server**: `terraform apply -replace=digitalocean_droplet.app -var-file=production.tfvars`
    (the reserved IP and the DNS record stay), or sections 2 to 4 by hand. A Droplet backup
@@ -610,10 +786,12 @@ investigation ([incident-response.md](incident-response.md#11-authentication-or-
 2. **The files**, section 6, from a checkout of the release that was running (the last successful
    Deploy run of the environment names it). The settings are made again, not copied from a
    compromised server:
-   - `DATABASE_URL` of `api.env` and `migrate.env`: `terraform output -raw database_runtime_url`
-     and `database_migrator_url`; by hand, the URLs of section 5. After a compromise, new
-     passwords first ([Later changes](#later-changes); by hand, `ALTER ROLE ... PASSWORD` as the
-     administrator).
+   - `DATABASE_URL` of `api.env` and `migrate.env`, a managed database:
+     `terraform output -raw database_runtime_url` and `database_migrator_url`; by hand, the URLs of
+     section 5. After a compromise, new passwords first ([Later changes](#later-changes); by hand,
+     `ALTER ROLE ... PASSWORD` as the administrator).
+   - The database on the server, and Redis: new passwords for every role and for Redis, generated as
+     in section 6 (`db.env`, `backup.env`, `redis.env` and the URLs).
    - `JWT_ACCESS_SECRET`: a new one (`openssl rand -hex 32`). Nobody is signed out: sessions live
      in the database, and an access token signed with the old secret is refused and renewed by the
      next refresh ([security.md](security.md#secret-rotation)).
@@ -623,11 +801,17 @@ investigation ([incident-response.md](incident-response.md#11-authentication-or-
 3. **GitHub**: `DEPLOY_KNOWN_HOSTS` with the new server's host key (section 4).
    `DEPLOY_SSH_KEY` stays when the new server has the same deploy key (Terraform registers it);
    after a compromise, a new key pair, on the server and in the environment.
-4. **The release**: run Deploy with the ref that was running. It reuses the digests recorded by
-   that run (90 days; later it builds them again), pulls them, migrates (nothing to do) and starts
-   them; Caddy obtains the certificates at the first request. `release.previous.env` starts
-   empty: the next release makes this one the rollback target.
-5. **Check**: the smoke test of the run, a sign-in, and `ApiMetricsAbsent` and the uptime checks
+4. **The release**: run Deploy with the ref that was running. It reuses the digests recorded by that
+   run (90 days; later it builds them again), pulls them, migrates (nothing to do on a managed
+   database; every table on a new database on the server) and starts them; Caddy obtains the
+   certificates at the first request. `release.previous.env` starts empty: the next release makes
+   this one the rollback target.
+5. **The data**, when the database ran on the lost server: the site now serves an empty one. Stop
+   the proxy (`docker compose --env-file server.env --env-file release.env stop proxy`: nothing is
+   served), restore the newest copy kept off the server
+   ([disaster-recovery.md](disaster-recovery.md#the-servers-own-database)), then start the proxy
+   again (`up -d --wait proxy`). What was written after that copy is lost.
+6. **Check**: the smoke test of the run, a sign-in, and `ApiMetricsAbsent` and the uptime checks
    back to normal.
 
 ### Keep the server healthy
@@ -643,12 +827,17 @@ investigation ([incident-response.md](incident-response.md#11-authentication-or-
   never fill the disk.
 - Caddy renews the certificates; the uptime checks of [observability.md](observability.md) tell you
   if it ever fails.
-- Backups are the database provider's: schedule and rehearse a restore
-  ([disaster-recovery.md](disaster-recovery.md)).
+- Backups: with the database on the server, `backup` healthy and last night's copy off the server
+  ([Backups](#backups)); with a managed one, the provider's. Rehearse a restore either way
+  ([disaster-recovery.md](disaster-recovery.md#restore-testing)).
+- Disk: with the database on the server, it and a week of its backups grow with the data. `df -h /`
+  and `docker system df -v` (the volumes `app_db_data` and `app_db_backups`) show what is left: keep
+  room for the next backup and some growth.
 
 ### Moving to more than one server
 
-This target runs one instance of each service. Before adding a second server behind a load
-balancer: Redis for the shared rate limits and cache ([architecture.md](architecture.md#redis)),
-and `TRUST_PROXY` for the extra hop; or move to a container platform with the generic `release`
-job.
+This target runs one instance of each service, the database and Redis included. Before adding a
+second server behind a load balancer: the database and Redis cannot stay on one of the servers, so a
+managed PostgreSQL ([section 5](#a-managed-postgresql)) and a Redis every server reaches over TLS
+(`rediss://`, an ACL user: [security.md](security.md#redis)), and `TRUST_PROXY` for the extra hop;
+or move to a container platform with the generic `release` job.
