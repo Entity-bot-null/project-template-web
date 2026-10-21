@@ -27,14 +27,14 @@ env:
   CHECKPOINT_DISABLE: '1'
 
 jobs:
-  # The pinned PostgreSQL, Redis and Mailpit images of .github/tool-images/Dockerfile
+  # The pinned PostgreSQL, Redis and Mailpit images of scripts/tool-images/Dockerfile
   # (updated by Dependabot, tag and digest), for the service containers below,
   # which cannot read a file themselves: the mirror's copy, by the same
   # digest, when the mirror has it (a service container cannot fall back to
   # another registry), the pinned reference otherwise.
   tool-images:
     name: Tool images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       postgres: ${{ steps.images.outputs.postgres }}
@@ -46,7 +46,7 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
           sparse-checkout: |
-            .github/tool-images
+            scripts/tool-images
             scripts/tool-image.mjs
           sparse-checkout-cone-mode: false
       - id: images
@@ -59,7 +59,7 @@ jobs:
 
   static:
     name: Format, lint, types, workflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,7 +75,7 @@ jobs:
       # Doberman's engine (scripts/*.test.mjs).
       - run: pnpm test:scripts
       # actionlint and zizmor (workflow security), the pinned images of
-      # .github/tool-images/Dockerfile (docs/ci-cd.md#workflow-security). The
+      # scripts/tool-images/Dockerfile (docs/ci-cd.md#workflow-security). The
       # token, read-only here, enables zizmor's impostor-commit check.
       - name: Lint GitHub workflows
         env:
@@ -84,7 +84,7 @@ jobs:
 
   iac:
     name: Infrastructure as code (Terraform)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,13 +95,13 @@ jobs:
       # cloud-init against its schema, the database roles script on
       # PostgreSQL; and deploy/vps/db-init.sh, the roles of a server that runs
       # its own database, in PostgreSQL's entrypoint. With the pinned images
-      # of .github/tool-images/Dockerfile (docs/ci-cd.md#infrastructure-as-code).
+      # of scripts/tool-images/Dockerfile (docs/ci-cd.md#infrastructure-as-code).
       # No cloud account, no token, no install needed.
       - run: node scripts/check-iac.mjs
 
   sast:
     name: Static analysis (Semgrep)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,7 +114,7 @@ jobs:
 
   observability:
     name: Observability as code (dashboards, alert rules)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,14 +124,14 @@ jobs:
       - uses: ./.github/actions/setup
       # The dashboards and rules of observability/: datasource references,
       # runbook sections, only metrics the API exports; then promtool from the
-      # pinned image of .github/tool-images/Dockerfile checks the
+      # pinned image of scripts/tool-images/Dockerfile checks the
       # configuration, the rules and every dashboard query, and runs the
       # rules' unit tests (docs/observability.md#dashboards-and-alerts-as-code).
       - run: pnpm observability:check
 
   unit:
     name: Unit and component tests, coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,7 +151,7 @@ jobs:
 
   integration:
     name: Integration tests (API + PostgreSQL + Redis + Mailpit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: tool-images
     env:
@@ -211,7 +211,7 @@ jobs:
 
   security:
     name: Security (dependencies, licenses, secrets)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,7 +232,7 @@ jobs:
 
   build:
     name: Build and performance budget
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -245,7 +245,7 @@ jobs:
 
   e2e:
     name: End-to-end tests (browser)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: tool-images
     env:

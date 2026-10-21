@@ -34,7 +34,7 @@ permissions:
 jobs:
   zap:
     name: OWASP ZAP (${{ inputs.target || 'local-stack' }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       TARGET: ${{ inputs.target || 'local-stack' }}

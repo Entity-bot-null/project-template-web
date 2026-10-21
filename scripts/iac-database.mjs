@@ -10,7 +10,7 @@
 // What it sends where:
 //   - the outputs of `terraform output -json` (the state, local or remote);
 //   - over SSH, as the administrator of the server, to a throwaway container
-//     of the pinned PostgreSQL image (.github/tool-images/Dockerfile) that runs
+//     of the pinned PostgreSQL image (scripts/tool-images/Dockerfile) that runs
 //     psql: doadmin's password on the first line of standard input, then the
 //     script. Nothing secret is on a command line or written to a file;
 //   - the roles' passwords as SCRAM-SHA-256 verifiers, computed here, so the
