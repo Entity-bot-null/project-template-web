@@ -60,10 +60,12 @@ updates:
     commit-message:
       prefix: build
 
-  # The tool images CI runs (.github/tool-images/Dockerfile): tag and digest
-  # updated together.
+  # The tool images CI runs (scripts/tool-images/Dockerfile): tag and digest
+  # updated together. Outside .github/ on purpose: Dependabot may open pull
+  # requests that change files there only for GitHub Actions, and refused
+  # every one of these (dependabot/dependabot-core#15237).
   - package-ecosystem: docker
-    directory: /.github/tool-images
+    directory: /scripts/tool-images
     schedule:
       interval: weekly
     cooldown:
@@ -76,6 +78,13 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: docker/library/redis
         update-types: [version-update:semver-major]
+      # The Ubuntu release of the cloud-init check is the servers' LTS: only
+      # new digests of it. Dependabot reads an interim release (24.10, whose
+      # archive closes when its nine months of support end) as a minor update
+      # and the next LTS as a major one; the next LTS moves CI, the servers and
+      # this image together, by hand (docs/ci-cd.md#ubuntu).
+      - dependency-name: docker/library/ubuntu
+        update-types: [version-update:semver-major, version-update:semver-minor]
     groups:
       tools:
         patterns: ['*']

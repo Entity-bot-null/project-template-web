@@ -20,7 +20,7 @@ permissions: {}
 jobs:
   release-please:
     name: Release pull request and tag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write # the release branch, tags and releases
@@ -57,7 +57,7 @@ jobs:
     name: CI on the release pull request
     needs: release-please
     if: ${{ needs.release-please.outputs.pr != '' && needs.release-please.outputs.own-token != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: write # start CI and Conventions on the release branch
@@ -83,7 +83,7 @@ jobs:
     name: Generate the SBOM
     needs: release-please
     if: ${{ needs.release-please.outputs.created == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -109,7 +109,7 @@ jobs:
   attach-sbom:
     name: Attach the SBOM
     needs: [release-please, sbom]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write # upload the release asset

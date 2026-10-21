@@ -33,7 +33,7 @@ permissions:
 jobs:
   resolve:
     name: Resolve the commit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -105,7 +105,7 @@ jobs:
     name: Publish ${{ matrix.image }}
     needs: [resolve, gates]
     if: vars.DEPLOY_TARGET == 'vps'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -253,7 +253,7 @@ jobs:
     name: Release to ${{ inputs.environment }} (server)
     needs: [resolve, gates, publish]
     if: vars.DEPLOY_TARGET == 'vps'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     permissions:
@@ -357,7 +357,7 @@ jobs:
     name: Release to ${{ inputs.environment }}
     needs: [resolve, gates]
     if: vars.DEPLOY_TARGET != 'vps'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     steps:
