@@ -22,6 +22,9 @@ env:
   # mirror, by digest (scripts/tool-image.mjs): both limit anonymous pulls per
   # address, and runners share theirs.
   TOOL_IMAGE_MIRROR: mirror.gcr.io
+  # No update check or usage data from the Prisma CLI (prisma generate, the
+  # migrations of the integration and end-to-end suites), as in the images.
+  CHECKPOINT_DISABLE: '1'
 
 jobs:
   # The pinned PostgreSQL, Redis and Mailpit images of .github/tool-images/Dockerfile
