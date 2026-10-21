@@ -26,24 +26,24 @@ const { pictures } = t.gettingIn;
       <h2 id="getting-in-heading" class="reveal text-lead font-bold">
         {t.gettingIn.heading}
       </h2>
-      <ol class="mt-14 flex flex-col gap-[5.5rem]" role="list">
+      <ol class="mt-14 flex flex-col gap-22" role="list">
         <li>
-          <p class="reveal max-w-[35rem] text-lead font-medium">{t.gettingIn.invited}</p>
+          <p class="reveal max-w-140 text-lead font-medium">{t.gettingIn.invited}</p>
           <div class="reveal mt-4 [--i:1]">
             <InviteForm label={pictures.inviteForm} />
           </div>
-          <div class="reveal mt-6 md:ml-14 [--i:2]">
+          <div class="reveal mt-6 [--i:2] md:ml-14">
             <InvitationEmail label={pictures.invitationEmail} />
           </div>
         </li>
         <li>
-          <p class="reveal max-w-[35rem] text-lead font-medium">{t.gettingIn.accepted}</p>
+          <p class="reveal max-w-140 text-lead font-medium">{t.gettingIn.accepted}</p>
           <div class="reveal mt-4 [--i:1]">
             <AcceptForm label={pictures.acceptForm} />
           </div>
         </li>
         <li>
-          <p class="reveal max-w-[35rem] text-lead font-medium">{t.gettingIn.signedIn}</p>
+          <p class="reveal max-w-140 text-lead font-medium">{t.gettingIn.signedIn}</p>
           <div class="reveal mt-4 [--i:1]">
             <HomeScreen label={pictures.home} />
           </div>

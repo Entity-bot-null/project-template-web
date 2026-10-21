@@ -683,6 +683,10 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
 - **The look.** Colours (each with its light and dark value), the five type sizes and the motion
   live in `src/styles/global.css`; components use them through Tailwind classes (`bg-ground`,
   `text-ink`, `text-display`). Keep body text in the full ink and contrast at 4.5:1 or more.
+  `pnpm lint` checks the classes against that stylesheet: an unknown, duplicate or conflicting class
+  fails, and so does an order other than Tailwind's, which `pnpm lint:fix` and the pre-commit hook
+  write. A new motion class, kept outside `@layer components` like the others, is listed in
+  `eslint.config.js`.
 - **A section.** A component in `src/components/` that takes `locale` and reads its texts with
   `messages(locale)`, added to `Home.astro`. Give it a heading (`h2`, named by `aria-labelledby`
   on the section) and the `reveal` class on the parts that should arrive as it scrolls in.
