@@ -1,7 +1,7 @@
 // `pnpm iac:check` and the CI job "Infrastructure as code (Terraform)": the
 // checks of infra/terraform and of the database a server runs itself
 // (deploy/vps/db-init.sh) (docs/ci-cd.md#infrastructure-as-code). Needs
-// Docker; every tool is a pinned image of .github/tool-images/Dockerfile, and
+// Docker; every tool is a pinned image of scripts/tool-images/Dockerfile, and
 // the repository is mounted read-only. Nothing is created in any cloud and no
 // token is used. Any finding fails.
 //
@@ -56,7 +56,7 @@ chmodSync(work, 0o755);
  * runTool does), with
  * infra/terraform at /src (read-only) and the work directory at /out; returns
  * the exit status.
- * @param {string} tool a stage name of .github/tool-images/Dockerfile
+ * @param {string} tool a stage name of scripts/tool-images/Dockerfile
  * @param {string} script
  * @param {Record<string, string>} [env]
  */

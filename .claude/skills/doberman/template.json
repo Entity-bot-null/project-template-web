@@ -143,7 +143,7 @@
       "when": "paths",
       "paths": [
         "infra/**",
-        ".github/tool-images/**",
+        "scripts/tool-images/**",
         "deploy/vps/db-init.sh",
         "scripts/check-iac.mjs",
         "scripts/iac-database.mjs"
@@ -170,7 +170,7 @@
       "source": ".github/workflows/quality-gates.yml › Observability as code (dashboards, alert rules)",
       "required": true,
       "when": "paths",
-      "paths": ["observability/**", ".github/tool-images/**"],
+      "paths": ["observability/**", "scripts/tool-images/**"],
       "requires": ["docker"],
       "tags": ["static"],
       "note": "Static checks of observability/ (datasource references, runbook sections, metric names against observability/api-metrics.json), then promtool from the pinned image: configuration, rules, every dashboard query parsed, the rules' unit tests. The static part also runs in pnpm test:scripts."
@@ -232,7 +232,7 @@
         "apps/web/vite.config.ts",
         "apps/api/nest-cli.json",
         "tsconfig.base.json",
-        ".github/tool-images/**"
+        "scripts/tool-images/**"
       ],
       "requires": ["docker", "network"],
       "tags": ["security", "build"]
