@@ -10,10 +10,13 @@
 # digest together. From ECR Public's mirror of Docker's official images: the
 # same image as Docker Hub, without its anonymous pull limit.
 FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS base
+# CHECKPOINT_DISABLE: no update check or usage data from the Prisma CLI
+# (prisma generate, the engine install) while the image builds.
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     CI=true \
-    HUSKY=0
+    HUSKY=0 \
+    CHECKPOINT_DISABLE=1
 RUN corepack enable
 WORKDIR /repo
 
@@ -43,8 +46,18 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 # The migration job's dependencies: the production ones (the Prisma CLI is
 # one) plus the CLI's schema engine, which only its install script downloads.
+# Prisma chooses the engine by the OpenSSL it finds on the system, and the
+# Node.js image has none (Node.js carries its own): it would guess OpenSSL 1.1,
+# warn at every run, and fetch an engine with a copy of OpenSSL built in,
+# which no system update patches and no image scan sees. With Debian's
+# libssl3 it fetches the engine built for OpenSSL 3, which links that library;
+# the build stops if it is not there.
 FROM prod-deps AS migrate-deps
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm rebuild @prisma/engines
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm rebuild @prisma/engines \
+    && test -n "$(find node_modules/.pnpm -path '*/@prisma/engines/schema-engine-debian-openssl-3.0.x' -type f)"
 
 # What both shipped images start from: the Node.js base with the operating
 # system fixes published since it was built (the image scan in CI fails on a
@@ -69,6 +82,15 @@ RUN apt-get update \
 # applied migrations were edited since, then runs prisma migrate deploy
 # (scripts/migrate-deploy.mjs).
 FROM hardened AS migrate
+# The library the schema engine links (above): Debian's, at its latest
+# version every time the hardened stage changes (daily in CI), and scanned
+# with the image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+# The job reaches its database and nothing else: no update check or usage
+# data from the Prisma CLI.
+ENV CHECKPOINT_DISABLE=1
 WORKDIR /repo
 COPY --from=migrate-deps /repo/node_modules ./node_modules
 COPY --from=migrate-deps /repo/apps/api/node_modules ./apps/api/node_modules
