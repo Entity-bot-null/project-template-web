@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.0.0](https://github.com/Entity-bot-null/project-template-web/compare/v1.2.1...v2.0.0) (2026-10-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deploy:** run PostgreSQL and Redis on the server, and Redis in development ([#62](https://github.com/Entity-bot-null/project-template-web/issues/62))
+* **web:** serve the landing at / and the web app under /app/ ([#61](https://github.com/Entity-bot-null/project-template-web/issues/61))
+
+### Features
+
+* **deploy:** run PostgreSQL and Redis on the server, and Redis in development ([#62](https://github.com/Entity-bot-null/project-template-web/issues/62)) ([4cec3ab](https://github.com/Entity-bot-null/project-template-web/commit/4cec3ab69252fb96584959e7e2c40328f2f4ca82))
+* **landing:** add the public site in English and Spanish ([#60](https://github.com/Entity-bot-null/project-template-web/issues/60)) ([2227f68](https://github.com/Entity-bot-null/project-template-web/commit/2227f683dc0c458e211f825d22f885bdab4dd05d))
+* **web:** serve the landing at / and the web app under /app/ ([#61](https://github.com/Entity-bot-null/project-template-web/issues/61)) ([07317e0](https://github.com/Entity-bot-null/project-template-web/commit/07317e05035b27ac5ea57174f0256f30ab2d52ad))
+
+
+### Bug fixes
+
+* **api:** link the migration engine to Debian's OpenSSL, and keep Prisma's CLI offline ([#63](https://github.com/Entity-bot-null/project-template-web/issues/63)) ([80ba14a](https://github.com/Entity-bot-null/project-template-web/commit/80ba14a9d74e6e4da6dca96fa45cda7626db375e))
+
 ## [1.2.1](https://github.com/Entity-bot-null/project-template-web/compare/v1.2.0...v1.2.1) (2026-10-20)
 
 
