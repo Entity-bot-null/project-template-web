@@ -288,11 +288,12 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
           persist-credentials: false
       # The server runs its own copy of deploy/vps. A release whose copy differs
-      # (a Caddy update from Dependabot, a fix to deploy.sh) stops here, before
-      # anything changes on the server (docs/deploy-vps.md#update-the-server-files).
+      # (a Caddy, PostgreSQL or Redis update from Dependabot, a fix to
+      # deploy.sh or backup.sh) stops here, before anything changes on the
+      # server (docs/deploy-vps.md#update-the-server-files).
       - name: Check the server's deploy files
         run: |
-          files=(compose.yaml Caddyfile realip.conf deploy.sh rollback.sh)
+          files=(compose.yaml Caddyfile realip.conf deploy.sh rollback.sh db-init.sh backup.sh)
           expected=$(cd deploy/vps && sha256sum "${files[@]}")
           status=0
           actual=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \

@@ -50,7 +50,8 @@ pnpm --filter api exec vitest run src/<path>.doberman.spec.ts > "<logDir>/repro-
 pnpm --filter api exec vitest run --config vitest.config.int.ts src/<path>.doberman.int.spec.ts > "<logDir>/repro-<id>.log" 2>&1; echo "DOBERMAN_EXIT=$?"
 ```
 
-Integration specs need the database (the plan's `services`: `pnpm db:up`) and run on `<db>_test`.
+Integration specs need the development services (the plan's `services`: `pnpm services:up`) and
+run on `<db>_test`.
 
 | Status         | When                                                                                                                                     |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |

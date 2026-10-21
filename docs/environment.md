@@ -56,7 +56,7 @@
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | no         | every trace                                | Standard sampler settings, validated at boot; production: `parentbased_traceidratio` with a ratio (docs/observability.md#opentelemetry).                                                                                                                                                                                                                                            |
 | `OTEL_METRIC_EXPORT_INTERVAL`                    | no         | `60000`                                    | Metric push interval, ms.                                                                                                                                                                                                                                                                                                                                                           |
 | `OTEL_RESOURCE_ATTRIBUTES`                       | no         |                                            | Extra attributes on every span and metric (`key=value,...`), read by the SDK; for example `host.name=<server>`: the API sends no host name or machine id ([observability.md](observability.md#identity)).                                                                                                                                                                           |
-| `REDIS_URL`                                      | no         | unset: Redis off                           | OPTIONAL. `redis://` or `rediss://` (TLS), with the password; a secret. Warns at boot in production when unencrypted or without a password.                                                                                                                                                                                                                                         |
+| `REDIS_URL`                                      | no         | unset: Redis off                           | OPTIONAL. `redis://` or `rediss://` (TLS), with the password; a secret. Warns at boot in production when unencrypted or without a password. `apps/api/.env.example` points it at the development Redis, with the three below on: remove all four to run without Redis.                                                                                                              |
 | `REDIS_KEY_PREFIX`                               | no         | `app:`                                     | Prefix of every key; one per application and environment sharing a Redis.                                                                                                                                                                                                                                                                                                           |
 | `REDIS_REQUIRED`                                 | no         | `false`                                    | `true`: readiness fails while Redis is down. Requires `REDIS_URL`.                                                                                                                                                                                                                                                                                                                  |
 | `REDIS_COMMAND_TIMEOUT_MS`                       | no         | `500`                                      | Longest wait for one Redis command.                                                                                                                                                                                                                                                                                                                                                 |
@@ -114,28 +114,30 @@ Everything the landing builds is public: never a secret in a landing variable.
 
 ## Per environment
 
-| Setting                        | development                      | test / CI                                                            | staging                                 | production                           |
-| ------------------------------ | -------------------------------- | -------------------------------------------------------------------- | --------------------------------------- | ------------------------------------ |
-| `NODE_ENV`                     | `development`                    | `test`                                                               | `production`                            | `production`                         |
-| `APP_ENVIRONMENT`              | default                          | default                                                              | `staging`                               | `production`                         |
-| `APP_RELEASE`                  | `unversioned`                    | `unversioned`                                                        | from the image                          | from the image                       |
-| Logs                           | text                             | text, `warn` (integration)                                           | JSON                                    | JSON                                 |
-| `SENTRY_DSN`, `WEB_SENTRY_DSN` | unset (or a dev project)         | unset                                                                | the projects' DSNs                      | the same DSNs                        |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`  | unset, or the local backend      | unset                                                                | collector or provider                   | collector or provider, sampled       |
-| `REDIS_URL`                    | unset, or the compose Redis      | the throwaway Redis of the integration job (`REDIS_TEST_URL`)        | private Redis, `rediss://`              | private Redis, `rediss://`           |
-| `MAIL_SMTP_URL`                | Mailpit, `smtp://localhost:1035` | unset; the outbox specs use the job's Mailpit (`MAIL_TEST_SMTP_URL`) | the provider (a test sender or sandbox) | the provider, `smtps://` or STARTTLS |
-| `RATE_LIMIT_STORE`             | `memory`                         | `memory` (Redis specs override)                                      | `redis` if several instances            | `redis` if several instances         |
-| Secrets                        | `apps/api/.env`, root `.env`     | generated per run                                                    | platform secret store                   | platform secret store                |
+| Setting                        | development                            | test / CI                                                            | staging                                                                                  | production                           |
+| ------------------------------ | -------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| `NODE_ENV`                     | `development`                          | `test`                                                               | `production`                                                                             | `production`                         |
+| `APP_ENVIRONMENT`              | default                                | default                                                              | `staging`                                                                                | `production`                         |
+| `APP_RELEASE`                  | `unversioned`                          | `unversioned`                                                        | from the image                                                                           | from the image                       |
+| Logs                           | text                                   | text, `warn` (integration)                                           | JSON                                                                                     | JSON                                 |
+| `SENTRY_DSN`, `WEB_SENTRY_DSN` | unset (or a dev project)               | unset                                                                | the projects' DSNs                                                                       | the same DSNs                        |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`  | unset, or the local backend            | unset                                                                | collector or provider                                                                    | collector or provider, sampled       |
+| `REDIS_URL`                    | the compose Redis (`pnpm services:up`) | the throwaway Redis of the integration job (`REDIS_TEST_URL`)        | the server's own (`redis://` on its internal network), or a private one over `rediss://` | the same                             |
+| `MAIL_SMTP_URL`                | Mailpit, `smtp://localhost:1035`       | unset; the outbox specs use the job's Mailpit (`MAIL_TEST_SMTP_URL`) | the provider (a test sender or sandbox)                                                  | the provider, `smtps://` or STARTTLS |
+| `RATE_LIMIT_STORE`             | `redis` (`apps/api/.env.example`)      | `memory` (Redis specs override)                                      | `redis` (the VPS target sets it)                                                         | `redis` (the VPS target sets it)     |
+| Secrets                        | `apps/api/.env`, root `.env`           | generated per run                                                    | platform secret store; on the VPS target, the server's `*.env` files                     | the same                             |
 
 Every default is the safe one: optional integrations off, nothing exposed beyond loopback outside
 production, no credential in a committed file.
 
 ## Local, staging and production
 
-- **Local:** `cp apps/api/.env.example apps/api/.env`, fill `JWT_ACCESS_SECRET`; the database comes
-  from `docker-compose.yml` (`pnpm db:up`) on port 5442, not 5432, so it does not collide with a
-  PostgreSQL installed on the machine. If 5442 is taken, set `DB_PORT` in a root `.env` and the same
-  port in `DATABASE_URL`. Email goes to Mailpit (`pnpm services:up`), SMTP on 1035 and its web UI on
+- **Local:** `cp apps/api/.env.example apps/api/.env`, fill `JWT_ACCESS_SECRET`; `pnpm services:up`
+  (or `pnpm dev`) starts PostgreSQL, Redis and Mailpit from `docker-compose.yml`. The database
+  listens on 5442, not 5432, so it does not collide with a PostgreSQL installed on the machine. If
+  5442 is taken, set `DB_PORT` in a root `.env` and the same port in `DATABASE_URL`. Redis listens
+  on 6389, not 6379, with the password `app`: `REDIS_PORT` and `REDIS_PASSWORD` in the root `.env`
+  and the same in `REDIS_URL` to change them. Email goes to Mailpit, SMTP on 1035 and its web UI on
   8035, not Mailpit's usual 1025 and 8025 (another project's may hold them): `MAILPIT_SMTP_PORT`,
   `MAILPIT_UI_PORT` in the root `.env` and the port in `MAIL_SMTP_URL` to move them.
 - **Staging and production** are separate GitHub environments (`staging`, `production`) and separate
@@ -147,7 +149,10 @@ production, no credential in a committed file.
 
 - Production and staging values live in the platform's secret manager or in the GitHub
   environment secrets used by `.github/workflows/deploy.yml`; REQUIERE CONFIGURACIÓN per provider.
-- Least privilege: the API gets only what it reads; the migration job gets only `DATABASE_URL`.
+- Least privilege: the API gets only what it reads; the migration job gets only `DATABASE_URL`. On
+  the VPS target each container has its own file: the database's passwords in `db.env` (read at its
+  first start only), the backup's in `backup.env`, Redis's in `redis.env`
+  ([deploy-vps.md](deploy-vps.md#the-files)).
 - Rotation: generate, deploy, verify, then revoke the old value. `JWT_ACCESS_SECRET` has its own
   procedure, with or without a grace period ([security.md](security.md#secret-rotation)); it never
   signs anyone out, since refresh sessions do not depend on it.

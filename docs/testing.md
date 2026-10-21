@@ -41,13 +41,13 @@ e2e/support/                         accounts (created with the user:create CLI)
 ```
 pnpm test               unit + component, every app (fast, no services)
 pnpm test:coverage      the same with coverage thresholds
-pnpm test:integration   API against PostgreSQL (pnpm db:up first); the Redis adapter specs too
-                        when a Redis is up (docker compose --profile redis up -d, REDIS_URL in
-                        apps/api/.env, or REDIS_TEST_URL), skipped when no Redis URL is set, required in CI;
-                        the email outbox specs against Mailpit the same way (pnpm services:up,
-                        MAIL_SMTP_URL in apps/api/.env, or MAIL_TEST_SMTP_URL + MAILPIT_TEST_URL):
-                        they write to addresses of their own and delete only those
-pnpm test:e2e           browser suite (pnpm db:up and pnpm build first; browser once:
+pnpm test:integration   API against PostgreSQL (pnpm services:up first); the Redis adapter specs
+                        against the development Redis (REDIS_URL in apps/api/.env, or
+                        REDIS_TEST_URL), skipped when no Redis URL is set, required in CI;
+                        the email outbox specs against Mailpit the same way (MAIL_SMTP_URL in
+                        apps/api/.env, or MAIL_TEST_SMTP_URL + MAILPIT_TEST_URL): they write
+                        to addresses of their own and delete only those
+pnpm test:e2e           browser suite (pnpm services:up and pnpm build first; browser once:
                         pnpm exec playwright install chromium); the email flows (password
                         recovery and change, sign-up, change of email, invitations) against Mailpit the same way as the outbox specs,
                         skipped locally without one, required in CI

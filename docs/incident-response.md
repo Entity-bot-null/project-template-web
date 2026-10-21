@@ -123,7 +123,8 @@ database`; failing pg spans. The API keeps running (it even starts without a dat
   (down, failover, network), `too many clients already` (connection limit),
   `password authentication failed` (rotated credentials), an SSL error (TLS settings), `the
 database system is in recovery mode` (restart or failover). The provider's status, maintenance
-  and failover events; storage free space.
+  and failover events; storage free space. The VPS target's own database: `docker compose ... ps db`
+  and `logs db` on the server, and its free disk (`df -h /`).
 - **Signals:** `db_client_connection_count` by state, `db_client_connection_pending_requests`;
   the provider's CPU, connections, storage and replication metrics.
 - **Immediate actions:** a failover in progress: wait; the pool reconnects on its own. Connection
@@ -131,7 +132,9 @@ database system is in recovery mode` (restart or failover). The provider's statu
   (docs/database.md#connections); look for idle or stuck sessions in `pg_stat_activity` and end
   them (`pg_terminate_backend`). A migration holding a lock: cancel it ([10](#10-failed-database-migration)).
 - **Mitigation:** scale the database, free storage, restore the previous credentials or rotate
-  them everywhere at once. Data lost: [disaster-recovery.md](disaster-recovery.md).
+  them everywhere at once (on the VPS target's own database, PostgreSQL first:
+  [deploy-vps.md](deploy-vps.md#change-a-setting-or-a-secret)). Data lost:
+  [disaster-recovery.md](disaster-recovery.md).
 - **Roll back when:** a deployment changed `DATABASE_URL`, `DB_POOL_MAX` or ran a migration just
   before.
 - **Recovered when:** readiness 200 everywhere, no `database` errors for 15 minutes, no pending
@@ -156,11 +159,14 @@ per-instance counters`; `Cache unavailable, serving from the source`;
   sender. Redis holds nothing that must survive (docs/disaster-recovery.md#what-to-protect).
 - **First checks:** the reason in the line: `ECONNREFUSED` or a timeout (down, network), `WRONGPASS`
   or `NOAUTH` (credentials changed), `LOADING` (Redis restarting and loading its data, transient),
-  `OOM command not allowed` (memory full). The provider's status and memory metrics.
+  `OOM command not allowed` (memory full), `NOPERM` (a key or command outside the ACL). The
+  provider's status and memory metrics; on the VPS target, `docker compose ... ps redis` and
+  `logs redis` on the server.
 - **Signals:** node-redis command metrics (errors, duration), database latency (cache misses).
 - **Immediate actions:** none needed in the application: it reconnects by itself (backoff up to
   5 seconds). Watch database load and latency while the cache is out.
-- **Mitigation:** restart or fail over Redis; restore the credentials; memory full: every key the
+- **Mitigation:** restart or fail over Redis (on the VPS target,
+  `docker compose ... up -d --wait redis`); restore the credentials; memory full: every key the
   template writes has a TTL, so check the eviction policy and what else writes to that Redis.
 - **Roll back when:** a deployment changed `REDIS_URL` or the stores.
 - **Recovered when:** `Redis connection restored after <n>s` or `Redis answering again after <n>s`,

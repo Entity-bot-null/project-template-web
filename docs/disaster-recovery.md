@@ -1,22 +1,24 @@
 # Disaster recovery
 
 What the application can lose, how it comes back, and how to know that it can. The template ships
-the procedure, the checks and a rehearsal that runs on any machine; the backups themselves are made
+the procedure, the checks and a rehearsal that runs on any machine. The backups themselves are made
 by the platform the project chooses (**REQUIERE CONFIGURACIÓN**: managed PostgreSQL, a cloud
-provider, a self-hosted server). Nothing here assumes one.
+provider, a self-hosted server), with one exception: the reference server target, with its database
+on the server, ships a nightly backup kept on that server ([deploy-vps.md](deploy-vps.md#backups));
+copying it off the server is still the project's to set up. Nothing else here assumes a platform.
 
 ## What to protect
 
-| Asset                                                                             | Where it lives                                                                  | Backed up?                                                           | How it comes back                                                                                                                                     |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL: users, sessions, the product's data, `_prisma_migrations`             | the database server                                                             | **yes**: full backups and point-in-time recovery (PITR)              | [Restore procedure](#restore-procedure)                                                                                                               |
-| Redis: rate limit counters, cache, leases, idempotency claims                     | Redis (OPTIONAL)                                                                | no: every key is derived or short-lived, with a TTL                  | starts empty; the application treats a missing or empty Redis as normal (docs/architecture.md#degradation)                                            |
-| Container images (`api`, `api-migrate`, `web`)                                    | the registry                                                                    | the registry's retention (REQUIERE CONFIGURACIÓN)                    | redeploy by digest; keep every digest that ran in production for at least the last few releases: they are the rollback targets                        |
-| Code, migrations, workflows, docs                                                 | Git (GitHub)                                                                    | the hosting's redundancy; a mirror if the organization requires one  | the repository; release tags are immutable (`.github/rulesets/tags.json`)                                                                             |
-| Secrets (`JWT_ACCESS_SECRET`, database and Redis credentials, DSNs, OTLP headers) | the platform's secret store; on the VPS target, the `*.env` files of the server | the store's versioning; on the VPS target, only the server's backups | re-create; a new `JWT_ACCESS_SECRET` signs nobody out (docs/security.md#secret-rotation); on the VPS target, docs/deploy-vps.md#recover-a-lost-server |
-| Environment configuration (non-secret variables)                                  | the platform, or infrastructure code; on the VPS target, the same files         | with that code                                                       | re-apply (docs/environment.md lists every variable)                                                                                                   |
-| Logs, error reports, traces, metrics                                              | the observability backends                                                      | no (retention per data policy)                                       | not restored; export what an investigation needs before it expires                                                                                    |
-| Uploaded files (none in the template)                                             | object storage, when a project adds it                                          | with the same RPO as the database                                    | restored to the same point as the database, so rows and files agree                                                                                   |
+| Asset                                                                             | Where it lives                                                                                  | Backed up?                                                                                                     | How it comes back                                                                                                                                     |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL: users, sessions, the product's data, `_prisma_migrations`             | the database server; on the VPS target with the `db` profile, the server's volume `app_db_data` | **yes**: full backups and point-in-time recovery (PITR); on the VPS target's own database, a nightly `pg_dump` | [Restore procedure](#restore-procedure)                                                                                                               |
+| Redis: rate limit counters, cache, leases, idempotency claims                     | Redis (OPTIONAL); on the VPS target, on the server (`app_redis_data`)                           | no: every key is derived or short-lived, with a TTL                                                            | starts empty; the application treats a missing or empty Redis as normal (docs/architecture.md#degradation)                                            |
+| Container images (`api`, `api-migrate`, `web`)                                    | the registry                                                                                    | the registry's retention (REQUIERE CONFIGURACIÓN)                                                              | redeploy by digest; keep every digest that ran in production for at least the last few releases: they are the rollback targets                        |
+| Code, migrations, workflows, docs                                                 | Git (GitHub)                                                                                    | the hosting's redundancy; a mirror if the organization requires one                                            | the repository; release tags are immutable (`.github/rulesets/tags.json`)                                                                             |
+| Secrets (`JWT_ACCESS_SECRET`, database and Redis credentials, DSNs, OTLP headers) | the platform's secret store; on the VPS target, the `*.env` files of the server                 | the store's versioning; on the VPS target, only the server's backups                                           | re-create; a new `JWT_ACCESS_SECRET` signs nobody out (docs/security.md#secret-rotation); on the VPS target, docs/deploy-vps.md#recover-a-lost-server |
+| Environment configuration (non-secret variables)                                  | the platform, or infrastructure code; on the VPS target, the same files                         | with that code                                                                                                 | re-apply (docs/environment.md lists every variable)                                                                                                   |
+| Logs, error reports, traces, metrics                                              | the observability backends                                                                      | no (retention per data policy)                                                                                 | not restored; export what an investigation needs before it expires                                                                                    |
+| Uploaded files (none in the template)                                             | object storage, when a project adds it                                                          | with the same RPO as the database                                                                              | restored to the same point as the database, so rows and files agree                                                                                   |
 
 Losing Redis loses no data, with one consequence: idempotency claims and locks are gone, so a
 duplicate delivery inside the claim's TTL can run again. Work that must happen exactly once keeps
@@ -26,15 +28,15 @@ its key in the database (docs/architecture.md#locks-and-idempotency).
 
 **REQUIERE CONFIGURACIÓN**: what follows is the policy to configure on the chosen platform.
 
-| Concern                  | Production                                                                                                                                                               | Staging             | Development      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | ---------------- |
-| Type                     | Continuous archiving of the write-ahead log (PITR) **and** periodic full backups                                                                                         | daily full backup   | none (seed data) |
-| Frequency                | WAL shipped continuously (seconds to minutes behind); a full backup daily                                                                                                | daily               |                  |
-| Retention                | PITR window long enough to notice corruption late (starting point: 7 to 14 days); daily backups 30 days; monthly ones as long as the data policy requires, and no longer | 7 days              |                  |
-| Encryption               | at rest (the provider's keys or a key service) and in transit; keys stored apart from the backups                                                                        | same                |                  |
-| Protection from deletion | backups in another account or project, write-once (object lock) where available; deletion protection on the database; deleting the database must not delete its backups  | deletion protection |                  |
-| Location                 | a copy in another region (or provider) for a regional disaster                                                                                                           | same region         |                  |
-| Monitoring               | alert when PITR lags beyond the RPO or a backup fails ([alerting.md](alerting.md#critical-page-the-on-call-person))                                                      | alert on failure    |                  |
+| Concern                  | Production                                                                                                                                                               | Staging             | Development      | VPS target, its own database (shipped)                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | ---------------- | ----------------------------------------------------------------------------------------- |
+| Type                     | Continuous archiving of the write-ahead log (PITR) **and** periodic full backups                                                                                         | daily full backup   | none (seed data) | nightly `pg_dump` (logical, custom format); no PITR                                       |
+| Frequency                | WAL shipped continuously (seconds to minutes behind); a full backup daily                                                                                                | daily               |                  | daily at `BACKUP_AT` (03:00 UTC), and at start when the newest is over a day old          |
+| Retention                | PITR window long enough to notice corruption late (starting point: 7 to 14 days); daily backups 30 days; monthly ones as long as the data policy requires, and no longer | 7 days              |                  | `BACKUP_KEEP_DAYS` (7) on the server                                                      |
+| Encryption               | at rest (the provider's keys or a key service) and in transit; keys stored apart from the backups                                                                        | same                |                  | the server's disk; the copy off the server: REQUIERE CONFIGURACIÓN                        |
+| Protection from deletion | backups in another account or project, write-once (object lock) where available; deletion protection on the database; deleting the database must not delete its backups  | deletion protection |                  | none on the server: the copy off the server, write-once (REQUIERE CONFIGURACIÓN)          |
+| Location                 | a copy in another region (or provider) for a regional disaster                                                                                                           | same region         |                  | the server (`app_db_backups`); elsewhere: REQUIERE CONFIGURACIÓN                          |
+| Monitoring               | alert when PITR lags beyond the RPO or a backup fails ([alerting.md](alerting.md#critical-page-the-on-call-person))                                                      | alert on failure    |                  | the backup's health check: unhealthy past 26 hours; alerting on it REQUIERE CONFIGURACIÓN |
 
 **Full, incremental and PITR.** A full backup is a complete copy at one moment: physical (the
 data files: fast to restore, same PostgreSQL major version) or logical (`pg_dump`: portable,
@@ -42,6 +44,8 @@ slower for large databases, good for rehearsals and long-term archives). PITR re
 WAL on top of a full backup up to any second inside the window: it is what turns a daily backup
 into minutes of possible loss. Managed PostgreSQL services provide both; a self-hosted server needs
 a backup tool that does base backups and WAL archiving (pgBackRest, WAL-G or Barman, for example).
+The VPS target's own database ships the logical half only, a `pg_dump` a night: up to a day of data
+lost. For minutes, add one of those tools, or move to a managed PostgreSQL.
 
 **Credentials and least privilege.** Separate identities, none of them a superuser:
 
@@ -66,6 +70,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE O
 
 `CONNECTION LIMIT` caps what all API instances together may open (instances × `DB_POOL_MAX`,
 docs/database.md#connections). The application never holds backup or restore credentials.
+
+On the VPS target's own database, `db-init.sh` creates these identities at the first start:
+`app_migrator`, `app_runtime` and `app_backup` (`pg_read_all_data`, 2 connections), each with its
+password in the file of the one container that uses it. The backup store is the server's volume,
+which the server can also delete from: hence the copy off the server. Restore is the superuser,
+`postgres`, through the database container only ([deploy-vps.md](deploy-vps.md#on-this-server)).
 
 ## RPO and RTO
 
@@ -111,15 +121,16 @@ Run it from the incident record (docs/incident-response.md), writing down the ti
    down.
 3. **Restore into a new database**, never over the damaged one: it is the evidence, and it holds
    whatever was written after the recovery point. Managed service: point-in-time restore to a new
-   instance (REQUIERE CONFIGURACIÓN: the provider's procedure); it brings the roles and their
-   rights back with the data. Logical backup: a new database owned by the migrator
-   (`CREATE DATABASE <new database> OWNER app_migrator`, as the administrator), then, as the
-   migrator, `pg_restore --no-owner --exit-on-error -d <new database> <dump>`, then the runtime
-   role's rights again, connected as the migrator to the new database: the four `GRANT` and
+   instance (REQUIERE CONFIGURACIÓN: the provider's procedure); it brings the roles and their rights
+   back with the data. The VPS target's own database:
+   [The server's own database](#the-servers-own-database). Logical backup: a new database owned by
+   the migrator (`CREATE DATABASE <new database> OWNER app_migrator`, as the administrator), then,
+   as the migrator, `pg_restore --no-owner --exit-on-error -d <new database> <dump>`, then the
+   runtime role's rights again, connected as the migrator to the new database: the four `GRANT` and
    `ALTER DEFAULT PRIVILEGES` statements of [deploy-vps.md](deploy-vps.md#5-the-database) with the
    new database's name. Without them the API connects and its readiness answers ok (it reads no
-   table) while every request that does fails with `permission denied for table ...`: checked
-   with a restore made with `--no-privileges`, or from a dump taken with it. See the
+   table) while every request that does fails with `permission denied for table ...`: checked with a
+   restore made with `--no-privileges`, or from a dump taken with it. See the
    [rehearsal](#rehearsal-on-a-development-machine).
 4. **Validate integrity.**
    - The restore itself finished without errors (`--exit-on-error`, or the provider's status).
@@ -146,7 +157,9 @@ Run it from the incident record (docs/incident-response.md), writing down the ti
    - **Empty Redis of this application's keys** (everything under `REDIS_KEY_PREFIX`, all of it
      disposable): cache entries may hold data newer than the recovery point, and idempotency claims
      may cover work the restore undid. Use an operator account; the application's own ACL user
-     cannot list keys. In-process caches empty themselves when the instances restart.
+     cannot list keys (on the VPS target, remove Redis's volume instead:
+     [The server's own database](#the-servers-own-database)). In-process caches empty themselves
+     when the instances restart.
    - **End every session when the recovery point is in the past:** logouts, password changes and
      theft revocations made after it are undone by the restore, so old refresh tokens would work
      again.
@@ -168,6 +181,99 @@ Run it from the incident record (docs/incident-response.md), writing down the ti
     recover (actual RTO), every manual change, and a postmortem
     (docs/incident-response.md#after-the-incident). If the data policy requires it, re-apply
     deletions requested after the recovery point (a restore brings deleted personal data back).
+
+### The server's own database
+
+The procedure on the VPS target's own database (the `db` profile,
+[deploy-vps.md](deploy-vps.md#backups)), as the deploy user in `/srv/app` on the server. The
+administrator is the superuser `postgres`, through the database container (its own socket, no
+password). The database the restore replaces stays, renamed `app_replaced`, until the restore is
+confirmed. Each step names the step above it carries out. First, a shorthand for this shell:
+
+```
+dc() { docker compose --env-file server.env --env-file release.env "$@"; }
+```
+
+1. **The backup** (step 2): the newest one before the damage, from the backup volume, or a copy
+   brought back to the server (`scp app-latest.dump deploy@app.example.com:/srv/app/`).
+
+   ```
+   dc exec backup ls -lt /var/lib/postgresql/backups
+   ```
+
+2. **Restore it into a new database** owned by the migrator (step 3), as the migrator, so it owns
+   every table:
+
+   ```
+   dc exec -T db createdb -U postgres -O app_migrator app_restore
+   dc exec -T backup cat /var/lib/postgresql/backups/app-20261019T030000Z.dump |
+     dc exec -T db pg_restore -U postgres --role=app_migrator --no-owner --no-privileges --exit-on-error -d app_restore
+   ```
+
+   From a copy on the server's disk, the second command is:
+
+   ```
+   dc exec -T db pg_restore -U postgres --role=app_migrator --no-owner --no-privileges --exit-on-error -d app_restore < app-latest.dump
+   ```
+
+3. **The other roles' rights** in it, as `db-init.sh` gives them:
+
+   ```
+   dc exec -T db psql -U postgres -d app_restore -v ON_ERROR_STOP=1 <<'SQL'
+   GRANT CONNECT ON DATABASE app_restore TO app_runtime, app_backup;
+   SET ROLE app_migrator;
+   GRANT USAGE ON SCHEMA public TO app_runtime;
+   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+   SQL
+   ```
+
+4. **Counts and newest rows** (step 4):
+
+   ```
+   dc exec -T db psql -U postgres -d app_restore -c 'SELECT count(*) FROM users' -c 'SELECT max(created_at) FROM sessions'
+   ```
+
+5. **Swap it in**, with the API and the backup stopped (the API answers nothing meanwhile):
+
+   ```
+   dc stop api backup
+   dc exec -T db psql -U postgres -v ON_ERROR_STOP=1 -c 'ALTER DATABASE app RENAME TO app_replaced' -c 'ALTER DATABASE app_restore RENAME TO app'
+   ```
+
+6. **The schema** against the release (step 4), with the release's migration image:
+   `Database schema is up to date!`, then `No difference detected.`
+
+   ```
+   dc --profile migrate run --rm migrate node node_modules/prisma/build/index.js migrate status
+   dc --profile migrate run --rm migrate node node_modules/prisma/build/index.js migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+   ```
+
+7. **Redis emptied** (step 5): it holds this application's keys only, so its volume goes:
+
+   ```
+   dc rm --stop --force redis
+   docker volume rm app_redis_data
+   ```
+
+8. **Every session ended**, when the recovery point is in the past (step 5):
+
+   ```
+   dc exec -T db psql -U postgres -d app -v ON_ERROR_STOP=1 -c 'BEGIN; LOCK TABLE users IN EXCLUSIVE MODE; UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL; COMMIT;'
+   ```
+
+9. **Start again**: the API (Redis with it) and the web image, then the backup; then steps 6 to 10
+   above.
+
+   ```
+   dc up --detach --wait api web
+   dc up --detach backup
+   ```
+
+Once the restore is confirmed: `dc exec -T db dropdb -U postgres app_replaced`. Rehearsed on the
+reference server: data damaged after a backup and restored this way, from the backup volume and from
+a copy on disk; the restored tables owned by `app_migrator`, sign-in working as `app_runtime`, the
+next backup taken as `app_backup`.
 
 ## Restore testing
 

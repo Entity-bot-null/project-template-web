@@ -51,8 +51,10 @@ cuenta o de una decisión que nadie tenía cuando hizo falta.
 - [ ] **Dominios**: uno para producción (`app.acme.com`) y otro para staging (`staging.acme.com`).
       Necesitas acceso a los ajustes de DNS del dominio.
 - [ ] **Dónde se ejecuta.** Esta guía usa el destino listo para usar: **un servidor Linux por
-      entorno** con Docker y un PostgreSQL gestionado ([deploy-vps.md](deploy-vps.md)). Sirve para
-      un primer producto (una sola instancia de la API). Para Kubernetes o una plataforma de
+      entorno** con Docker, que ejecuta Redis y, por defecto, PostgreSQL con su backup nocturno; o
+      un PostgreSQL gestionado en su lugar. Decide cuál ahora
+      ([deploy-vps.md](deploy-vps.md#1-what-you-need) los compara). Sirve para un primer producto
+      (una sola instancia de la API). Para Kubernetes o una plataforma de
       contenedores, las fases 0–6 son iguales y la fase 7 la sustituye tu plataforma
       ([ci-cd.md](ci-cd.md#deployment)).
 - [ ] **Quién** aprueba los despliegues a producción (al menos una persona además del autor), quién
@@ -64,35 +66,37 @@ cuenta o de una decisión que nadie tenía cuando hizo falta.
 
 ### 0.2 Crea las cuentas
 
-| Cuenta                                                  | Para                                          | Notas                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub (mejor una organización que una cuenta personal) | código, CI, imágenes, despliegues             | Un repositorio **privado** necesita **GitHub Team** (organización) o **Pro** (personal): de ello dependen los entornos con revisores obligatorios y sus secretos, los rulesets y la protección de ramas. En el plan Free solo existen para repositorios públicos |
-| Un proveedor cloud o de VPS                             | los servidores (2 vCPU, 4 GB de RAM cada uno) | cualquier proveedor con Ubuntu 24.04 y una IPv4 pública                                                                                                                                                                                                          |
-| Un PostgreSQL gestionado                                | las bases de datos (16 o posterior)           | a menudo el mismo proveedor; backups automáticos y point-in-time recovery obligatorios                                                                                                                                                                           |
-| El DNS del dominio                                      | registros `A` hacia los servidores            | el registrador o un servicio de DNS                                                                                                                                                                                                                              |
-| Sentry (opcional)                                       | informes de errores de la API y del navegador | el plan gratuito basta para empezar                                                                                                                                                                                                                              |
-| Un monitor de uptime (opcional pero recomendado)        | una alerta cuando el sitio está caído         | cualquier servicio que compruebe una URL desde varios lugares                                                                                                                                                                                                    |
-| Un gestor de contraseñas                                | los secretos de esta guía                     | una bóveda compartida para el equipo                                                                                                                                                                                                                             |
+| Cuenta                                                            | Para                                                                                               | Notas                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub (mejor una organización que una cuenta personal)           | código, CI, imágenes, despliegues                                                                  | Un repositorio **privado** necesita **GitHub Team** (organización) o **Pro** (personal): de ello dependen los entornos con revisores obligatorios y sus secretos, los rulesets y la protección de ramas. En el plan Free solo existen para repositorios públicos |
+| Un proveedor cloud o de VPS                                       | los servidores (2 vCPU, 4 GB de RAM cada uno, disco para la base de datos y una semana de backups) | cualquier proveedor con Ubuntu 24.04 y una IPv4 pública                                                                                                                                                                                                          |
+| Un PostgreSQL gestionado (si lo elegiste)                         | las bases de datos (16 o posterior)                                                                | a menudo el mismo proveedor; backups automáticos y point-in-time recovery obligatorios                                                                                                                                                                           |
+| Almacenamiento para backups (con la base de datos en el servidor) | una copia del backup de cada noche, fuera del servidor                                             | otra cuenta; cifrado, de una sola escritura donde exista ([deploy-vps.md](deploy-vps.md#backups))                                                                                                                                                                |
+| El DNS del dominio                                                | registros `A` hacia los servidores                                                                 | el registrador o un servicio de DNS                                                                                                                                                                                                                              |
+| Sentry (opcional)                                                 | informes de errores de la API y del navegador                                                      | el plan gratuito basta para empezar                                                                                                                                                                                                                              |
+| Un monitor de uptime (opcional pero recomendado)                  | una alerta cuando el sitio está caído                                                              | cualquier servicio que compruebe una URL desde varios lugares                                                                                                                                                                                                    |
+| Un gestor de contraseñas                                          | los secretos de esta guía                                                                          | una bóveda compartida para el equipo                                                                                                                                                                                                                             |
 
 ### La hoja de trabajo
 
 Copia esto en tu gestor de contraseñas o en tus notas y rellénalo a medida que avanzas. Los secretos
 van solo en el gestor de contraseñas.
 
-| Dato                                                       | Valor                 | Fase |
-| ---------------------------------------------------------- | --------------------- | ---- |
-| Nombre del producto                                        |                       | 0    |
-| Propietario / repositorio de GitHub                        | `OWNER/REPO`          | 0    |
-| Dominio de producción / dominio de staging                 |                       | 0    |
-| IP del servidor de producción / IP del servidor de staging |                       | 7    |
-| Host de la base de datos (producción / staging)            |                       | 7    |
-| Contraseña de `app_migrator` (por entorno)                 | gestor de contraseñas | 7    |
-| Contraseña de `app_runtime` (por entorno)                  | gestor de contraseñas | 7    |
-| `JWT_ACCESS_SECRET` (por entorno, y uno para tu máquina)   | gestor de contraseñas | 3, 7 |
-| Clave SSH de despliegue (por entorno)                      | gestor de contraseñas | 7    |
-| `RELEASE_PLEASE_TOKEN` (opcional)                          | gestor de contraseñas | 5    |
-| DSNs de Sentry (API, web)                                  |                       | 9    |
-| Email del primer administrador                             |                       | 8    |
+| Dato                                                                               | Valor                                   | Fase |
+| ---------------------------------------------------------------------------------- | --------------------------------------- | ---- |
+| Nombre del producto                                                                |                                         | 0    |
+| Propietario / repositorio de GitHub                                                | `OWNER/REPO`                            | 0    |
+| Dominio de producción / dominio de staging                                         |                                         | 0    |
+| IP del servidor de producción / IP del servidor de staging                         |                                         | 7    |
+| Host de la base de datos gestionada (producción / staging)                         |                                         | 7    |
+| Contraseña de `app_migrator` (base de datos gestionada, por entorno)               | gestor de contraseñas                   | 7    |
+| Contraseña de `app_runtime` (base de datos gestionada, por entorno)                | gestor de contraseñas                   | 7    |
+| Contraseñas de la base de datos y de Redis del servidor                            | solo en el servidor (las genera el 7.6) | 7    |
+| `JWT_ACCESS_SECRET` de tu máquina (los de los servidores se generan en ellos, 7.6) | gestor de contraseñas                   | 3    |
+| Clave SSH de despliegue (por entorno)                                              | gestor de contraseñas                   | 7    |
+| `RELEASE_PLEASE_TOKEN` (opcional)                                                  | gestor de contraseñas                   | 5    |
+| DSNs de Sentry (API, web)                                                          |                                         | 9    |
+| Email del primer administrador                                                     |                                         | 8    |
 
 **Comprueba:** todas las cuentas de arriba existen y puedes iniciar sesión en cada una; las
 decisiones de 0.1 tienen respuesta.
@@ -231,16 +235,17 @@ falta nada más.
 está puesto, sin imprimirlo). `git status` **no** lista `apps/api/.env` (está ignorado: nunca hagas
 commit de él).
 
-### 3.3 Arranca la base de datos
+### 3.3 Arranca la base de datos y los servicios locales
 
 ```
-pnpm db:up
+pnpm services:up
 pnpm db:migrate
 pnpm db:seed
 ```
 
-**Comprueba:** `db:up` termina con `Container … Healthy`; `db:migrate` dice que se aplicaron las
-migraciones; `db:seed` imprime las dos cuentas de desarrollo:
+**Comprueba:** `services:up` termina con `Container … Healthy` para la base de datos, Redis y
+Mailpit; `db:migrate` dice que se aplicaron las migraciones; `db:seed` imprime las dos cuentas de
+desarrollo:
 
 ```
 admin   admin@example.com / admin-password
@@ -249,7 +254,8 @@ member  member@example.com / member-password
 
 **Si falla:** `port is already allocated` (el puerto 5442 está ocupado o, en Windows, reservado) →
 crea el `.env` de la raíz con `cp .env.example .env`, pon `DB_PORT=5443` en él, cambia el puerto de
-`DATABASE_URL` en `apps/api/.env` a `5443` y repite.
+`DATABASE_URL` en `apps/api/.env` a `5443` y repite. Lo mismo para Redis (6389: `REDIS_PORT`, y
+`REDIS_URL`) y Mailpit (1035 y 8035: `MAILPIT_SMTP_PORT`, `MAILPIT_UI_PORT`, y `MAIL_SMTP_URL`).
 
 ### 3.4 Arranca la app
 
@@ -259,18 +265,18 @@ pnpm dev
 
 **Comprueba**, en tu navegador:
 
-| Abre                                                                          | Deberías ver                                                                               |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| http://localhost:4321                                                         | la landing, el sitio público; sus enlaces de idioma cambian a español (`/es/`) y de vuelta |
-| **Iniciar sesión** en la landing                                              | la página de inicio de sesión, en http://localhost:4321/app/sign-in                        |
-| inicia sesión como `admin@example.com` / `admin-password`                     | la app, con la sesión iniciada como Admin                                                  |
-| cierra la sesión, inicia sesión como `member@example.com` / `member-password` | la app como Member, sin las pantallas de administración                                    |
-| http://localhost:3000/api/docs                                                | la documentación de la API (Swagger)                                                       |
-| http://127.0.0.1:3000/api/health/ready                                        | una respuesta JSON con `"status":"ok"`                                                     |
-| http://localhost:8035                                                         | Mailpit, adonde llegan los correos de la app                                               |
+| Abre                                                                          | Deberías ver                                                                                  |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| http://localhost:4321                                                         | la landing, el sitio público; sus enlaces de idioma cambian a español (`/es/`) y de vuelta    |
+| **Iniciar sesión** en la landing                                              | la página de inicio de sesión, en http://localhost:4321/app/sign-in                           |
+| inicia sesión como `admin@example.com` / `admin-password`                     | la app, con la sesión iniciada como Admin                                                     |
+| cierra la sesión, inicia sesión como `member@example.com` / `member-password` | la app como Member, sin las pantallas de administración                                       |
+| http://localhost:3000/api/docs                                                | la documentación de la API (Swagger)                                                          |
+| http://127.0.0.1:3000/api/health/ready                                        | una respuesta JSON con `"status":"ok"` (entre sus checks, `"database":"ok"` y `"redis":"ok"`) |
+| http://localhost:8035                                                         | Mailpit, adonde llegan los correos de la app                                                  |
 
 La terminal muestra la primera línea de la API:
-`Starting release unversioned in development: … error tracking off, Redis off, email on`, y un
+`Starting release unversioned in development: … error tracking off, Redis on, email on`, y un
 recuadro con estas direcciones bajo los logs. `pnpm --filter api mail test --to tu@example.test`
 encola un mensaje de prueba: aparece en Mailpit en unos segundos.
 
@@ -305,9 +311,8 @@ pnpm test:e2e
 ```
 
 **Comprueba:** los dos informan de que pasaron sus tests (`passed`, ningún `failed`); la ejecución
-de integración además lista como saltada la suite de los adaptadores de Redis, que se ejecuta donde
-`REDIS_TEST_URL` está definida (CI). Los tests end-to-end usan los puertos 3100, 4173 y 4321:
-para `pnpm dev` antes.
+de integración incluye la suite de los adaptadores de Redis, contra el Redis de 3.3. Los tests
+end-to-end usan los puertos 3100, 4173 y 4321: para `pnpm dev` antes.
 
 ### 4.3 Las comprobaciones con Docker
 
@@ -342,8 +347,8 @@ pnpm smoke --url http://localhost:8080
 
 **Comprueba:** el smoke test termina con `Smoke test passed (public URL only).`,
 http://localhost:8080 muestra la landing y http://localhost:8080/app/ la app. El stack usa la base
-de datos de desarrollo (el mismo servicio `db` y su volumen), así que las cuentas de 3.3 también
-inician sesión ahí.
+de datos y el Redis de desarrollo (los mismos servicios `db` y `redis` y sus volúmenes), así que las
+cuentas de 3.3 también inician sesión ahí.
 
 Páralo: `Ctrl+C`, y después `docker compose --profile stack down`.
 
@@ -477,8 +482,9 @@ request, CI, revisión, merge. Los primeros suelen ser:
    defecto): ajústalo a lo que se decidió en 0.1. El primer administrador, y todas las cuentas
    mientras el correo esté apagado, se crean con el comando `create-user`
    ([fase 8](#84-crea-el-primer-administrador)).
-4. **Servicios opcionales**, solo si hacen falta: Redis (más de una instancia de la API),
-   OpenTelemetry (trazas y métricas): [manual.es.md](manual.es.md#11-infraestructura-opcional).
+4. **Servicios opcionales**: Redis ya viene encendido, en local y en el servidor; OpenTelemetry
+   (trazas y métricas), solo si hace falta:
+   [manual.es.md](manual.es.md#11-infraestructura-opcional).
 
 **Comprueba, en cada cambio:** `pnpm verify` pasa en local y **CI passed** está en verde en su pull
 request.
@@ -494,8 +500,8 @@ Haz esta fase dos veces: una para **staging** y otra para **producción**. Los c
 `app.acme.com`; usa el dominio del entorno que estás configurando.
 
 Los pasos 7.1 a 7.5 construyen el servidor y la base de datos a mano, con cualquier proveedor. En
-DigitalOcean, Terraform puede construir los mismos: haz el 7.0, sáltate del 7.1 al 7.5 y sigue en
-el 7.6.
+DigitalOcean, Terraform puede construir el mismo servidor y una base de datos gestionada: haz el
+7.0, sáltate del 7.1 al 7.5 y sigue en el 7.6.
 
 ### 7.0 En DigitalOcean, del 7.1 al 7.5 con Terraform (opcional)
 
@@ -632,10 +638,14 @@ servidor y `ssh-keygen -lf known_hosts_production` en tu equipo: las huellas tie
 
 ### 7.5 Crea la base de datos
 
-En la consola de tu proveedor, un **PostgreSQL 16 o posterior** gestionado: en la misma región que
-el servidor, con **backups automáticos** y **point-in-time recovery** activados, **protección contra
-borrado** (deletion protection) activada, y acceso solo desde la IP del servidor (o una red
-privada). Apunta su nombre de host.
+**En el servidor** (por defecto): aquí no hay nada que hacer. El 7.6 deja `COMPOSE_PROFILES=db` en
+`server.env`, y el primer despliegue arranca PostgreSQL allí y crea la base de datos `app` y sus
+roles, con las contraseñas que genera el 7.6 ([deploy-vps.md](deploy-vps.md#on-this-server)).
+
+**Una base de datos gestionada:** en la consola de tu proveedor, un **PostgreSQL 16 o posterior**
+gestionado: en la misma región que el servidor, con **backups automáticos** y **point-in-time
+recovery** activados, **protección contra borrado** (deletion protection) activada, y acceso solo
+desde la IP del servidor (o una red privada). Apunta su nombre de host.
 
 Genera dos contraseñas (`openssl rand -hex 24`, dos veces) y guárdalas en el gestor de contraseñas.
 Después, conectado como el administrador del proveedor
@@ -672,39 +682,57 @@ Desde la carpeta del proyecto en tu equipo:
 scp deploy/vps/* deploy@app.acme.com:/srv/app/
 ```
 
-Más adelante, cuando una release cambie alguno de estos ficheros (Dependabot actualiza la imagen de
-Caddy en `deploy/vps`), el workflow Deploy se detiene en **Check the server's deploy files** hasta
-que los vuelvas a copiar ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
+Más adelante, cuando una release cambie alguno de estos ficheros (Dependabot actualiza las imágenes
+de Caddy, PostgreSQL y Redis en `deploy/vps`), el workflow Deploy se detiene en **Check the server's
+deploy files** hasta que los vuelvas a copiar
+([deploy-vps.md](deploy-vps.md#update-the-server-files)).
 
-En el servidor, como `deploy` (`ssh -i deploy_production deploy@app.acme.com`):
+En el servidor, como `deploy` (`ssh -i deploy_production deploy@app.acme.com`), cada fichero
+desde su ejemplo (con una base de datos gestionada, sáltate `db.env` y `backup.env`):
 
 ```
 cd /srv/app
-chmod 755 deploy.sh rollback.sh
+chmod 755 deploy.sh rollback.sh db-init.sh backup.sh
 cp server.env.example server.env
 cp api.env.example api.env
 cp migrate.env.example migrate.env
 cp web.env.example web.env
-chmod 600 api.env migrate.env
-openssl rand -hex 32
+cp redis.env.example redis.env
+cp db.env.example db.env
+cp backup.env.example backup.env
+chmod 600 *.env
+```
+
+Después, los secretos: se generan en el servidor y se escriben en cada fichero que los necesita, sin
+aparecer nunca en pantalla (con una base de datos gestionada, quita las líneas de `db.env` y
+`backup.env`):
+
+```
+migrator=$(openssl rand -hex 24) runtime=$(openssl rand -hex 24) backup=$(openssl rand -hex 24) redis=$(openssl rand -hex 24)
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|; s|^APP_MIGRATOR_PASSWORD=.*|APP_MIGRATOR_PASSWORD=$migrator|; s|^APP_RUNTIME_PASSWORD=.*|APP_RUNTIME_PASSWORD=$runtime|; s|^APP_BACKUP_PASSWORD=.*|APP_BACKUP_PASSWORD=$backup|" db.env
+sed -i "s|^PGPASSWORD=.*|PGPASSWORD=$backup|" backup.env
+sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$redis|" redis.env
+sed -i "s|<APP_RUNTIME_PASSWORD>|$runtime|; s|<REDIS_PASSWORD>|$redis|; s|^JWT_ACCESS_SECRET=.*|JWT_ACCESS_SECRET=$(openssl rand -hex 32)|" api.env
+sed -i "s|<APP_MIGRATOR_PASSWORD>|$migrator|" migrate.env
+unset migrator runtime backup redis
 ```
 
 Edita cada fichero (`nano <fichero>`, guarda con `Ctrl+O`, sal con `Ctrl+X`):
 
-| Fichero       | Define                                                                                                                                                                                                                                                      |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.env`  | `APP_DOMAIN=app.acme.com`                                                                                                                                                                                                                                   |
-| `api.env`     | `DATABASE_URL=postgresql://app_runtime:<contraseña de app_runtime>@<host de la base de datos>:5432/app?sslmode=require`, `JWT_ACCESS_SECRET=<el valor que imprimió openssl>`, `APP_ENVIRONMENT=production` (o `staging`), `APP_ORIGIN=https://app.acme.com` |
-| `migrate.env` | `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                                                                                                   |
-| `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                                                                  |
+| Fichero       | Define                                                                                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server.env`  | `APP_DOMAIN=app.acme.com`; deja `COMPOSE_PROFILES=db` (la base de datos en el servidor), o borra esa línea (una base de datos gestionada)                                                                                                        |
+| `api.env`     | `APP_ENVIRONMENT=production` (o `staging`), `APP_ORIGIN=https://app.acme.com`; con una base de datos gestionada, también `DATABASE_URL=postgresql://app_runtime:<contraseña de app_runtime>@<host de la base de datos>:5432/app?sslmode=require` |
+| `migrate.env` | nada, con la base de datos en el servidor; con una gestionada, `DATABASE_URL=postgresql://app_migrator:<contraseña de app_migrator>@<host de la base de datos>:5432/app?sslmode=require`                                                         |
+| `web.env`     | `APP_ENVIRONMENT=production` (o `staging`)                                                                                                                                                                                                       |
 
 Con Terraform (7.0), los dos valores de `DATABASE_URL` ya están completos: en
 `infra/terraform/digitalocean` en tu equipo, `terraform output -raw database_runtime_url`
 (`api.env`) y `terraform output -raw database_migrator_url` (`migrate.env`).
 
-En DigitalOcean o Amazon RDS, cuyos certificados vienen de la CA propia del proveedor, termina las
-dos URL con `?sslmode=require&uselibpqcompat=true` (las salidas de Terraform ya lo hacen): si no,
-la API rechaza el certificado (un error de certificado como
+Con una base de datos gestionada en DigitalOcean o Amazon RDS, cuyos certificados vienen de la CA
+propia del proveedor, termina las dos URL con `?sslmode=require&uselibpqcompat=true` (las salidas de
+Terraform ya lo hacen): si no, la API rechaza el certificado (un error de certificado como
 `self-signed certificate in certificate chain`,
 [deploy-vps.md](deploy-vps.md#6-the-files-on-the-server)).
 
@@ -720,8 +748,9 @@ tenga permitido enviar SMTP (DigitalOcean bloquea los puertos 25, 465 y 587 en m
 el puerto 2525 del proveedor (`smtp://<usuario>:<contraseña>@<host del proveedor>:2525`, STARTTLS) o
 pide al soporte de DigitalOcean que lo desbloquee.
 
-**Comprueba:** `ls -l /srv/app` muestra `api.env` y `migrate.env` como `-rw-------` (solo `deploy`
-puede leerlos), y `grep -c '<' *.env` imprime `0` para cada fichero (no queda ningún marcador).
+**Comprueba:** `ls -l /srv/app` muestra cada fichero `.env` como `-rw-------` (solo `deploy` puede
+leerlos), y `grep -nE '^[^#].*(<|example\.com)|^[A-Z_]+=$' *.env` no imprime nada (no queda ningún
+marcador, dominio de ejemplo ni valor vacío).
 
 ### 7.7 Dale a GitHub los datos del servidor
 
@@ -772,19 +801,20 @@ con un certificado válido (el candado).
 
 **Si falla:**
 
-| Paso que falla                                              | Causa y arreglo                                                                                                                                                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gates                                                       | lo mismo que un CI en rojo: abre el log del job que falla ([troubleshooting.md](troubleshooting.md))                                                                                              |
-| Publish: "The registry is ghcr.io"                          | `IMAGE_PREFIX` tiene que ser `ghcr.io/<owner>/<repo>` en minúsculas (7.7)                                                                                                                         |
-| Publish: "Scan the pushed image"                            | un aviso HIGH o CRITICAL con arreglo en la imagen publicada, como en el escaneo de imágenes de los gates: actualiza la imagen base o la dependencia ([security.md](security.md#container-images)) |
-| Environment settings                                        | falta una variable o un secreto del entorno (7.7)                                                                                                                                                 |
-| Deploy on the server: `Permission denied (publickey)`       | la clave pública no está en `/home/deploy/.ssh/authorized_keys`, o `DEPLOY_SSH_KEY` tiene la clave privada equivocada (7.4)                                                                       |
-| `Host key verification failed`                              | `DEPLOY_KNOWN_HOSTS` no coincide con el servidor (7.4)                                                                                                                                            |
-| Check the server's deploy files: "Server files out of date" | una release cambió un fichero de `deploy/vps`: vuelve a copiarlos ([deploy-vps.md](deploy-vps.md#update-the-server-files))                                                                        |
-| `server.env is missing`                                     | 7.6 no se hizo en ese servidor                                                                                                                                                                    |
-| The migration failed                                        | `migrate.env`: contraseña o host equivocados, o la base de datos no es accesible desde el servidor (7.5)                                                                                          |
-| The rollout failed                                          | el log del paso termina con las últimas líneas de log de los contenedores nuevos, y después la release anterior vuelve a arrancar; normalmente es `api.env` (`DATABASE_URL`, `JWT_ACCESS_SECRET`) |
-| Smoke test, errores de certificado                          | el DNS todavía no apunta al servidor, o los puertos 80/443 están cerrados (7.2, 7.3)                                                                                                              |
+| Paso que falla                                                  | Causa y arreglo                                                                                                                                                                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gates                                                           | lo mismo que un CI en rojo: abre el log del job que falla ([troubleshooting.md](troubleshooting.md))                                                                                                                                  |
+| Publish: "The registry is ghcr.io"                              | `IMAGE_PREFIX` tiene que ser `ghcr.io/<owner>/<repo>` en minúsculas (7.7)                                                                                                                                                             |
+| Publish: "Scan the pushed image"                                | un aviso HIGH o CRITICAL con arreglo en la imagen publicada, como en el escaneo de imágenes de los gates: actualiza la imagen base o la dependencia ([security.md](security.md#container-images))                                     |
+| Environment settings                                            | falta una variable o un secreto del entorno (7.7)                                                                                                                                                                                     |
+| Deploy on the server: `Permission denied (publickey)`           | la clave pública no está en `/home/deploy/.ssh/authorized_keys`, o `DEPLOY_SSH_KEY` tiene la clave privada equivocada (7.4)                                                                                                           |
+| `Host key verification failed`                                  | `DEPLOY_KNOWN_HOSTS` no coincide con el servidor (7.4)                                                                                                                                                                                |
+| Check the server's deploy files: "Server files out of date"     | una release cambió un fichero de `deploy/vps`: vuelve a copiarlos ([deploy-vps.md](deploy-vps.md#update-the-server-files))                                                                                                            |
+| `server.env is missing` (o `redis.env`, `db.env`, `backup.env`) | el 7.6 no se hizo, o no entero, en ese servidor                                                                                                                                                                                       |
+| `the data services did not start`                               | PostgreSQL o Redis no arrancaron: sus logs en el servidor (`docker logs app-db-1`, `docker logs app-redis-1`) dicen la causa, normalmente una contraseña del 7.6 ([troubleshooting.md](troubleshooting.md#deployment-and-operations)) |
+| The migration failed                                            | `migrate.env`: contraseña o host equivocados, o la base de datos no es accesible desde el servidor (7.5)                                                                                                                              |
+| The rollout failed                                              | el log del paso termina con las últimas líneas de log de los contenedores nuevos, y después la release anterior vuelve a arrancar; normalmente es `api.env` (`DATABASE_URL`, `JWT_ACCESS_SECRET`)                                     |
+| Smoke test, errores de certificado                              | el DNS todavía no apunta al servidor, o los puertos 80/443 están cerrados (7.2, 7.3)                                                                                                                                                  |
 
 ### 8.2 Míralo
 
@@ -913,9 +943,13 @@ servidor, o para buscar en ellos, envíalos a un servicio de logs
 Recorre [production-readiness.md](production-readiness.md) con el equipo y marca cada línea con su
 evidencia. Las que esta guía todavía no ha cubierto:
 
-1. **Un simulacro de restore** de la base de datos: restaura el último backup en una instancia nueva
-   con la herramienta de tu proveedor y comprueba los datos
-   ([disaster-recovery.md](disaster-recovery.md#checklist)). Apunta cuánto tardó.
+1. **Un simulacro de restore** de la base de datos. En el servidor: el último backup nocturno en una
+   base de datos nueva allí, pasos 1 a 4 de
+   [disaster-recovery.md](disaster-recovery.md#the-servers-own-database), y después bórrala; y la
+   copia de los backups fuera del servidor funcionando ([deploy-vps.md](deploy-vps.md#backups)). Una
+   base de datos gestionada: el último backup en una instancia nueva con la herramienta de tu
+   proveedor. Comprueba los datos ([checklist](disaster-recovery.md#checklist)) y apunta cuánto
+   tardó.
 2. **Alertas y SLOs** acordados ([alerting.md](alerting.md)).
 3. **La tabla de contactos** de [incident-response.md](incident-response.md), rellena.
 4. **Legal**: política de privacidad, términos, aviso de cookies, según exija tu mercado.
@@ -954,6 +988,7 @@ corrige hacia delante con un pull request nuevo ([deploy-vps.md](deploy-vps.md#r
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cada semana                              | Aprueba los pull requests de actualización de Dependabot: los patch y minor se mergean solos cuando el CI está en verde; las majors y las de workflows las mergeas a mano.                                                                                                                                |
 | Cada semana                              | Lee los resultados del DAST (el workflow **DAST** se ejecuta los lunes).                                                                                                                                                                                                                                  |
+| Cada semana                              | Con la base de datos en el servidor: `backup` sano (`docker compose ... ps`) y el último backup copiado fuera del servidor ([deploy-vps.md](deploy-vps.md#backups)).                                                                                                                                      |
 | Cada mes                                 | En cada servidor: `docker image prune`, y `docker image rm` de las imágenes de release que no nombran `release.env` ni `release.previous.env` (docs/deploy-vps.md#keep-the-server-healthy); reinícialo si existe `/var/run/reboot-required`.                                                              |
 | Cada trimestre                           | Un simulacro de restore de la base de datos; revisa las alertas; comprueba la caducidad de `RELEASE_PLEASE_TOKEN`, si lo configuraste; lo que Dependabot nunca propone: una major LTS de Node.js (cada octubre), pnpm, las majors de PostgreSQL y Redis ([ci-cd.md](ci-cd.md#keeping-the-stack-current)). |
 | Cuando un secreto puede haberse filtrado | Rótalo de inmediato ([security.md](security.md#secret-rotation)).                                                                                                                                                                                                                                         |

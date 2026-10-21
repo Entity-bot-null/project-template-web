@@ -3,8 +3,9 @@
 # (docs/deploy-vps.md#roll-back). Its images are still on the server: no
 # registry access needed. Database migrations are never reversed: the previous
 # release runs on the current schema (expand and contract, docs/database.md).
-# Like deploy.sh, it waits until the API is ready, and stops at once while a
-# deployment or another rollback is running.
+# Like deploy.sh, it starts the data services first (or leaves them running),
+# waits until the API is ready, and stops at once while a deployment or
+# another rollback is running.
 #
 #   ./rollback.sh
 set -eu
@@ -27,6 +28,21 @@ compose() {
   docker compose --env-file server.env --env-file release.previous.env "$@"
 }
 
+# The data services, as deploy.sh leaves them: Redis, and PostgreSQL with its
+# nightly backup when this server runs the database. Running ones stay as
+# they are; a stopped one starts before the release that needs it.
+start_data() {
+  if compose config --services | grep -qx db; then
+    compose up --detach --wait --wait-timeout 180 redis db && compose up --detach backup
+  else
+    compose up --detach --wait --wait-timeout 180 redis
+  fi
+}
+
+if ! start_data; then
+  echo "rollback: the data services did not start: docker compose ps, and their logs" >&2
+  exit 1
+fi
 compose up --detach --wait --wait-timeout 180 api web proxy
 cp release.env release.failed.env 2>/dev/null || true
 cp release.previous.env release.env

@@ -5,12 +5,12 @@ import type { RedisOptions } from '../src/infrastructure/redis/redis.types.js';
 
 // Redis for the specs of the Redis-backed adapters (*.int.spec.ts in
 // src/infrastructure). REDIS_TEST_URL (CI starts a throwaway Redis), else
-// REDIS_URL from the local .env (docker compose --profile redis up -d). Every
-// run writes under its own key prefix, so a development Redis is safe to use:
-// the specs never touch other keys.
+// REDIS_URL from the local .env (the development Redis `pnpm services:up`
+// starts). Every run writes under its own key prefix, so a development Redis
+// is safe to use: the specs never touch other keys.
 //
-// No Redis: the specs are skipped locally (Redis is optional), but fail in CI,
-// where skipping would hide a broken adapter.
+// No Redis URL: the specs are skipped locally (the application runs without
+// Redis), but fail in CI, where skipping would hide a broken adapter.
 
 function configuredUrl(): string | undefined {
   if (process.env.REDIS_TEST_URL !== undefined) return process.env.REDIS_TEST_URL;
@@ -30,7 +30,7 @@ export const UNREACHABLE_REDIS_URL = 'redis://127.0.0.1:1';
 export function redisTestOptions(overrides: Partial<RedisOptions> = {}): RedisOptions {
   if (redisTestUrl === undefined) {
     throw new Error(
-      'No Redis for the integration specs: set REDIS_TEST_URL, or REDIS_URL in apps/api/.env (docker compose --profile redis up -d).',
+      'No Redis for the integration specs: set REDIS_TEST_URL, or REDIS_URL in apps/api/.env (pnpm services:up starts the development Redis).',
     );
   }
   return {
