@@ -14,7 +14,7 @@ const claimed: ClaimedMessage = {
   userId: null,
   payload: {},
   attempts: 2,
-  attemptsBase: 0,
+  claimId: '7c1e5a0b-3d2f-4b6a-9e8c-1f0d2a3b4c5d',
   expiresAt: new Date('2026-10-13T12:00:00Z'),
   createdAt: new Date('2026-10-13T11:00:00Z'),
   requestId: null,
@@ -55,6 +55,9 @@ describe('MailStore', () => {
     expect(statement).toContain('FOR UPDATE SKIP LOCKED');
     expect(statement).toContain('LIMIT 1');
     expect(statement).toContain('"attempts" = "attempts" + 1');
+    // A new id for each claim: it fences what this worker records.
+    expect(statement).toContain('"claim_id" = gen_random_uuid()');
+    expect(statement).toContain('"claim_id" AS "claimId"');
     expect(statement).toContain(`("status" = 'sending' AND "locked_until" < now())`);
     expect(lease).toBe(90);
     // Security notices (the kinds nobody can request) are claimed first.
@@ -74,7 +77,7 @@ describe('MailStore', () => {
     await expect(store.claim()).resolves.toBeUndefined();
   });
 
-  it('fences every outcome by the claim: only the same attempt, still sending, can finish it', async () => {
+  it('fences every outcome by the claim: only the same attempt and claim id, still sending, can finish it', async () => {
     vi.useFakeTimers({ now: new Date('2026-10-13T11:30:00Z') });
     const { prisma, store } = storeWith();
     await store.markSent(claimed);
@@ -86,7 +89,12 @@ describe('MailStore', () => {
       data: Record<string, unknown>;
     }[][];
     for (const [call] of calls) {
-      expect(call?.where).toEqual({ id: 'm1', status: 'sending', attempts: 2 });
+      expect(call?.where).toEqual({
+        id: 'm1',
+        status: 'sending',
+        attempts: 2,
+        claimId: claimed.claimId,
+      });
     }
     const [sent, rescheduled, failed, expired] = calls.map(([call]) => call?.data);
     expect(sent).toMatchObject({ status: 'sent', recipient: null, lockedUntil: null });
@@ -105,16 +113,19 @@ describe('MailStore', () => {
     const executeRaw = vi.fn(() => Promise.resolve(1));
     const { store } = storeWith({ $executeRaw: executeRaw });
     await expect(store.renewLease(claimed, 90_000)).resolves.toBe(true);
-    const [sql, lease, id, attempts] = executeRaw.mock.calls[0] as unknown as [
+    const [sql, lease, id, attempts, claimId] = executeRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       number,
       string,
       number,
+      string,
     ];
     const statement = sql.join('?');
     expect(statement).toContain('"locked_until" = now() + make_interval');
-    expect(statement).toContain(`"status" = 'sending' AND "attempts" = ?`);
-    expect([lease, id, attempts]).toEqual([90, 'm1', 2]);
+    expect(statement).toMatch(
+      /"status" = 'sending' AND "attempts" = \?\s+AND "claim_id" = \?::uuid/,
+    );
+    expect([lease, id, attempts, claimId]).toEqual([90, 'm1', 2, claimed.claimId]);
     // Taken over by another worker meanwhile: no longer this one's.
     executeRaw.mockResolvedValueOnce(0);
     await expect(store.renewLease(claimed)).resolves.toBe(false);
@@ -130,32 +141,49 @@ describe('MailStore', () => {
   it('tells what became of a message whose claim refused a transition', async () => {
     const findUnique = vi.fn();
     const { store } = storeWith({ mailMessage: { findUnique } });
-    const claim = { id: 'm1', attempts: 2 };
+    const claimId = claimed.claimId;
+    const claim = { id: 'm1', attempts: 2, claimId };
     // Dropped under this claim by an undo that left it to this worker.
     findUnique.mockResolvedValueOnce({
       status: 'expired',
       attempts: 2,
+      claimId,
       lastError: 'superseded:held',
     });
     await expect(store.fateOf(claim)).resolves.toBe('dropped');
     // Dropped under it, counted by the undo (its lease had run out).
-    findUnique.mockResolvedValueOnce({ status: 'expired', attempts: 2, lastError: 'superseded' });
+    findUnique.mockResolvedValueOnce({
+      status: 'expired',
+      attempts: 2,
+      claimId,
+      lastError: 'superseded',
+    });
     await expect(store.fateOf(claim)).resolves.toBe('counted');
     // A later attempt: another worker's claim, whatever became of it.
     findUnique.mockResolvedValueOnce({
       status: 'expired',
       attempts: 3,
+      claimId,
       lastError: 'superseded:held',
     });
     await expect(store.fateOf(claim)).resolves.toBe('taken-over');
-    findUnique.mockResolvedValueOnce({ status: 'sending', attempts: 3, lastError: null });
+    findUnique.mockResolvedValueOnce({ status: 'sending', attempts: 3, claimId, lastError: null });
+    await expect(store.fateOf(claim)).resolves.toBe('taken-over');
+    // The same attempt number under another claim: a retry by hand started
+    // the attempts again since.
+    findUnique.mockResolvedValueOnce({
+      status: 'expired',
+      attempts: 2,
+      claimId: '0b9f8e7d-6c5b-4a39-8281-7f6e5d4c3b2a',
+      lastError: 'superseded:held',
+    });
     await expect(store.fateOf(claim)).resolves.toBe('taken-over');
     // Deleted with its account.
     findUnique.mockResolvedValueOnce(null);
     await expect(store.fateOf(claim)).resolves.toBe('gone');
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: 'm1' },
-      select: { status: true, attempts: true, lastError: true },
+      select: { status: true, attempts: true, claimId: true, lastError: true },
     });
   });
 
@@ -223,9 +251,9 @@ describe('MailStore', () => {
     const calls = $executeRaw.mock.calls as unknown as [TemplateStringsArray, ...unknown[]][];
     const [sql, ...values] = calls.find((call) => call.includes('password_reset')) ?? [];
     const statement = sql?.join('?') ?? '';
-    // Attempts count from here; `attempts` itself (the claim's fence) stays.
-    expect(statement).toContain(`"attempts_base" = "message"."attempts"`);
-    expect(statement).not.toMatch(/"attempts" = 0/);
+    // The attempts start again, as in the previous release, whose workers
+    // count them: the claim id, not the attempt alone, fences each claim.
+    expect(statement).toContain(`SET "status" = 'pending', "attempts" = 0,`);
     expect(statement).toContain(`"status" = 'failed' AND "recipient" IS NOT NULL`);
     // Locked in id order, like expireQueued.
     expect(statement).toContain('ORDER BY "id"');

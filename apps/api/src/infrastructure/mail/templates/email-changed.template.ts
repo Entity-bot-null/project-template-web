@@ -59,9 +59,10 @@ export const emailChangedTemplate: MailTemplate = {
     await lockUser(tx, user.id);
     const row = await tx.mailMessage.findUnique({
       where: { id: message.id },
-      select: { status: true, attempts: true },
+      select: { status: true, attempts: true, claimId: true },
     });
-    if (row?.status !== 'sending' || row.attempts !== message.attempts) return null;
+    const claimed = row?.attempts === message.attempts && row.claimId === message.claimId;
+    if (row?.status !== 'sending' || !claimed) return null;
     // The previous release's undo drops no notice: an undo link of this change
     // or an earlier one used after this notice was queued means the change is
     // undone already (used links are kept USED_ACCOUNT_TOKEN_RETENTION_MS).

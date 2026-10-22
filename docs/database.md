@@ -94,34 +94,42 @@ ALTER TABLE "users" DROP COLUMN "name";
 
 `scripts/check-migrations.mjs` refuses a contract step without that reason; it runs in
 `pnpm test:scripts` (so in CI) and on the migrations staged at each commit. Contract steps:
-dropping a table, column, type or view; renaming a table, column, type or enum value; changing a
-column's type; making a column required, adding a required column without a default, or removing a
-default; emptying a table. In the migrations from `TIGHTENING_FROM` on (the ones before it shipped
-before these rules, and a committed migration is never edited), also: a unique index or a
-constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, in the table or in a
-column's definition) added to a table an earlier migration created (the previous release may write
-what it refuses, and existing rows can make it fail), unless it is a unique index, a `UNIQUE` or a
-foreign key that only covers columns the same migration added empty: nullable, with no default
-(nor one given later with `SET DEFAULT`, nor a domain type that has one, in this migration or an
-earlier one), no generated or identity value, not added with `IF NOT EXISTS` (the column may be
-there already), and no `UPDATE`, `INSERT`, `MERGE` or `COPY ... FROM` of that table in the
-migration, one inside a `WITH` query, an `EXPLAIN`, a `PREPARE` or a rule included; a foreign key
-must also give way to the rows it references (`ON DELETE` and `ON UPDATE` `SET NULL`, `SET DEFAULT`
-or `CASCADE`: Prisma's optional relation), or the previous release's deletes of them are refused (a
-new optional relation; `NULLS NOT DISTINCT`, a `CHECK` and a primary key never count: their NULLs
-collide, a `CHECK` may read other columns, a primary key refuses NULLs); a dropped unique index (every name of a `DROP INDEX`), unique
-constraint or primary key; a table moved to another schema; a `DELETE` without `WHERE`; and an
-enum value added without `IF NOT EXISTS` (see below). Comments and strings anywhere in a
-statement do not hide a step. Prisma writes `ADD VALUE` without it, and
-`pnpm db:migrate` applies what it creates: create such a migration with
+
+- dropping a table, column, type or view; renaming a table, column, type or enum value; changing
+  a column's type; making a column required, adding a required column without a default, or
+  removing a default; emptying a table;
+- in the migrations from `TIGHTENING_FROM` on (the ones before it shipped before these rules, and
+  a committed migration is never edited), also:
+  - a unique index or a constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, in
+    the table or in a column's definition) added to a table an earlier migration created: the
+    previous release may write what it refuses, and existing rows can make it fail. Exempt: a
+    unique index, a `UNIQUE` or a foreign key that only covers columns the same migration added
+    empty (a new optional relation): nullable, with no default (nor one given later with
+    `SET DEFAULT`), not typed with a domain (its default is the domain's, now or later), no
+    generated or identity value, not added with `IF NOT EXISTS` (the column may be there already),
+    and no `UPDATE`, `INSERT`, `MERGE` or `COPY ... FROM` of that table in the migration, one inside
+    a `WITH` query, a `COPY (...) TO`, an `EXPLAIN`, a `PREPARE` or a rule included. Never exempt:
+    `NULLS NOT DISTINCT` (the NULLs collide), a `CHECK` (it may read other columns) and a primary
+    key (it refuses NULLs);
+  - a foreign key, in any table (new ones included), to a table an earlier migration created that
+    does not give way to it (`ON DELETE` and `ON UPDATE` `SET NULL`, `SET DEFAULT` or `CASCADE`):
+    the previous release's deletes of the rows it references would be refused. Prisma writes
+    `ON DELETE RESTRICT` for a required relation: give it `onDelete: Cascade` (or make it optional,
+    `SET NULL`), or write why the previous release never deletes those rows;
+  - a dropped unique index (every name of a `DROP INDEX`), unique constraint or primary key; a
+    table moved to another schema; a `DELETE` without `WHERE`; an enum value added without
+    `IF NOT EXISTS` (see below).
+
+Comments and strings anywhere in a statement do not hide a step. Prisma writes `ADD VALUE` without
+`IF NOT EXISTS`, and `pnpm db:migrate` applies what it creates: create such a migration with
 `pnpm db:migrate --name <name> --create-only`, write `ADD VALUE IF NOT EXISTS` in its SQL, then run
 `pnpm db:migrate` to apply it (editing a migration already applied to your database makes
 `migrate dev` ask to reset it). A Prisma change that removes an enum value writes several of
 them (retype the column, rename the types, drop the old one), each with its reason. Expand steps
 (new tables and what they get in the same migration, nullable columns, columns with a default,
-indexes, looser constraints) need nothing. The check reads plain statements, not SQL inside a `DO`
-block, a function or procedure body (a `CALL`, a `SELECT` of a function, a trigger) or a dynamic
-statement.
+indexes, looser constraints) need nothing, except a foreign key that does not give way to an
+existing table. The check reads plain statements, not SQL inside a `DO` block, a function or
+procedure body (a `CALL`, a `SELECT` of a function, a trigger) or a dynamic statement.
 
 ### Safe migrations
 

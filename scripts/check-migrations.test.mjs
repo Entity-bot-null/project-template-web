@@ -10,8 +10,9 @@ import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   checkMigrations,
+  checkStaged,
   contractSteps,
-  domainDefaults,
+  domainsOf,
   splitStatements,
   TIGHTENING_FROM,
 } from './check-migrations.mjs';
@@ -20,6 +21,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** The kinds of the contract steps of a migration, in order. */
 const kinds = (/** @type {string} */ sql) => contractSteps(sql).map((step) => step.kind);
+const UNYIELDING = 'adds a foreign key that does not give way to an existing table';
 
 describe('splitStatements', () => {
   test('splits on semicolons outside comments, strings, identifiers and dollar quotes', () => {
@@ -120,7 +122,7 @@ DROP INDEX "sessions_expires_at_idx";
 CREATE TABLE "teams" ("id" UUID NOT NULL, "name" TEXT NOT NULL);
 CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
 ALTER TABLE "teams" ADD CONSTRAINT "teams_name_check" CHECK ("name" <> '');
-ALTER TABLE "public"."teams" ADD CONSTRAINT "teams_owner_fkey" FOREIGN KEY ("id") REFERENCES "users"("id");
+ALTER TABLE "public"."teams" ADD CONSTRAINT "teams_owner_fkey" FOREIGN KEY ("id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 DELETE FROM "sessions" WHERE "expires_at" < now();
 CREATE INDEX CONCURRENTLY "notes_title_idx" ON "notes"("title");
 UPDATE "users" SET "nickname" = 'drop column' WHERE "nickname" IS NULL;
@@ -255,11 +257,15 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     );
   });
 
+  // A new optional relation, written in the column's definition.
+  const OPTIONAL_TEAM =
+    'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;';
+
   test("flags a constraint in a column's definition unless the column holds nothing yet, as UNIQUE or a foreign key", () => {
     for (const sql of [
       // A backfill fills the new column.
       `ALTER TABLE "users" ADD COLUMN "code" TEXT UNIQUE;\nUPDATE "users" SET "code" = lower("email");`,
-      'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id");\nUPDATE "users" SET "team_id" = gen_random_uuid();',
+      `${OPTIONAL_TEAM}\nUPDATE "users" SET "team_id" = gen_random_uuid();`,
       // Its NULLs collide.
       'ALTER TABLE "users" ADD COLUMN "code" TEXT UNIQUE NULLS NOT DISTINCT;',
       // A CHECK may read other columns, whatever it names.
@@ -271,9 +277,11 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     ]) {
       assert.deepEqual(kinds(sql), ['adds a constraint to an existing table'], sql);
     }
+    // The same foreign key without the backfill: nothing to refuse.
+    assert.deepEqual(kinds(OPTIONAL_TEAM), []);
   });
 
-  test('counts a new column filled by a default given later, or by a write inside WITH', () => {
+  test('counts a new column filled by a default given later, or by a write inside WITH or a COPY of a query', () => {
     const unique = 'CREATE UNIQUE INDEX "users_code_key" ON "users"("code");';
     for (const sql of [
       `ALTER TABLE "users" ADD COLUMN "code" TEXT;\nALTER TABLE "users" ALTER COLUMN "code" SET DEFAULT 'x';\n${unique}`,
@@ -283,6 +291,13 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     ]) {
       assert.deepEqual(kinds(sql), ['adds a unique index to an existing table'], sql);
     }
+    // A COPY of a query that writes.
+    assert.deepEqual(
+      kinds(
+        `ALTER TABLE "users" ADD COLUMN "code" TEXT;\nCOPY (UPDATE "users" SET "code" = "email" RETURNING 1) TO STDOUT;\n${unique}`,
+      ),
+      ['adds a unique index to an existing table'],
+    );
     // A default of NULL, and COPY ... TO, fill nothing.
     assert.deepEqual(
       kinds(
@@ -303,27 +318,29 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     }
   });
 
+  // RESTRICT, NO ACTION, or no action said (NO ACTION): the previous
+  // release's deletes of rows the new release references are refused.
+  const UNYIELDING_ACTIONS = [
+    'ON DELETE RESTRICT ON UPDATE CASCADE',
+    'ON DELETE NO ACTION ON UPDATE CASCADE',
+    'ON DELETE SET NULL',
+    '',
+  ];
+
   test('exempts a foreign key on a new column only when it gives way to the referenced rows', () => {
-    // RESTRICT, NO ACTION, or no action said (NO ACTION): the previous
-    // release's deletes of rows the new release references are refused.
-    for (const actions of [
-      'ON DELETE RESTRICT ON UPDATE CASCADE',
-      'ON DELETE NO ACTION ON UPDATE CASCADE',
-      'ON DELETE SET NULL',
-      '',
-    ]) {
+    for (const actions of UNYIELDING_ACTIONS) {
       assert.deepEqual(
         kinds(
           `ALTER TABLE "users" ADD COLUMN "avatar_id" UUID;\nALTER TABLE "users" ADD CONSTRAINT "users_avatar_id_fkey" FOREIGN KEY ("avatar_id") REFERENCES "files"("id") ${actions};`,
         ),
-        ['adds a constraint to an existing table'],
+        [UNYIELDING],
         actions,
       );
       assert.deepEqual(
         kinds(
           `ALTER TABLE "users" ADD COLUMN "avatar_id" UUID REFERENCES "files"("id") ${actions};`,
         ),
-        ['adds a constraint to an existing table'],
+        [UNYIELDING],
         actions,
       );
     }
@@ -336,15 +353,90 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     );
   });
 
-  test('counts a column as holding data when IF NOT EXISTS may find it, or a domain with a default types it', () => {
+  test('judges a foreign key by the table it references too: new tables included', () => {
+    // A new table (Prisma's CREATE TABLE, then its keys) with a required
+    // relation to an existing one: that one's deletes are refused.
+    for (const actions of UNYIELDING_ACTIONS) {
+      assert.deepEqual(
+        kinds(
+          `CREATE TABLE "posts" ("id" UUID NOT NULL, "author_id" UUID NOT NULL, CONSTRAINT "posts_pkey" PRIMARY KEY ("id"));\nALTER TABLE "posts" ADD CONSTRAINT "posts_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "users"("id") ${actions};`,
+        ),
+        [UNYIELDING],
+        actions,
+      );
+      // Declared in the new table itself, in a column or as a constraint.
+      assert.deepEqual(
+        kinds(
+          `CREATE TABLE posts (id uuid PRIMARY KEY, author_id uuid NOT NULL REFERENCES public.users (id) ${actions}, editor_id uuid, CONSTRAINT posts_editor_fkey FOREIGN KEY (editor_id) REFERENCES "users" ("id") ${actions});`,
+        ),
+        [UNYIELDING, UNYIELDING],
+        actions,
+      );
+      // A column added to a new table.
+      assert.deepEqual(
+        kinds(
+          `CREATE TABLE "posts" ("id" UUID NOT NULL);\nALTER TABLE "posts" ADD COLUMN "author_id" UUID REFERENCES "users"("id") ${actions};`,
+        ),
+        [UNYIELDING],
+        actions,
+      );
+      // A table this migration created, or the new table itself: the previous
+      // release never deletes from it.
+      assert.deepEqual(
+        kinds(
+          `CREATE TABLE "teams" ("id" UUID NOT NULL);\nALTER TABLE "users" ADD COLUMN "team_id" UUID;\nALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ${actions};`,
+        ),
+        [],
+        actions,
+      );
+      assert.deepEqual(
+        kinds(
+          `CREATE TABLE "teams" ("id" UUID NOT NULL);\nCREATE TABLE "members" ("team_id" UUID REFERENCES "teams" ${actions}, "mentor_id" UUID REFERENCES "members" ${actions});`,
+        ),
+        [],
+        actions,
+      );
+    }
+    // Giving way on both, as Prisma writes an optional relation or onDelete: Cascade.
+    assert.deepEqual(
+      kinds(
+        'CREATE TABLE "posts" ("id" UUID NOT NULL, "author_id" UUID NOT NULL);\nALTER TABLE "posts" ADD CONSTRAINT "posts_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;',
+      ),
+      [],
+    );
+    // A quoted name that reads like the keyword is a name.
+    assert.deepEqual(
+      kinds(
+        'CREATE TABLE "posts" ("references users" TEXT, "author_id" UUID REFERENCES "users" ON DELETE SET NULL ON UPDATE CASCADE);',
+      ),
+      [],
+    );
+  });
+
+  test('counts a column as holding data when IF NOT EXISTS may find it, or a domain types it', () => {
     const unique = 'CREATE UNIQUE INDEX "users_code_key" ON "users"("code");';
     assert.deepEqual(
       kinds(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "code" TEXT;\n${unique}`),
       ['adds a unique index to an existing table'],
     );
+    // Whatever the domain's default says: one it has, one a later statement
+    // drops (the rows got it already) or sets, one of the domain it is based
+    // on, one of a domain renamed since.
+    for (const domain of [
+      `CREATE DOMAIN code_t AS text DEFAULT 'x';`,
+      `CREATE DOMAIN code_t AS text CHECK (VALUE <> '');`,
+      `CREATE DOMAIN a_t AS text DEFAULT 'x';\nCREATE DOMAIN code_t AS a_t;`,
+      `CREATE DOMAIN old_t AS text DEFAULT 'x';\nALTER DOMAIN old_t RENAME TO code_t;`,
+    ]) {
+      assert.deepEqual(
+        kinds(`${domain}\nALTER TABLE "users" ADD COLUMN "code" code_t;\n${unique}`),
+        ['adds a unique index to an existing table'],
+        domain,
+      );
+    }
     assert.deepEqual(
       kinds(
-        `CREATE DOMAIN code_t AS text DEFAULT 'x';\nALTER TABLE "users" ADD COLUMN "code" code_t;\n${unique}`,
+        `CREATE DOMAIN code_t AS text DEFAULT 'x';\nALTER TABLE "users" ADD COLUMN "code" code_t;\nALTER DOMAIN code_t DROP DEFAULT;\n${unique}`,
       ),
       ['adds a unique index to an existing table'],
     );
@@ -355,19 +447,23 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
       }).map((step) => step.kind),
       ['adds a unique index to an existing table'],
     );
-    assert.deepEqual(
-      kinds(
-        `CREATE DOMAIN code_t AS text CHECK (VALUE <> '');\nALTER TABLE "users" ADD COLUMN "code" code_t;\n${unique}`,
-      ),
-      [],
-    );
+    // An array of a domain takes no default from it.
+    for (const array of ['code_t[]', 'code_t ARRAY', 'public.code_t [3]']) {
+      assert.deepEqual(
+        kinds(
+          `CREATE DOMAIN code_t AS text DEFAULT 'x';\nALTER TABLE "users" ADD COLUMN "code" ${array};\n${unique}`,
+        ),
+        [],
+        array,
+      );
+    }
     assert.deepEqual(
       [
-        ...domainDefaults(
-          'CREATE DOMAIN a AS int DEFAULT 1; CREATE DOMAIN b AS int; ALTER DOMAIN b SET DEFAULT 2; ALTER DOMAIN a DROP DEFAULT;',
+        ...domainsOf(
+          'CREATE DOMAIN a AS int DEFAULT 1; CREATE DOMAIN "B" AS a; ALTER DOMAIN "B" RENAME TO c; ALTER DOMAIN a RENAME CONSTRAINT x TO y;',
         ),
       ],
-      ['b'],
+      ['a', 'B', 'c'],
     );
   });
 
@@ -518,13 +614,13 @@ describe('checkMigrations', () => {
     }
   });
 
-  test('knows the domains with a default an earlier migration created', () => {
+  test('knows the domains an earlier migration created', () => {
     const dir = mkdtempSync(join(tmpdir(), 'migrations-'));
     try {
       mkdirSync(join(dir, '20261013000000_domain'));
       writeFileSync(
         join(dir, '20261013000000_domain', 'migration.sql'),
-        "CREATE DOMAIN code_t AS text DEFAULT 'x';\n",
+        "CREATE DOMAIN code_t AS text CHECK (VALUE <> '');\n",
       );
       mkdirSync(join(dir, `${TIGHTENING_FROM}_code`));
       writeFileSync(
@@ -534,6 +630,30 @@ describe('checkMigrations', () => {
       const { problems } = checkMigrations(dir);
       assert.equal(problems.length, 1);
       assert.match(problems[0] ?? '', /adds a unique index to an existing table/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('checks staged migrations knowing the domains the migrations before them created (the commit hook)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'migrations-'));
+    const write = (/** @type {string} */ name, /** @type {string} */ sql) => {
+      mkdirSync(join(dir, name));
+      writeFileSync(join(dir, name, 'migration.sql'), sql);
+      return join(dir, name, 'migration.sql');
+    };
+    try {
+      const staged = write(
+        `${TIGHTENING_FROM}_code`,
+        'ALTER TABLE "users" ADD COLUMN "code" code_t;\nCREATE UNIQUE INDEX "users_code_key" ON "users"("code");\n',
+      );
+      // A domain only a later migration creates is not known yet.
+      write('29991231000000_later', 'CREATE DOMAIN code_t AS text;\n');
+      assert.deepEqual(checkStaged([staged], dir).problems, []);
+      write('20261013000000_domain', 'CREATE DOMAIN code_t AS text;\n');
+      const { problems } = checkStaged([staged], dir);
+      assert.equal(problems.length, 1);
+      assert.match(problems[0] ?? '', /:2: adds a unique index to an existing table/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

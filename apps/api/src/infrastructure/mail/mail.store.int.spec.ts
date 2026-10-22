@@ -6,6 +6,10 @@ import { MailStore } from './mail.store.js';
 // The outbox's lease renewal on PostgreSQL (mail.store.spec.ts reads its SQL
 // only): a worker still sending extends its own claim, never another's.
 
+// The claim ids of rows the tests create as being sent, and of a claim they never made.
+const CLAIM = '5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d';
+const OTHER_CLAIM = '0b9f8e7d-6c5b-4a39-8281-7f6e5d4c3b2a';
+
 let t: TestApp;
 beforeAll(async () => {
   t = await createTestApp();
@@ -36,6 +40,8 @@ it('renews the lease of a message still being sent, fenced by its claim', async 
   await expect(store.renewLease({ ...claimed, attempts: claimed.attempts + 1 })).resolves.toBe(
     false,
   );
+  // The same attempt number under another claim (a retry by hand since): not this one's either.
+  await expect(store.renewLease({ ...claimed, claimId: OTHER_CLAIM })).resolves.toBe(false);
 });
 
 it("drops an account's waiting notices of a later change, counting those no worker holds", async () => {
@@ -56,6 +62,7 @@ it("drops an account's waiting notices of a later change, counting those no work
         payload: { changedAt: new Date().toISOString(), securityVersion },
         status,
         attempts: status === 'sending' ? 1 : 0,
+        claimId: status === 'sending' ? CLAIM : null,
         lockedUntil: lockedUntil ?? null,
         expiresAt: new Date(Date.now() + 60 * 60_000),
       },
@@ -91,12 +98,58 @@ it("drops an account's waiting notices of a later change, counting those no work
   // The worker holding it under a live lease counts it; the undo counted the
   // one whose lease had run out, whose worker may still be alive.
   const store = t.app.get(MailStore);
-  await expect(store.fateOf({ id: held.id, attempts: 1 })).resolves.toBe('dropped');
-  await expect(store.fateOf({ id: abandoned.id, attempts: 1 })).resolves.toBe('counted');
-  await expect(store.fateOf({ id: held.id, attempts: 2 })).resolves.toBe('taken-over');
+  const claim = { attempts: 1, claimId: CLAIM };
+  await expect(store.fateOf({ id: held.id, ...claim })).resolves.toBe('dropped');
+  await expect(store.fateOf({ id: abandoned.id, ...claim })).resolves.toBe('counted');
+  await expect(store.fateOf({ id: held.id, ...claim, attempts: 2 })).resolves.toBe('taken-over');
+  await expect(store.fateOf({ id: held.id, ...claim, claimId: OTHER_CLAIM })).resolves.toBe(
+    'taken-over',
+  );
 });
 
-it('puts a failed message back with its attempts counted from the retry, never lowering them', async () => {
+it('judges a lease by the clock of the statement that drops the notice, not of its transaction', async () => {
+  const user = await t.prisma.user.create({
+    data: { email: 'lease-clock@example.test', name: 'Lease clock', passwordHash: 'x' },
+  });
+  const { id } = await t.prisma.mailMessage.create({
+    data: {
+      kind: 'email_changed',
+      recipient: 'previous@example.test',
+      recipientHash: 'f'.repeat(64),
+      userId: user.id,
+      payload: { securityVersion: '9' },
+      status: 'sending',
+      attempts: 1,
+      claimId: CLAIM,
+      lockedUntil: new Date(Date.now() + 60_000),
+      expiresAt: new Date(Date.now() + 60 * 60_000),
+    },
+    select: { id: true },
+  });
+  // A lease that ends by the database's clock while the undo below waits
+  // (for the account's lock, say) after its transaction began.
+  await t.prisma.$executeRaw`
+    UPDATE "mail_messages" SET "locked_until" = now() + interval '300 milliseconds'
+    WHERE "id" = ${id}::uuid`;
+  const outcome = await t.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1`;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return t.app.get(MailOutboxService).expireQueued(tx, {
+      kind: 'email_changed',
+      userId: user.id,
+      key: 'securityVersion',
+      from: 9,
+      reason: 'superseded',
+    });
+  });
+  // No live worker holds it any more: the undo counts it.
+  expect(outcome).toEqual({ dropped: 1, unclaimed: 1 });
+  await expect(t.app.get(MailStore).fateOf({ id, attempts: 1, claimId: CLAIM })).resolves.toBe(
+    'counted',
+  );
+});
+
+it('puts a failed message back with its attempts started again, out of reach of its old claims', async () => {
   // Alone in the outbox: the claim below takes the due message.
   await resetDatabase(t.prisma);
   const row = await t.prisma.mailMessage.create({
@@ -106,6 +159,7 @@ it('puts a failed message back with its attempts counted from the retry, never l
       recipientHash: 'e'.repeat(64),
       status: 'failed',
       attempts: 3,
+      claimId: CLAIM,
       lastError: 'connection',
       expiresAt: new Date(Date.now() - 60_000),
     },
@@ -113,11 +167,15 @@ it('puts a failed message back with its attempts counted from the retry, never l
   const store = t.app.get(MailStore);
   await expect(store.retryFailed({ id: row.id })).resolves.toBe(1);
   const back = await t.prisma.mailMessage.findUniqueOrThrow({ where: { id: row.id } });
-  expect(back).toMatchObject({ status: 'pending', attempts: 3, attemptsBase: 3, lastError: null });
+  // As the previous release does: its workers count the attempts.
+  expect(back).toMatchObject({ status: 'pending', attempts: 0, lastError: null });
   expect(back.expiresAt.getTime()).toBeGreaterThan(Date.now());
-  // A stale worker still holding attempt 1, 2 or 3 never matches the next claim (4).
+  // The next claim is attempt 1 again, under a new id: a stale worker still
+  // holding an old claim of the same number never matches it.
   const claimed = await store.claim();
-  expect(claimed).toMatchObject({ id: row.id, attempts: 4, attemptsBase: 3 });
-  await expect(store.markSent({ id: row.id, attempts: 1 })).resolves.toBe(false);
+  expect(claimed).toMatchObject({ id: row.id, attempts: 1 });
+  expect(claimed?.claimId).not.toBe(CLAIM);
+  await expect(store.markSent({ id: row.id, attempts: 1, claimId: CLAIM })).resolves.toBe(false);
+  if (claimed !== undefined) await expect(store.markSent(claimed)).resolves.toBe(true);
   await expect(store.retryFailed({ id: 'not-an-id' })).resolves.toBe(0);
 });

@@ -139,12 +139,11 @@ model MailMessage {
   // Set by callers that could enqueue the same message twice: the second
   // enqueue is a no-op.
   dedupeKey     String?    @unique @map("dedupe_key")
-  // Attempts started, never lowered: each claim's number fences what its
-  // worker may record (mail.store.ts).
+  // Attempts started; a manual retry starts them again.
   attempts      Int        @default(0)
-  // Attempts made before the last manual retry: the limit and the backoff
-  // count `attempts - attemptsBase`.
-  attemptsBase  Int        @default(0) @map("attempts_base")
+  // A new id for each claim: with `attempts`, it fences what the claim's
+  // worker may record (mail.store.ts).
+  claimId       String?    @map("claim_id") @db.Uuid
   nextAttemptAt DateTime   @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
   lockedUntil   DateTime?  @map("locked_until") @db.Timestamptz(3)
   // Category of the last failure (smtp_4xx_451, connection, ...): never the

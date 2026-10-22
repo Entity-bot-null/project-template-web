@@ -39,10 +39,10 @@ export interface ClaimedMessage {
   recipient: string;
   userId: string | null;
   payload: unknown;
-  /** Attempts started, this one included; never lowered (it fences the claim). */
+  /** Attempts started, this one included (a manual retry starts them again). */
   attempts: number;
-  /** Attempts made before the last manual retry: `attempts - attemptsBase` counts toward the limit. */
-  attemptsBase: number;
+  /** This claim's own id: with `attempts`, it fences what the worker may record. */
+  claimId: string;
   expiresAt: Date;
   createdAt: Date;
   requestId: string | null;

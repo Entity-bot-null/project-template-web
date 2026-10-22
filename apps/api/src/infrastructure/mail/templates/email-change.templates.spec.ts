@@ -13,7 +13,7 @@ const message = (overrides: Partial<ClaimedMessage> = {}): ClaimedMessage => ({
   userId: 'u1',
   payload: {},
   attempts: 1,
-  attemptsBase: 0,
+  claimId: 'claim-1',
   expiresAt: new Date(Date.now() + 60_000),
   createdAt: new Date(),
   requestId: null,
@@ -26,7 +26,7 @@ interface Rows {
   /** The account at the recipient's address (by email); null: none. */
   owner?: { id: string } | null;
   /** The message's own row as the template reads it under the lock. */
-  row?: { status: string; attempts: number } | null;
+  row?: { status: string; attempts: number; claimId: string | null } | null;
   /** An undo link of this change or an earlier one used after the notice was queued. */
   undone?: { id: string } | null;
 }
@@ -34,7 +34,7 @@ interface Rows {
 function txWith({
   user = { id: 'u1', email: 'ada@example.test', securityVersion: 3 },
   owner = null,
-  row = { status: 'sending', attempts: 1 },
+  row = { status: 'sending', attempts: 1, claimId: 'claim-1' },
   undone = null,
 }: Rows = {}) {
   const tx = {
@@ -214,7 +214,7 @@ describe('the notice to the previous address', () => {
   it('sends no undo link once an undo dropped this notice while it was being composed', async () => {
     const { tx, client } = txWith({
       user: { id: 'u1', email: 'ada@example.test', securityVersion: 9 },
-      row: { status: 'expired', attempts: 1 },
+      row: { status: 'expired', attempts: 1, claimId: 'claim-1' },
     });
     await expect(
       emailChangedTemplate.compose({
@@ -233,13 +233,19 @@ describe('the notice to the previous address', () => {
     );
     expect(tx.mailMessage.findUnique).toHaveBeenCalledWith({
       where: { id: 'm1' },
-      select: { status: true, attempts: true },
+      select: { status: true, attempts: true, claimId: true },
     });
     expect(tx.accountToken.create).not.toHaveBeenCalled();
   });
 
-  it('mints no second link for a row another worker took over (a later attempt), or one gone', async () => {
-    for (const row of [{ status: 'sending', attempts: 2 }, null]) {
+  it('mints no second link for a row another worker took over (a later attempt, or a later claim of the same one), or one gone', async () => {
+    for (const row of [
+      { status: 'sending', attempts: 2, claimId: 'claim-2' },
+      // Claimed again since under the same attempt number: a retry by hand
+      // started the attempts again.
+      { status: 'sending', attempts: 1, claimId: 'claim-2' },
+      null,
+    ]) {
       const { tx, client } = txWith({
         user: { id: 'u1', email: 'new@example.test', securityVersion: 4 },
         row,

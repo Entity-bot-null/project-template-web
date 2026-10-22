@@ -146,7 +146,10 @@ export class MailOutboxService {
                               ELSE ${reason} || ${DROPPED_WHILE_HELD} END,
           "updated_at" = now()
       FROM (
-        SELECT "id", ("status" <> 'sending' OR "locked_until" < now()) AS "unclaimed"
+        -- The statement's clock, not the transaction's (now()): the caller
+        -- may have waited for the account's lock since it began, and a lease
+        -- that ran out meanwhile is held by no live worker.
+        SELECT "id", ("status" <> 'sending' OR "locked_until" < statement_timestamp()) AS "unclaimed"
         FROM "mail_messages"
         WHERE "user_id" = ${userId}::uuid
           AND "kind" = ${kind}::"MailKind"

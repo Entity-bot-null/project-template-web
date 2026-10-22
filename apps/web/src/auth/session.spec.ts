@@ -891,6 +891,148 @@ describe('signIn and signOut', () => {
     expect(document.cookie).not.toContain('has_session');
   });
 
+  it("does not let an older retry's answer say a newer, failed sign-out stands, nor bring its hint back, with Web Locks", async () => {
+    exclusiveLocks();
+    let logouts = 0;
+    const retryGate = deferred<Response>();
+    const { calls } = stubFetch({
+      [LOGOUT]: () => {
+        logouts += 1;
+        return logouts === 2 ? retryGate.promise : Promise.reject(new TypeError('Failed to fetch'));
+      },
+      [REFRESH]: () => session('token-2', member, NEWER_ID),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    await expect(signOut()).resolves.toBe(false);
+    const retried = retrySignOut();
+    await expect.poll(() => calls.length).toBe(2);
+    const tab = new BroadcastChannel('auth');
+    tab.postMessage('signed-in');
+    tab.close();
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('authenticated');
+    });
+    // The newer sign-out's logout waits for the retry's lock, and fails after it.
+    const out = signOut();
+    setSessionHint();
+    retryGate.resolve(signedOut());
+    await retried;
+    expect(document.cookie).not.toContain('has_session');
+    await expect(out).resolves.toBe(false);
+    expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+    expect(calls.filter((call) => routeOf(call) === LOGOUT)).toHaveLength(3);
+  });
+
+  it("does not let a retry's answer bring back the hint another tab's sign-out dropped", async () => {
+    let logouts = 0;
+    const retryGate = deferred<Response>();
+    const { calls } = stubFetch({
+      [LOGOUT]: () => {
+        logouts += 1;
+        return logouts === 1 ? Promise.reject(new TypeError('Failed to fetch')) : retryGate.promise;
+      },
+      [REFRESH]: () => session('token-2', member, NEWER_ID),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    await expect(signOut()).resolves.toBe(false);
+    const retried = retrySignOut();
+    await expect.poll(() => calls.length).toBe(2);
+    // This tab picks up another tab's sign-in; another tab then signs out of
+    // it, dropping the hint.
+    const tab = new BroadcastChannel('auth');
+    tab.postMessage('signed-in');
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('authenticated');
+    });
+    clearSessionHint();
+    tab.postMessage('signed-out');
+    tab.close();
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('anonymous');
+    });
+    // The retry answers 204: the server set the hint back for that session,
+    // live when it answered and not named.
+    setSessionHint();
+    retryGate.resolve(signedOut());
+    await expect(retried).resolves.toBe(true);
+    expect(document.cookie).not.toContain('has_session');
+    // This tab's own sign-out is done.
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  it('leaves the hint alone when an older logout that could not have set it answers after a newer sign-out (no Web Locks)', async () => {
+    let logouts = 0;
+    const retryGate = deferred<Response>();
+    const { calls } = stubFetch({
+      [LOGOUT]: () => {
+        logouts += 1;
+        // The retry fails late; the newer sign-out's logout fails at once.
+        if (logouts === 2) {
+          return retryGate.promise.then(() => Promise.reject(new TypeError('Failed to fetch')));
+        }
+        return Promise.reject(new TypeError('Failed to fetch'));
+      },
+      [REFRESH]: () => session('token-2', member, NEWER_ID),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    await expect(signOut()).resolves.toBe(false);
+    const retried = retrySignOut();
+    await expect.poll(() => calls.length).toBe(2);
+    const tab = new BroadcastChannel('auth');
+    tab.postMessage('signed-in');
+    tab.close();
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('authenticated');
+    });
+    await expect(signOut()).resolves.toBe(false);
+    // Another tab signs in: its cookie and hint land before it tells this tab.
+    setSessionHint();
+    retryGate.resolve(signedOut());
+    await expect(retried).resolves.toBe(false);
+    expect(document.cookie).toContain('has_session');
+    expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+  });
+
+  it('joins a retry on its way for the same sign-out, and sends a new one for a newer failed sign-out', async () => {
+    let logouts = 0;
+    const retryGate = deferred<Response>();
+    const { calls } = stubFetch({
+      [LOGOUT]: () => {
+        logouts += 1;
+        if (logouts === 2) return retryGate.promise;
+        return logouts === 4 ? signedOut() : Promise.reject(new TypeError('Failed to fetch'));
+      },
+      [REFRESH]: () => session('token-2', member, NEWER_ID),
+    });
+    const logoutsSent = () => calls.filter((call) => routeOf(call) === LOGOUT);
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    await expect(signOut()).resolves.toBe(false);
+    const first = retrySignOut();
+    await expect.poll(() => logoutsSent().length).toBe(2);
+    // A second click for the same sign-out joins the retry on its way.
+    const again = retrySignOut();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(logoutsSent()).toHaveLength(2);
+    // This tab picks up another tab's sign-in, then fails to sign out of it.
+    const tab = new BroadcastChannel('auth');
+    tab.postMessage('signed-in');
+    tab.close();
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('authenticated');
+    });
+    await expect(signOut()).resolves.toBe(false);
+    // A click now retries that sign-out: its own logout, naming its session.
+    const newer = retrySignOut();
+    await expect.poll(() => logoutsSent().length).toBe(4);
+    await expect(bodyOf(logoutsSent()[3])).resolves.toEqual({ sessionIds: [NEWER_ID] });
+    await expect(newer).resolves.toBe(true);
+    expect(getState()).toEqual(SIGNED_OUT);
+    // The older retry's answer, when it comes, changes nothing.
+    retryGate.resolve(signedOut());
+    await Promise.all([first, again]);
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
+
   it("keeps a sign-in waiting for a discarded session's logout that started while it waited (no Web Locks)", async () => {
     const change = deferred<Response>();
     const firstLogout = deferred<Response>();

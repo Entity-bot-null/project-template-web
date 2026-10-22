@@ -26,12 +26,16 @@ let refreshInFlight: Promise<boolean> | null = null;
 let refreshEpoch = 0;
 // The logouts on their way (endServerSession).
 const logoutsInFlight = new Set<Promise<boolean>>();
-// A retry on its way: a second click joins it. A sign-out never does: it
-// sends its own logout, for the cookie's session, whichever it is.
-let retryInFlight: Promise<boolean> | null = null;
+// A retry on its way, and the sign-out it retries (`issued`, signOuts): a
+// second click joins it while no sign-out came since. A sign-out never does:
+// it sends its own logout, for the cookie's session, whichever it is.
+let retryInFlight: { issued: number; ending: Promise<boolean> } | null = null;
 // Bumped by every sign-out made in this tab: a logout issued before the
 // latest one no longer says whether the sign-out stands (that one does).
 let signOuts = 0;
+// Bumped by every sign-out, this tab's or (told) another's: a logout answered
+// after one may have set the hint back for the session it ended.
+let signOutsSeen = 0;
 // Logouts of sessions this tab started and discarded (endDiscardedSession).
 const discardsInFlight = new Set<Promise<unknown>>();
 // Discarded sessions whose logout failed (their cookie may still be live in
@@ -453,6 +457,7 @@ function noteSignOut(): void {
   signedOutSession = browserSession ?? signedOutSession;
   browserSession = null;
   sessionsAtSignOut = sessionsStarted;
+  signOutsSeen += 1;
 }
 
 /**
@@ -465,17 +470,22 @@ function noteSignOut(): void {
  * and every discarded one whose logout failed: another tab's sign-in queued
  * ahead of it (Web Locks) set a newer cookie, which it leaves alone. When one
  * of them is unknown (the previous release's), it ends the cookie's session,
- * whichever it is.
+ * whichever it is. A retry on its way is joined only when it retries the
+ * latest sign-out: an older one names sessions read before it, and its answer
+ * no longer sets the state.
  */
 export async function retrySignOut(): Promise<boolean> {
   if (signInInFlight) {
     await signInInFlight;
     if (state.status === 'authenticated') return true;
   }
-  retryInFlight ??= endServerSession(retryNames).finally(() => {
-    retryInFlight = null;
-  });
-  return retryInFlight;
+  if (retryInFlight?.issued !== signOuts) {
+    const ending = endServerSession(retryNames).finally(() => {
+      if (retryInFlight?.ending === ending) retryInFlight = null;
+    });
+    retryInFlight = { issued: signOuts, ending };
+  }
+  return retryInFlight.ending;
 }
 
 /** How many sessions a logout may name (LogoutSchema). */
@@ -499,12 +509,19 @@ function retryNames(): readonly string[] {
 // leaves it to this logout, or to a retry. A sign-out ends the cookie's
 // session, whichever it is (a tab may not know another's newer one); a retry
 // names the sessions it ends (`names`, read once the lock is held). Only a
-// logout issued since the latest sign-out sets the state, which says the
-// sign-out is done once no discarded session's logout failed (its cookie may
-// be live). An older one's answer may have set the hint back, for a session
-// it did not name and the latest sign-out ended: dropped again.
+// logout issued since this tab's latest sign-out sets the state, which says
+// the sign-out is done once no discarded session's logout failed (its cookie
+// may be live). Only a logout that named its sessions and succeeded can set
+// the hint back, for a live session it did not name: when a sign-out came
+// since, this tab's or another's, and no sign-in after it, that session is the
+// one the sign-out ended, and the hint goes again. Any other answer leaves the
+// hint alone: without Web Locks, a sign-in another tab made meanwhile may have
+// set it. (Without them, such a sign-in that tab has not told of yet reads like
+// the ended session: its hint goes, and a reload asks for a sign-in, never
+// restores an ended session.)
 function endServerSession(names: () => readonly string[] = () => []): Promise<boolean> {
   const issued = signOuts;
+  const seen = signOutsSeen;
   let sent: readonly string[] = [];
   const ending = withLock(SIGN_IN_LOCK, () => {
     sent = names();
@@ -519,10 +536,11 @@ function endServerSession(names: () => readonly string[] = () => []): Promise<bo
         for (const id of sent) unended.delete(id);
       }
       if (state.status !== 'anonymous') return ok;
-      if (issued !== signOuts) {
-        if (sessionsStarted === sessionsAtSignOut) expireSessionHint();
-        return ok;
+      const setBack = ok && sent.length > 0;
+      if (setBack && seen !== signOutsSeen && sessionsStarted === sessionsAtSignOut) {
+        expireSessionHint();
       }
+      if (issued !== signOuts) return ok;
       emit(ok && unended.size === 0 && !unnamedUnended ? SIGNED_OUT : SIGN_OUT_FAILED);
       return ok;
     })

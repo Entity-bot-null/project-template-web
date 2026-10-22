@@ -10,6 +10,9 @@ import { emailChangedTemplate } from './email-changed.template.js';
 // undo that commits while the notice waits for the account's lock drops it,
 // and the template sees that once the lock is granted (READ COMMITTED).
 
+// The claim the notices are being sent under.
+const CLAIM = '5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d';
+
 let t: TestApp;
 beforeAll(async () => {
   t = await createTestApp();
@@ -30,6 +33,7 @@ it('mints no undo link for a notice an undo dropped while it waited for the lock
       payload: { changedAt: new Date().toISOString(), securityVersion: '1' },
       status: 'sending',
       attempts: 1,
+      claimId: CLAIM,
       lockedUntil: new Date(Date.now() + 60_000),
       expiresAt: new Date(Date.now() + 60 * 60_000),
     },
@@ -41,7 +45,7 @@ it('mints no undo link for a notice an undo dropped while it waited for the lock
     userId: user.id,
     payload: row.payload,
     attempts: row.attempts,
-    attemptsBase: row.attemptsBase,
+    claimId: CLAIM,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
     requestId: null,
@@ -115,6 +119,7 @@ it("refuses a previous release's notice once that release undid the change after
         payload: { changedAt: queuedAt.toISOString() },
         status: 'sending',
         attempts: 1,
+        claimId: CLAIM,
         lockedUntil: new Date(Date.now() + 60_000),
         expiresAt: new Date(Date.now() + 60 * 60_000),
         createdAt: queuedAt,
@@ -127,7 +132,7 @@ it("refuses a previous release's notice once that release undid the change after
       userId: owner.id,
       payload: row.payload,
       attempts: 1,
-      attemptsBase: 0,
+      claimId: CLAIM,
       expiresAt: row.expiresAt,
       createdAt: row.createdAt,
       requestId: null,

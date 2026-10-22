@@ -884,8 +884,11 @@ docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js tes
 **Operating it:** `mail status` shows what waits, what failed and why (never an address: messages
 are named by id; `--to <address>` finds one address's messages); `mail retry --failed` sends failed
 messages again once the cause is fixed, each with a new validity (an outage longer than it does not
-drop them; links still start their own validity when they are sent) and its attempts counted from
-the retry (the attempt number itself goes on: `attempts=` in `mail status`). Alerts `ApiMailBacklog` and `ApiMailDeliveryFailed`, and
+drop them; links still start their own validity when they are sent) and its attempts started again;
+`mail retry --id <id>` fails when that message is not failed or has lost its address. A dropped
+(`expired`) message's last error says why: `expired` (too late), `not_applicable` (no longer
+applies), `superseded` (an undone change of email made it moot); `:held` after it means a worker was
+sending it at that moment, and that worker records its outcome (it may still have gone out). Alerts `ApiMailBacklog` and `ApiMailDeliveryFailed`, and
 the runbook: [incident-response.md](incident-response.md#16-email-not-delivered). To rotate the SMTP
 credentials, create the new ones at the provider, update `MAIL_SMTP_URL`, redeploy, then revoke the
 old ones; messages waiting meanwhile go out with their next attempt.

@@ -37,7 +37,7 @@ function message(overrides: Partial<ClaimedMessage> = {}): ClaimedMessage {
     userId: null,
     payload: {},
     attempts: 1,
-    attemptsBase: 0,
+    claimId: 'claim-1',
     expiresAt: new Date(Date.now() + 60_000),
     createdAt: new Date(Date.now() - 2_000),
     requestId: null,
@@ -455,25 +455,6 @@ describe('MailWorker', () => {
     await started(gone);
     expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
     expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its account was deleted'));
-  });
-
-  it('counts attempts toward the limit and the backoff from the last manual retry', async () => {
-    // Attempt 5, the second since a retry made after 3 (attemptsBase): not exhausted.
-    const context = tracked(
-      setup({
-        queue: [message({ attempts: 5, attemptsBase: 3 })],
-        compose: () => Promise.reject(new Error('db down')),
-      }),
-    );
-    await started(context);
-    expect(context.store.markFailed).not.toHaveBeenCalled();
-    const [, delay] = context.store.reschedule.mock.calls[0] as unknown as [unknown, number];
-    // The backoff of a second attempt (30 s base, doubled, with jitter): not the fifth's.
-    expect(delay).toBeLessThanOrEqual(2 * 60_000);
-    // Past the limit since the retry: given up.
-    const spent = tracked(setup({ queue: [message({ attempts: 7, attemptsBase: 3 })] }));
-    await started(spent);
-    expect(spent.store.markFailed).toHaveBeenCalledWith(expect.anything(), 'attempts_exhausted');
   });
 
   it('reads as degraded while the oldest waiting message is older than 15 minutes', async () => {

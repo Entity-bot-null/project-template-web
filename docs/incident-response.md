@@ -490,7 +490,7 @@ time`) on the routes that call a provider; 5xx lines ending `dependency: <name>)
   their next attempt. A sender refused for domain authentication: fix SPF, DKIM and DMARC at the
   DNS. A provider down for long: switch `MAIL_SMTP_URL` to a second provider. Messages given up
   on (`failed`): once the cause is fixed, `mail retry --failed` (or `--id <id>`, `--kind <kind>`)
-  queues them again, with their attempts counted from the retry; their address is kept for 7 days,
+  queues them again, with their attempts started again; their address is kept for 7 days,
   after which they cannot be retried.
 - **Roll back when:** a deployment changed `MAIL_SMTP_URL`, `MAIL_FROM` or `APP_ORIGIN`.
 - **Recovered when:** `Sent <kind> message <id>` lines again; readiness `checks.mail: "ok"`;

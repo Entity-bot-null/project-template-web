@@ -12,22 +12,26 @@
 // column or type (or an enum value); changing a column's type; making a column
 // required, adding a required column without a default, or removing a
 // default; emptying a table. From the migration named TIGHTENING_FROM on,
-// also: a unique index or a constraint (CHECK, UNIQUE, PRIMARY KEY, FOREIGN
-// KEY, EXCLUDE, in the table or in a column's definition) added to a table an
-// earlier migration created (the previous release may write what it refuses,
-// and existing rows may break it), unless it is a unique index, a UNIQUE or a
-// foreign key that gives way to the rows it references (yieldsToReferenced),
-// covering only columns this migration added empty (nullable, no default now
-// or later, the table not written: recordAddedColumns), never with NULLS NOT
-// DISTINCT; a dropped unique index, unique constraint or
-// primary key, a table moved to another schema, a DELETE without WHERE, and
-// an enum value added without IF NOT EXISTS (PostgreSQL cannot drop it, so a
-// migration that failed after adding it could not run again:
-// docs/database.md#when-a-migration-fails). The migrations before it shipped
-// before those rules, and a committed migration is never edited. Expand steps
-// (new tables, nullable columns, columns with a default, indexes, looser
-// constraints) need nothing. Only plain statements are read: SQL inside a DO
-// block or a function body is not.
+// also:
+//   - a unique index or a constraint (CHECK, UNIQUE, PRIMARY KEY, FOREIGN KEY,
+//     EXCLUDE, in the table or in a column's definition) added to a table an
+//     earlier migration created (the previous release may write what it
+//     refuses, and existing rows may break it), unless it is a unique index, a
+//     UNIQUE or a foreign key covering only columns this migration added empty
+//     (nullable, no default now or later, no domain type, the table not
+//     written: recordAddedColumns), never with NULLS NOT DISTINCT;
+//   - a foreign key, in any table, new ones included, to a table an earlier
+//     migration created that does not give way to it (yieldsToReferenced): it
+//     refuses the previous release's deletes of the rows it references;
+//   - a dropped unique index, unique constraint or primary key, a table moved
+//     to another schema, a DELETE without WHERE, and an enum value added
+//     without IF NOT EXISTS (PostgreSQL cannot drop it, so a migration that
+//     failed after adding it could not run again:
+//     docs/database.md#when-a-migration-fails).
+// The migrations before it shipped before those rules, and a committed
+// migration is never edited. Expand steps (new tables, nullable columns,
+// columns with a default, indexes, looser constraints) need nothing. Only
+// plain statements are read: SQL inside a DO block or a function body is not.
 //
 //   node scripts/check-migrations.mjs [<migration.sql>...]
 //
@@ -44,6 +48,7 @@ const MIGRATIONS = fileURLToPath(new URL('../apps/api/prisma/migrations/', impor
 export const TIGHTENING_FROM = '20261022000000';
 
 const ENUM_VALUE = 'adds an enum value without IF NOT EXISTS';
+const UNYIELDING_KEY = 'adds a foreign key that does not give way to an existing table';
 
 /**
  * One SQL statement: its first line number, the comments before it, its code
@@ -331,6 +336,11 @@ function columnsOf(text) {
  * @returns {string[]}
  */
 function tighteningKinds({ code, bare }, created, added) {
+  // A new table: nothing wrote it. Only the other side of its foreign keys
+  // counts, the tables they reference.
+  if (/^CREATE (?:UNLOGGED )?TABLE\b/.test(code)) {
+    return foreignKeysOf(bare).flatMap((key) => (givesWay(key, created) ? [] : [UNYIELDING_KEY]));
+  }
   if (/^CREATE UNIQUE INDEX\b/.test(code)) {
     const index = new RegExp(
       String.raw`^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:${IDENT}\s+)?ON\s+(?:ONLY\s+)?(${QUALIFIED})\s*(?:USING\s+\w+\s*)?([\s\S]*)$`,
@@ -369,26 +379,26 @@ function tighteningKinds({ code, bare }, created, added) {
   );
   return altered.actions.flatMap((action) => {
     if (/^SET\s+SCHEMA\b/i.test(action)) return ['moves a table to another schema'];
-    // A constraint written in the column's definition: safe only on a column
-    // that holds nothing yet (recordAddedColumns: no default, never written),
-    // as a UNIQUE whose NULLs stay distinct or a foreign key that gives way to
-    // the referenced table (yieldsToReferenced). A CHECK may read other
-    // columns; a primary key makes the column required.
+    // A constraint written in the column's definition: safe on a table this
+    // migration created, or on a column that holds nothing yet
+    // (recordAddedColumns: no default, never written), as a UNIQUE whose NULLs
+    // stay distinct or a foreign key. A CHECK may read other columns; a
+    // primary key makes the column required. A foreign key must also give way
+    // to the table it references (givesWay).
     const column = ADD_COLUMN.exec(action);
     if (column !== null && !CONSTRAINT_WORD.test(column[1] ?? '')) {
-      const named = quotedNamesOut(column[2] ?? '');
       const definition = withoutNames(column[2] ?? '');
       const inline = [...definition.matchAll(/\b(UNIQUE|PRIMARY\s+KEY|REFERENCES|CHECK)\b/gi)];
-      if (inline.length === 0 || created.has(altered.table)) return [];
+      if (inline.length === 0) return [];
       const empty = added.get(altered.table)?.has(identifier(column[1] ?? '')) === true;
       const safe =
-        empty &&
-        !/\bNULLS\s+NOT\s+DISTINCT\b/i.test(definition) &&
-        inline.every(
-          ([, word = '']) =>
-            /^UNIQUE$/i.test(word) || (/^REFERENCES$/i.test(word) && yieldsToReferenced(named)),
-        );
-      return safe ? [] : ['adds a constraint to an existing table'];
+        created.has(altered.table) ||
+        (empty &&
+          !/\bNULLS\s+NOT\s+DISTINCT\b/i.test(definition) &&
+          inline.every(([, word = '']) => /^(?:UNIQUE|REFERENCES)$/i.test(word)));
+      if (!safe) return ['adds a constraint to an existing table'];
+      const key = inline.some(([, word = '']) => /^REFERENCES$/i.test(word));
+      return key && !givesWay(column[2] ?? '', created) ? [UNYIELDING_KEY] : [];
     }
     const dropped = drop.exec(action);
     if (dropped !== null) {
@@ -400,19 +410,88 @@ function tighteningKinds({ code, bare }, created, added) {
     if (constraint === null) return [];
     // A CHECK or an EXCLUDE reads an expression: what it covers is not told.
     // A primary key makes its columns required: new ones too, which hold NULL.
-    // A foreign key that does not give way blocks the previous release's
-    // deletes of the rows it references. columnsOf reads a column list only:
-    // UNIQUE NULLS NOT DISTINCT (whose NULLs collide) is never exempt.
+    // columnsOf reads a column list only: UNIQUE NULLS NOT DISTINCT (whose
+    // NULLs collide) is never exempt. A foreign key that covers only what
+    // nothing wrote must also give way to the table it references (givesWay).
     const kind = (constraint[1] ?? '').toUpperCase();
     const rest = (constraint[2] ?? '').replace(/^\s*NULLS\s+DISTINCT\b/i, '');
-    const columns =
-      /^UNIQUE/.test(kind) || (/^FOREIGN/.test(kind) && yieldsToReferenced(quotedNamesOut(rest)))
-        ? columnsOf(rest)
-        : undefined;
-    return onlyNew(altered.table, columns, created, added)
-      ? []
-      : ['adds a constraint to an existing table'];
+    const columns = /^(?:UNIQUE|FOREIGN)/.test(kind) ? columnsOf(rest) : undefined;
+    if (!onlyNew(altered.table, columns, created, added)) {
+      return ['adds a constraint to an existing table'];
+    }
+    return /^FOREIGN/.test(kind) && !givesWay(rest, created) ? [UNYIELDING_KEY] : [];
   });
+}
+
+/**
+ * `text` with its quoted names blanked out, the same length: keywords are
+ * found in it, at the positions they have in `text`.
+ * @param {string} text
+ */
+function masked(text) {
+  return text.replace(/"(?:[^"]|"")*"/g, (name) => `"${'_'.repeat(name.length - 2)}"`);
+}
+
+/**
+ * `text` up to the parenthesis that closes the one before it (all of it when
+ * none does). Reads a bare form, like splitTopLevel.
+ * @param {string} text
+ */
+function upToClosing(text) {
+  let depth = 0;
+  let quote = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote !== '') {
+      if (c === quote) quote = '';
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === '(') depth += 1;
+    else if (c === ')') {
+      if (depth === 0) return text.slice(0, i);
+      depth -= 1;
+    }
+  }
+  return text;
+}
+
+/**
+ * The foreign keys a CREATE TABLE declares, in a column's definition or as a
+ * table constraint: each one's definition, as written.
+ * @param {string} bare a Statement's bare form
+ * @returns {string[]}
+ */
+function foreignKeysOf(bare) {
+  const head = new RegExp(
+    String.raw`^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?${QUALIFIED}\s*\(`,
+    'i',
+  ).exec(bare);
+  if (head === null) return [];
+  return splitTopLevel(upToClosing(bare.slice(head[0].length))).filter((element) =>
+    /\bREFERENCES\b/i.test(masked(element)),
+  );
+}
+
+/**
+ * The table a foreign key's definition references (REFERENCES <table>).
+ * @param {string} key the definition, as written
+ */
+function referencedTable(key) {
+  const at = /\bREFERENCES\s+/i.exec(masked(key));
+  if (at === null) return undefined;
+  const name = new RegExp(`^${QUALIFIED}`).exec(key.slice(at.index + at[0].length));
+  return name === null ? undefined : lastPart(name[0]);
+}
+
+/**
+ * Whether a foreign key leaves the previous release's deletes and updates
+ * alone: it references a table this migration created (that release never
+ * touches it), or gives way to the rows it references (yieldsToReferenced).
+ * @param {string} key the definition, as written
+ * @param {Set<string>} created
+ */
+function givesWay(key, created) {
+  const table = referencedTable(key);
+  return (table !== undefined && created.has(table)) || yieldsToReferenced(quotedNamesOut(key));
 }
 
 /**
@@ -504,8 +583,10 @@ function yieldsToReferenced(text) {
  * nothing fills them), by table, unless the migration writes that table
  * (`written`: an UPDATE or an INSERT fills them too, before or after) or gives
  * the column a default later (`defaulted`, table.column: the previous
- * release's rows then get it), or types it with a domain that has a default
- * (`domains`). ADD COLUMN IF NOT EXISTS may find the column there already.
+ * release's rows then get it), or types it with a domain (`domains`: its
+ * default is the domain's, or the one it is based on, now or once a statement
+ * sets one; an array of a domain has none). ADD COLUMN IF NOT EXISTS may find
+ * the column there already.
  * @param {string} bare a Statement's bare form
  * @param {Map<string, Set<string>>} added
  * @param {Set<string>} written
@@ -523,11 +604,12 @@ function recordAddedColumns(bare, added, written, defaulted, domains) {
     if (name === undefined || CONSTRAINT_WORD.test(name)) continue;
     const id = identifier(name);
     const definition = column?.[2] ?? '';
-    const type = new RegExp(String.raw`^\s*(${QUALIFIED})`).exec(definition)?.[1];
+    const type = new RegExp(String.raw`^\s*(${QUALIFIED})\s*(\[|ARRAY\b)?`, 'i').exec(definition);
+    const domain = type !== null && type[2] === undefined && domains.has(lastPart(type[1] ?? ''));
     if (
       FILLED.test(withoutNames(definition)) ||
       defaulted.has(`${altered.table}.${id}`) ||
-      (type !== undefined && domains.has(lastPart(type)))
+      domain
     ) {
       continue;
     }
@@ -539,17 +621,20 @@ function recordAddedColumns(bare, added, written, defaulted, domains) {
 
 /**
  * The tables a statement writes rows of: the one it starts with (UPDATE,
- * INSERT, MERGE, COPY FROM), or, led by WITH, EXPLAIN, PREPARE or a rule, any
- * it holds. A write inside a function, a procedure (CALL) or a trigger is not
- * seen (docs/database.md).
+ * INSERT, MERGE, COPY FROM), or, led by WITH, EXPLAIN, PREPARE, a rule or a
+ * COPY of a query (COPY (UPDATE ... RETURNING ...) TO), any it holds. A write
+ * inside a function, a procedure (CALL) or a trigger is not seen
+ * (docs/database.md).
  * @param {string} bare a Statement's bare form
  * @returns {string[]}
  */
 function writtenTables(bare) {
   const write = String.raw`(?:UPDATE\s+(?:ONLY\s+)?|INSERT\s+INTO\s+|MERGE\s+INTO\s+(?:ONLY\s+)?)(${QUALIFIED})`;
-  // Led by WITH, EXPLAIN (ANALYZE runs it), PREPARE (and its EXECUTE) or a
-  // rule: any write it holds.
-  if (/^\s*(?:WITH|EXPLAIN|PREPARE|CREATE\s+(?:OR\s+REPLACE\s+)?RULE)\b/i.test(bare)) {
+  // Led by WITH, EXPLAIN (ANALYZE runs it), PREPARE (and its EXECUTE), a rule
+  // or a COPY of a query: any write it holds.
+  if (
+    /^\s*(?:(?:WITH|EXPLAIN|PREPARE|CREATE\s+(?:OR\s+REPLACE\s+)?RULE)\b|COPY\s*\()/i.test(bare)
+  ) {
     return [...bare.matchAll(new RegExp(String.raw`\b${write}`, 'gi'))].map(([, table = '']) =>
       lastPart(table),
     );
@@ -585,7 +670,7 @@ function defaultedColumns(bare) {
  * @param {string} sql
  * @param {{ tightening?: boolean; domains?: Set<string> }} [options] whether the
  *   tightening rules apply (TIGHTENING_FROM): from the migration's directory
- *   name; the domains with a default the migrations before it created
+ *   name; the domains the migrations before it created (domainsOf)
  * @returns {{ kind: string; line: number; text: string; reason: string | undefined }[]}
  */
 export function contractSteps(sql, { tightening = true, domains = new Set() } = {}) {
@@ -598,8 +683,8 @@ export function contractSteps(sql, { tightening = true, domains = new Set() } = 
   const written = new Set(statements.flatMap(({ bare }) => writtenTables(bare)));
   /** Columns this migration gives a default: filled from then on. */
   const defaulted = new Set(statements.flatMap(({ bare }) => defaultedColumns(bare)));
-  /** Domains with a default: earlier migrations' (`domains`) and this one's. */
-  const filling = domainDefaults(sql, new Set(domains));
+  /** Domains: earlier migrations' (`domains`) and this one's. */
+  const typed = domainsOf(sql, new Set(domains));
   return statements.flatMap((statement) => {
     const reason = /^\s*--\s*contract:[ \t]*(\S.*?)\s*$/im.exec(statement.comments)?.[1];
     const text = statement.text.split('\n')[0] ?? '';
@@ -610,7 +695,7 @@ export function contractSteps(sql, { tightening = true, domains = new Set() } = 
       );
       if (table !== undefined) created.add(table);
     }
-    recordAddedColumns(statement.bare, added, written, defaulted, filling);
+    recordAddedColumns(statement.bare, added, written, defaulted, typed);
     const kinds = [
       ...contractKinds(statement.code),
       ...(tightening ? tighteningKinds(statement, created, added) : []),
@@ -625,30 +710,24 @@ export function contractSteps(sql, { tightening = true, domains = new Set() } = 
 }
 
 /**
- * The domains with a default once a migration ran, from those before it
- * (`domains`, updated in place): a column typed with one is filled.
+ * The domains once a migration ran: those before it (`domains`, updated in
+ * place), the ones it creates, and the new names of the ones it renames. A
+ * column typed with one counts as filled (recordAddedColumns), whatever the
+ * domain's default is at that point: it may get one later, or take the one of
+ * the domain it is based on, and the previous release's rows then get it.
  * @param {string} sql
  * @param {Set<string>} [domains]
  * @returns {Set<string>}
  */
-export function domainDefaults(sql, domains = new Set()) {
-  const create = new RegExp(String.raw`^\s*CREATE\s+DOMAIN\s+(${QUALIFIED})\b([\s\S]*)$`, 'i');
-  const alter = new RegExp(
-    String.raw`^\s*ALTER\s+DOMAIN\s+(${QUALIFIED})\s+(SET\s+DEFAULT\b(?!\s+\(*\s*NULL\b)|DROP\s+DEFAULT\b)`,
+export function domainsOf(sql, domains = new Set()) {
+  const create = new RegExp(String.raw`^\s*CREATE\s+DOMAIN\s+(${QUALIFIED})`, 'i');
+  const rename = new RegExp(
+    String.raw`^\s*ALTER\s+DOMAIN\s+${QUALIFIED}\s+RENAME\s+TO\s+(${IDENT})`,
     'i',
   );
   for (const { bare } of splitStatements(sql)) {
-    const created = create.exec(bare);
-    if (created !== null) {
-      if (/\bDEFAULT\b(?!\s+\(*\s*NULL\b)/i.test(created[2] ?? '')) {
-        domains.add(lastPart(created[1] ?? ''));
-      }
-      continue;
-    }
-    const altered = alter.exec(bare);
-    if (altered === null) continue;
-    if (/^SET/i.test(altered[2] ?? '')) domains.add(lastPart(altered[1] ?? ''));
-    else domains.delete(lastPart(altered[1] ?? ''));
+    const name = create.exec(bare)?.[1] ?? rename.exec(bare)?.[1];
+    if (name !== undefined) domains.add(lastPart(name));
   }
   return domains;
 }
@@ -656,8 +735,8 @@ export function domainDefaults(sql, domains = new Set()) {
 /**
  * Checks migration files, in order: contract steps without a reason are
  * problems; the acknowledged ones are listed for the reviewer. `domains`: the
- * domains with a default the migrations before the first file created
- * (updated as the files are read).
+ * domains the migrations before the first file created (updated as the files
+ * are read).
  * @param {{ path: string; label: string }[]} files
  * @param {Set<string>} [domains]
  */
@@ -671,7 +750,7 @@ function checkFiles(files, domains = new Set()) {
     const tightening = !/^\d{14}_/.test(migration) || migration >= TIGHTENING_FROM;
     const sql = readFileSync(path, 'utf8');
     const steps = contractSteps(sql, { tightening, domains });
-    domainDefaults(sql, domains);
+    domainsOf(sql, domains);
     for (const step of steps) {
       if (step.reason === undefined && step.kind === ENUM_VALUE) {
         problems.push(
@@ -710,21 +789,29 @@ export function checkMigrations(dir) {
   return checkFiles(files);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const args = process.argv.slice(2);
-  const staged = args.map((path) => ({ path, label: relative(process.cwd(), path) }));
-  // Staged migrations only (the commit hook): the committed ones before them
-  // tell which domains have a default.
+/**
+ * Some migrations only (the commit hook's staged ones): the migrations of
+ * `dir` before the first of them tell which domains exist.
+ * @param {string[]} paths
+ * @param {string} [dir]
+ */
+export function checkStaged(paths, dir = MIGRATIONS) {
+  const staged = paths.map((path) => ({ path, label: relative(process.cwd(), path) }));
   const first = staged.map(({ path }) => basename(dirname(path))).sort()[0] ?? '';
   const domains = new Set();
-  if (args.length > 0 && existsSync(MIGRATIONS)) {
-    for (const name of readdirSync(MIGRATIONS).sort()) {
-      const path = join(MIGRATIONS, name, 'migration.sql');
-      if (name < first && existsSync(path)) domainDefaults(readFileSync(path, 'utf8'), domains);
+  if (existsSync(dir)) {
+    for (const name of readdirSync(dir).sort()) {
+      const path = join(dir, name, 'migration.sql');
+      if (name < first && existsSync(path)) domainsOf(readFileSync(path, 'utf8'), domains);
     }
   }
+  return checkFiles(staged, domains);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  const args = process.argv.slice(2);
   const { problems, acknowledged } =
-    args.length === 0 ? checkMigrations(MIGRATIONS) : checkFiles(staged, domains);
+    args.length === 0 ? checkMigrations(MIGRATIONS) : checkStaged(args);
   for (const line of acknowledged) console.log(`Contract step: ${line}`);
   for (const line of problems) console.error(line);
   if (problems.length > 0) {

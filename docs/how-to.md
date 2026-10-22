@@ -75,8 +75,9 @@ on another origin ([security.md](security.md#csrf-cors-xss)), deploy and roll ba
 3. Review `apps/api/prisma/migrations/<timestamp>_add_notes/migration.sql`: locks on big tables,
    defaults, `DROP` statements. A column that existing rows cannot fill needs a default or the
    [expand/contract](database.md#expand-and-contract) steps. A contract step (a drop, a rename, a
-   column made required) needs `-- contract: <why it is safe now>` right above it, or the commit
-   and CI stop (`scripts/check-migrations.mjs`).
+   column made required, a required relation to an existing model without `onDelete: Cascade`)
+   needs `-- contract: <why it is safe now>` right above it, or the commit and CI stop
+   (`scripts/check-migrations.mjs`).
 4. Commit the schema and the migration folder together with the code that uses them. Never edit a
    migration that is already on `main`: the migration image refuses a database that applied an
    earlier text of it.

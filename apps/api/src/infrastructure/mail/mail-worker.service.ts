@@ -176,9 +176,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   private async deliver(claimed: ClaimedMessage): Promise<void> {
     const label = `${claimed.kind} message ${claimed.id} (attempt ${String(claimed.attempts)})`;
-    // Counted from the last manual retry (attemptsBase): `attempts` itself
-    // never goes down, it fences the claim.
-    if (claimed.attempts - claimed.attemptsBase > this.options.maxAttempts) {
+    if (claimed.attempts > this.options.maxAttempts) {
       // Taken over again and again: its worker never got to record an outcome.
       await this.fail(claimed, label, 'attempts_exhausted');
       return;
@@ -287,12 +285,11 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     failure: DeliveryFailure,
     seconds?: number,
   ) {
-    const tries = claimed.attempts - claimed.attemptsBase;
-    if (tries >= this.options.maxAttempts) {
+    if (claimed.attempts >= this.options.maxAttempts) {
       await this.fail(claimed, label, failure.category, seconds);
       return;
     }
-    const delayMs = retryDelayMs(tries);
+    const delayMs = retryDelayMs(claimed.attempts);
     if (!(await this.store.reschedule(claimed, delayMs, failure.category))) {
       await this.refused(claimed, `Could not send ${label}: ${failure.category}`);
       return;

@@ -284,6 +284,35 @@ describe('cspProblems', () => {
     ]);
   });
 
+  test('leaves SVG and MathML where a browser does, and reads HTML again where it does', () => {
+    const image = 'a file from another origin: https://x.example/a.png';
+    /** @type {[string, string[]][]} */
+    const pages = [
+      // </p> and </br> leave foreign content; CDATA is then a bogus comment.
+      ['<svg></p><![CDATA[><script>alert(1)</script>]]>', ['an inline script']],
+      ['<svg></br><![CDATA[><img src="https://x.example/a.png">]]>', [image]],
+      // An end tag of an HTML element that holds the SVG closes it too.
+      ['<div><svg></div><![CDATA[><img src="https://x.example/a.png">]]>', [image]],
+      // A math inside an SVG is an SVG element: its title reads HTML again.
+      [
+        '<svg><math><mi><title><script>alert(1)</script></title></mi></math></svg>',
+        ['an inline script'],
+      ],
+    ];
+    for (const [page, found] of pages) {
+      assert.deepEqual(cspProblems(page), found, page);
+    }
+  });
+
+  test("reads a noscript's and a template's content: a browser may show it", () => {
+    assert.deepEqual(cspProblems('<noscript><img src="https://x.example/a.png"></noscript>'), [
+      'a file from another origin: https://x.example/a.png',
+    ]);
+    assert.deepEqual(cspProblems('<template><p onclick="go()">x</p></template>'), [
+      'an inline event handler on <p>',
+    ]);
+  });
+
   test("finds image candidates of a preload, and what an iframe's srcdoc carries", () => {
     assert.deepEqual(
       cspProblems(`<link rel="preload" as="image" imagesrcset="/a.png 1x, https://cdn.example.net/b.png 2x">
@@ -318,6 +347,20 @@ describe('cssProblems', () => {
         css,
       );
     }
+  });
+
+  test('ends a string at a line break it does not escape, and reads an escaped quote as no string', () => {
+    // A bad string ends at the line break: the next rule is read.
+    assert.deepEqual(
+      cssProblems("@import 'local.css\n;\n@import url(https://evil.example/x.css);"),
+      ['an @import from another origin: https://evil.example/x.css'],
+    );
+    assert.deepEqual(
+      cssProblems(".a\\'{background:url(https://evil.example/x.png)}.b{content:'x'}"),
+      ['a file from another origin: https://evil.example/x.png'],
+    );
+    // An escaped line break goes on with the string.
+    assert.deepEqual(cssProblems(`.a{content:"a\\\n@import 'https://evil.example/x.css';"}`), []);
   });
 
   test('finds what the policy refuses: other origins, and fonts from data: URLs', () => {

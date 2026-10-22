@@ -7,6 +7,9 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { parse } from 'parse5';
+
+/** @typedef {import('parse5').DefaultTreeAdapterMap['parentNode']} ParentNode */
 
 /**
  * Each app with a budget: its build folder, the folder of hashed assets
@@ -38,52 +41,6 @@ const LOADED_LINKS =
   /^(?:stylesheet|icon|apple-touch-icon|mask-icon|manifest|preload|modulepreload|prefetch)$/i;
 const IMAGE_LINKS = /^(?:icon|apple-touch-icon|mask-icon)$/i;
 
-/** Named character references that can spell a URL's scheme or its slashes. */
-const NAMED = new Map([
-  ['colon', ':'],
-  ['tab', '\t'],
-  ['newline', '\n'],
-  ['sol', '/'],
-  ['bsol', '\\'],
-  ['period', '.'],
-  ['quot', '"'],
-  ['apos', "'"],
-  ['lt', '<'],
-  ['gt', '>'],
-  ['amp', '&'],
-]);
-
-/**
- * A code point as a browser decodes a numeric reference: one out of range,
- * NUL or a surrogate is U+FFFD.
- * @param {number} code
- */
-function codePoint(code) {
-  const replaced = code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff);
-  return String.fromCodePoint(replaced || Number.isNaN(code) ? 0xfffd : code);
-}
-
-/**
- * An attribute value with its character references decoded: numeric ones,
- * and the named ones that matter for a URL.
- * @param {string} value
- */
-function decoded(value) {
-  return value.replace(
-    /&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));?/gi,
-    (
-      /** @type {string} */ reference,
-      /** @type {string | undefined} */ hex,
-      /** @type {string | undefined} */ dec,
-      /** @type {string | undefined} */ named,
-    ) => {
-      if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
-      if (dec !== undefined) return codePoint(Number(dec));
-      return NAMED.get((named ?? '').toLowerCase()) ?? reference;
-    },
-  );
-}
-
 /**
  * A URL as a browser reads it: tabs and line breaks dropped wherever they
  * are, leading spaces and control characters too.
@@ -103,177 +60,42 @@ const isAbsolute = (/** @type {string} */ url) =>
   /^(?:[a-z][a-z0-9+.-]*:|[\\/]{2})/i.test(urlOf(url));
 
 /**
- * Elements whose text a browser does not parse as markup, up to their end
- * tag (`plaintext` has none: the rest of the page is its text).
- */
-const RAW_TEXT = new Set([
-  'script',
-  'style',
-  'title',
-  'textarea',
-  'xmp',
-  'iframe',
-  'noembed',
-  'noframes',
-]);
-
-/**
- * Where the end tag `</name` starts from `from` on, in any letter case; the
- * end of the document without one.
+ * The elements of an HTML document, in document order, as a browser builds
+ * them: parse5 follows the HTML standard (raw text elements, comments,
+ * character references, SVG and MathML with their integration points and the
+ * tags that leave them). With scripting off, a <noscript>'s content is
+ * elements too (a browser without JavaScript renders it), and a <template>'s
+ * content is read (a script may put it in the page). Names and attribute
+ * names come in lower case, a namespaced attribute with its prefix
+ * (xlink:href); `parent` is the enclosing element's name.
  * @param {string} html
- * @param {string} name
- * @param {number} from
+ * @returns {{ name: string; parent: string; attributes: Map<string, string> }[]}
  */
-function endTag(html, name, from) {
-  for (let k = html.indexOf('</', from); k !== -1; k = html.indexOf('</', k + 2)) {
-    if (html.slice(k + 2, k + 2 + name.length).toLowerCase() === name) return k;
-  }
-  return html.length;
-}
-
-/** Start tags that end foreign content (svg, math): HTML is read again. */
-const BREAKOUT = new Set(
-  'b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr i img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var'.split(
-    ' ',
-  ),
-);
-
-/**
- * Whether an element of foreign content reads its content as HTML again (an
- * integration point): an SVG foreignObject, desc or title; a MathML text
- * element, or an annotation-xml holding HTML.
- * @param {string | undefined} root 'svg' or 'math'
- * @param {string} name
- * @param {Map<string, string>} attributes
- */
-function integrationPoint(root, name, attributes) {
-  if (root === 'svg') return name === 'foreignobject' || name === 'desc' || name === 'title';
-  if (root !== 'math') return false;
-  if (name === 'annotation-xml') {
-    return /^(?:text\/html|application\/xhtml\+xml)$/i.test(attributes.get('encoding') ?? '');
-  }
-  return ['mi', 'mo', 'mn', 'ms', 'mtext'].includes(name);
-}
-
-/**
- * Where a comment that starts at `open` (`<!--`) ends, as a browser ends it:
- * `<!-->` and `<!--->` at once, otherwise at the first `-->` or `--!>`.
- * @param {string} html
- * @param {number} open
- */
-function commentEnd(html, open) {
-  if (html.startsWith('>', open + 4)) return open + 5;
-  if (html.startsWith('->', open + 4)) return open + 6;
-  const ends = [html.indexOf('-->', open + 4), html.indexOf('--!>', open + 4)].filter(
-    (end) => end !== -1,
-  );
-  if (ends.length === 0) return html.length;
-  const end = Math.min(...ends);
-  return end + (html.startsWith('--!>', end) ? 4 : 3);
-}
-
-/**
- * The tags of an HTML document, read as a browser reads them: a quoted
- * attribute value may hold `>`, comments are skipped (ended where a browser
- * ends them), and the text of a script, a style, a title, a textarea and the
- * other raw text elements is not markup, except inside SVG and MathML, where
- * none is. End tags come as `/name`.
- * @param {string} html
- * @returns {{ name: string; attributes: Map<string, string> }[]}
- */
-export function tagsOf(html) {
-  /** @type {{ name: string; attributes: Map<string, string> }[]} */
-  const tags = [];
-  // The open svg and math elements, and the integration points inside them
-  // where HTML is read again ('html'), innermost last. In foreign content no
-  // element is raw text, <x/> closes itself and CDATA is text.
-  /** @type {{ name: string; kind: string }[]} */
-  const scopes = [];
-  const foreign = () => {
-    const kind = scopes.at(-1)?.kind;
-    return kind === 'svg' || kind === 'math';
+export function elementsOf(html) {
+  /** @type {{ name: string; parent: string; attributes: Map<string, string> }[]} */
+  const elements = [];
+  /**
+   * @param {ParentNode} node
+   * @param {string} parent
+   */
+  const visit = (node, parent) => {
+    for (const child of node.childNodes) {
+      if (!('tagName' in child)) continue;
+      const name = child.tagName.toLowerCase();
+      /** @type {Map<string, string>} */
+      const attributes = new Map();
+      for (const attribute of child.attrs) {
+        const key = (
+          attribute.prefix ? `${attribute.prefix}:${attribute.name}` : attribute.name
+        ).toLowerCase();
+        if (!attributes.has(key)) attributes.set(key, attribute.value);
+      }
+      elements.push({ name, parent, attributes });
+      visit('content' in child ? child.content : child, name);
+    }
   };
-  let i = 0;
-  while (i < html.length) {
-    const open = html.indexOf('<', i);
-    if (open === -1) break;
-    if (html.startsWith('<!--', open)) {
-      i = commentEnd(html, open);
-      continue;
-    }
-    if (foreign() && html.startsWith('<![CDATA[', open)) {
-      const end = html.indexOf(']]>', open + 9);
-      i = end === -1 ? html.length : end + 3;
-      continue;
-    }
-    const start = /^<(\/?)([a-zA-Z][\w:-]*)/.exec(html.slice(open, open + 80));
-    if (start === null) {
-      i = open + 1;
-      continue;
-    }
-    const name = `${start[1] ?? ''}${(start[2] ?? '').toLowerCase()}`;
-    /** @type {Map<string, string>} */
-    const attributes = new Map();
-    let j = open + start[0].length;
-    let selfClosing = false;
-    // Where the last unquoted value ended: a / there is the value's (width=24/).
-    let unquotedEnd = -1;
-    while (j < html.length) {
-      while (j < html.length && /[\s/]/.test(html[j] ?? '')) j += 1;
-      if (j >= html.length || html[j] === '>') {
-        selfClosing = html[j - 1] === '/' && unquotedEnd !== j;
-        j += 1;
-        break;
-      }
-      const attribute = /^[^\s/>=]+/.exec(html.slice(j, j + 256))?.[0] ?? html[j] ?? '';
-      j += attribute.length;
-      while (/\s/.test(html[j] ?? '')) j += 1;
-      let value = '';
-      if (html[j] === '=') {
-        j += 1;
-        while (/\s/.test(html[j] ?? '')) j += 1;
-        const quote = html[j];
-        if (quote === '"' || quote === "'") {
-          const end = html.indexOf(quote, j + 1);
-          value = html.slice(j + 1, end === -1 ? html.length : end);
-          j = end === -1 ? html.length : end + 1;
-        } else {
-          value = /^[^\s>]*/.exec(html.slice(j))?.[0] ?? '';
-          j += value.length;
-          unquotedEnd = j;
-        }
-      }
-      const key = attribute.toLowerCase();
-      if (!attributes.has(key)) attributes.set(key, decoded(value));
-    }
-    tags.push({ name, attributes });
-    if (name.startsWith('/')) {
-      // Closes the innermost open svg, math or integration point of that
-      // name, and what it holds; any other end tag changes nothing here.
-      const at = scopes.map((scope) => scope.name).lastIndexOf(name.slice(1));
-      if (at !== -1) scopes.length = at;
-    } else if (foreign()) {
-      if (
-        BREAKOUT.has(name) ||
-        (name === 'font' && ['color', 'face', 'size'].some((key) => attributes.has(key)))
-      ) {
-        // Back to HTML: the foreign elements it was in end.
-        while (foreign()) scopes.pop();
-      } else if (!selfClosing && integrationPoint(scopes.at(-1)?.kind, name, attributes)) {
-        scopes.push({ name, kind: 'html' });
-      } else if (!selfClosing && (name === 'svg' || name === 'math')) {
-        scopes.push({ name, kind: name });
-      }
-    } else if (name === 'svg' || name === 'math') {
-      if (!selfClosing) scopes.push({ name, kind: name });
-    } else {
-      // A raw text element's text runs to its end tag, whatever it holds.
-      if (RAW_TEXT.has(name)) j = endTag(html, name, j);
-      if (name === 'plaintext') j = html.length;
-    }
-    i = j;
-  }
-  return tags;
+  visit(parse(html, { scriptingEnabled: false }), '');
+  return elements;
 }
 
 /**
@@ -292,13 +114,8 @@ export function tagsOf(html) {
 export function cspProblems(html) {
   /** @type {string[]} */
   const problems = [];
-  /** The element a <source> belongs to: its files are images in a picture. */
-  let media = '';
   const absolute = isAbsolute;
-  for (const { name, attributes } of tagsOf(html)) {
-    if (name === 'picture' || name === 'video' || name === 'audio') media = name;
-    if (name === '/picture' || name === '/video' || name === '/audio') media = '';
-    if (name.startsWith('/')) continue;
+  for (const { name, parent, attributes } of elementsOf(html)) {
     const attribute = (/** @type {string} */ key) => attributes.get(key)?.trim();
     if (
       name === 'script' &&
@@ -349,7 +166,8 @@ export function cspProblems(html) {
       const image =
         name === 'img' ||
         (name === 'input' && attribute('type')?.toLowerCase() === 'image') ||
-        (name === 'source' && media === 'picture');
+        // A <source> of a picture: its files are images.
+        (name === 'source' && parent === 'picture');
       loaded.push({ url: attribute('src'), image });
       for (const candidate of (attribute('srcset') ?? '').split(',')) {
         loaded.push({ url: candidate.trim().split(/\s+/)[0], image });
@@ -396,20 +214,26 @@ export function cssProblems(css) {
 
 /**
  * Where the strings of a stylesheet end, read from `from` on: the index after
- * the string that starts there (a backslash escapes the next character).
+ * the string that starts there (a backslash escapes the next character, a
+ * line break included). A line break the string does not escape ends it
+ * there, as a browser ends it (a bad string): what follows is read as rules.
  * @param {string} css
  * @param {number} from the opening quote's index
  */
 function cssStringEnd(css, from) {
   const quote = css[from];
   let k = from + 1;
-  while (k < css.length && css[k] !== quote) k += css[k] === '\\' ? 2 : 1;
+  while (k < css.length && css[k] !== quote) {
+    if (/[\n\r\f]/.test(css[k] ?? '')) return k;
+    k += css[k] === '\\' ? 2 : 1;
+  }
   return k + 1;
 }
 
 /**
  * A stylesheet without its comments, strings kept as written (a "/*" in a
- * string starts no comment).
+ * string starts no comment). Outside a string, a backslash escapes the next
+ * character: an escaped quote starts no string.
  * @param {string} css
  */
 function cssWithoutComments(css) {
@@ -417,7 +241,10 @@ function cssWithoutComments(css) {
   let k = 0;
   while (k < css.length) {
     const c = css[k] ?? '';
-    if (c === '"' || c === "'") {
+    if (c === '\\') {
+      out += css.slice(k, k + 2);
+      k += 2;
+    } else if (c === '"' || c === "'") {
       const end = cssStringEnd(css, k);
       out += css.slice(k, end);
       k = end;
@@ -445,6 +272,10 @@ function cssImports(css) {
   let k = 0;
   while (k < css.length) {
     const c = css[k] ?? '';
+    if (c === '\\') {
+      k += 2;
+      continue;
+    }
     if (c === '"' || c === "'") {
       k = cssStringEnd(css, k);
       continue;
@@ -452,7 +283,9 @@ function cssImports(css) {
     if (c === '@' && /^@import(?![\w-])/i.test(css.slice(k, k + 8))) {
       let end = k + 7;
       while (end < css.length && css[end] !== ';') {
-        end = css[end] === '"' || css[end] === "'" ? cssStringEnd(css, end) : end + 1;
+        if (css[end] === '\\') end += 2;
+        else if (css[end] === '"' || css[end] === "'") end = cssStringEnd(css, end);
+        else end += 1;
       }
       ranges.push([k, Math.min(end + 1, css.length)]);
       k = end + 1;
