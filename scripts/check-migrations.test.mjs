@@ -8,7 +8,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkMigrations, contractSteps, splitStatements } from './check-migrations.mjs';
+import {
+  checkMigrations,
+  contractSteps,
+  splitStatements,
+  TIGHTENING_FROM,
+} from './check-migrations.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -109,8 +114,13 @@ ALTER TABLE "users" ALTER COLUMN "name" DROP NOT NULL;
 ALTER TABLE "users" ALTER COLUMN "plan" SET DEFAULT 'paid';
 ALTER TABLE "sessions" DROP CONSTRAINT "sessions_user_id_fkey";
 ALTER TABLE "users" RENAME CONSTRAINT "users_pkey" TO "users_primary";
-ALTER TYPE "Plan" ADD VALUE 'team';
+ALTER TYPE "Plan" ADD VALUE IF NOT EXISTS 'team';
 DROP INDEX "sessions_expires_at_idx";
+CREATE TABLE "teams" ("id" UUID NOT NULL, "name" TEXT NOT NULL);
+CREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");
+ALTER TABLE "teams" ADD CONSTRAINT "teams_name_check" CHECK ("name" <> '');
+ALTER TABLE "public"."teams" ADD CONSTRAINT "teams_owner_fkey" FOREIGN KEY ("id") REFERENCES "users"("id");
+DELETE FROM "sessions" WHERE "expires_at" < now();
 CREATE INDEX CONCURRENTLY "notes_title_idx" ON "notes"("title");
 UPDATE "users" SET "nickname" = 'drop column' WHERE "nickname" IS NULL;
 SET lock_timeout = '5s';`;
@@ -118,6 +128,45 @@ SET lock_timeout = '5s';`;
     // Words inside identifiers, strings and comments are not statements.
     assert.deepEqual(
       kinds('-- DROP TABLE "users";\nCREATE TABLE "drop_table" ("drop column" TEXT);'),
+      [],
+    );
+  });
+
+  test('finds what tightens a table an earlier migration created', () => {
+    assert.deepEqual(kinds('CREATE UNIQUE INDEX "users_name_key" ON "users"("name");'), [
+      'adds a unique index to an existing table',
+    ]);
+    assert.deepEqual(
+      kinds(
+        'CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS users_name_key ON ONLY public.users (name);',
+      ),
+      ['adds a unique index to an existing table'],
+    );
+    assert.deepEqual(
+      kinds(
+        'ALTER TABLE "users" ADD CONSTRAINT "users_name_check" CHECK ("name" <> \'\') NOT VALID,\nADD UNIQUE ("email"),\nADD FOREIGN KEY ("team_id") REFERENCES "teams"("id"),\nADD PRIMARY KEY ("id");',
+      ),
+      [
+        'adds a constraint to an existing table',
+        'adds a constraint to an existing table',
+        'adds a constraint to an existing table',
+        'adds a constraint to an existing table',
+      ],
+    );
+    assert.deepEqual(kinds('ALTER TABLE "users" SET SCHEMA "archive";'), [
+      'moves a table to another schema',
+    ]);
+    assert.deepEqual(kinds('DROP INDEX "users_email_key";'), ['drops a unique index']);
+    assert.deepEqual(kinds('DELETE FROM "sessions";'), ['empties a table']);
+    assert.deepEqual(kinds('ALTER TYPE "MailKind" ADD VALUE \'digest\';'), [
+      'adds an enum value without IF NOT EXISTS',
+    ]);
+  });
+
+  test('applies those rules only from TIGHTENING_FROM on: earlier migrations shipped before them', () => {
+    const sql = 'ALTER TABLE "users" ADD CONSTRAINT "users_check" CHECK (true);';
+    assert.deepEqual(
+      contractSteps(sql, { tightening: false }).map((step) => step.kind),
       [],
     );
   });
@@ -185,6 +234,23 @@ describe('checkMigrations', () => {
       assert.deepEqual(acknowledged, [
         '20261012000000_drop_notes/migration.sql:2: drops a table (contract: nothing reads notes since 1.3.0)',
       ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("applies the tightening rules by the migration's name, and says how to fix an enum value", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'migrations-'));
+    try {
+      const enumValue = 'ALTER TYPE "MailKind" ADD VALUE \'digest\';\n';
+      mkdirSync(join(dir, '20261013000000_before_the_rules'));
+      writeFileSync(join(dir, '20261013000000_before_the_rules', 'migration.sql'), enumValue);
+      mkdirSync(join(dir, `${TIGHTENING_FROM}_after_the_rules`));
+      writeFileSync(join(dir, `${TIGHTENING_FROM}_after_the_rules`, 'migration.sql'), enumValue);
+      const { problems } = checkMigrations(dir);
+      assert.equal(problems.length, 1);
+      assert.match(problems[0] ?? '', new RegExp(`^${TIGHTENING_FROM}_after_the_rules/`));
+      assert.match(problems[0] ?? '', /Write ADD VALUE IF NOT EXISTS/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

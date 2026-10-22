@@ -108,16 +108,28 @@ test.describe('with email', () => {
   });
 });
 
-test('offers no recovery and no sign-up where email is off', async ({ page }) => {
-  await page.route('**/api/auth/capabilities', (route) =>
-    route.fulfill({
-      json: { data: { passwordReset: false, signUp: false }, message: 'Operation successful' },
-    }),
-  );
-  const answered = page.waitForResponse('**/api/auth/capabilities');
-  await page.goto('/app/sign-in');
-  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
-  await answered;
-  await expect(page.getByRole('link', { name: 'Forgot your password?' })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Create an account' })).toHaveCount(0);
-});
+// Each answer turns one link on and the other off: the one that shows proves
+// the answer was applied, so the missing one is missing because of it.
+for (const [label, offers, shown, hidden] of [
+  [
+    'no recovery where email is off',
+    { passwordReset: false, signUp: true },
+    'Create an account',
+    'Forgot your password?',
+  ],
+  [
+    'no sign-up where it is closed',
+    { passwordReset: true, signUp: false },
+    'Forgot your password?',
+    'Create an account',
+  ],
+] as const) {
+  test(`offers ${label}`, async ({ page }) => {
+    await page.route('**/api/auth/capabilities', (route) =>
+      route.fulfill({ json: { data: offers, message: 'Operation successful' } }),
+    );
+    await page.goto('/app/sign-in');
+    await expect(page.getByRole('link', { name: shown })).toBeVisible();
+    await expect(page.getByRole('link', { name: hidden })).toHaveCount(0);
+  });
+}

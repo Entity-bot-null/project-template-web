@@ -64,9 +64,14 @@ CREATE ROLE app_runtime LOGIN PASSWORD '<from the secret store>' CONNECTION LIMI
 GRANT CONNECT ON DATABASE app TO app_runtime;
 GRANT USAGE ON SCHEMA public TO app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
--- Tables the migrator creates later get the same rights.
+-- Tables and sequences the migrator creates later get the same rights.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
 ```
+
+Never on the migration history (`_prisma_migrations`): a migration takes the runtime role's rights
+back from it at the first deployment, and a restore does the same (below).
 
 `CONNECTION LIMIT` caps what all API instances together may open (instances × `DB_POOL_MAX`,
 docs/database.md#connections). The application never holds backup or restore credentials.
@@ -225,6 +230,10 @@ dc() { docker compose --env-file server.env --env-file release.env "$@"; }
    GRANT USAGE ON SCHEMA public TO app_runtime;
    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+   -- The migration history stays the migrator's alone.
+   REVOKE ALL ON TABLE _prisma_migrations FROM app_runtime;
    SQL
    ```
 

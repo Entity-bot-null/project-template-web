@@ -35,22 +35,67 @@ describe('OpenAPI contract', () => {
     expect(document).toEqual(committed);
   });
 
-  it('declares the bearer requirement on every route but the public ones', () => {
-    // Sign-in and its session cookies, the probes, and the Web Vitals the
-    // browser sends signed in or not (docs/security.md#web-vitals). A new
-    // public route is a decision: add it here with its reason.
-    const publicRoute = (path: string) =>
-      path.startsWith('/api/auth/') ||
-      path.startsWith('/api/health/') ||
-      path === '/api/telemetry/web-vitals';
-    const unprotected = operations()
-      .filter(({ path }) => !publicRoute(path))
-      .filter(({ op }) => {
-        const security = (op as { security?: Record<string, unknown>[] }).security ?? [];
-        return !security.some((requirement) => 'bearer' in requirement);
-      })
-      .map(({ path }) => path);
+  // Every route anyone may call, each with its reason: a new public route is a
+  // decision, added here. /api/auth/ is the anonymous namespace: the web client
+  // never sends its bearer token there (apps/web/src/auth/middleware.ts), so a
+  // route that needs a session does not belong under it.
+  const PUBLIC_ROUTES = new Set([
+    // Sign-in, and the session cookie it sets, renews and ends.
+    'POST /api/auth/sign-in',
+    'POST /api/auth/refresh',
+    'POST /api/auth/logout',
+    // What the deployment offers, read before anyone signs in.
+    'GET /api/auth/capabilities',
+    // Asking for an emailed link, and using one: sign-up, password recovery,
+    // change of email, invitations.
+    'POST /api/auth/sign-ups',
+    'POST /api/auth/sign-ups/confirm',
+    'POST /api/auth/password-resets',
+    'POST /api/auth/password-resets/confirm',
+    'POST /api/auth/email-changes/confirm',
+    'POST /api/auth/email-changes/revert',
+    'POST /api/auth/invitations/accept',
+    // The probes.
+    'GET /api/health/live',
+    'GET /api/health/ready',
+    // Web Vitals, sent signed in or not (docs/security.md#web-vitals).
+    'POST /api/telemetry/web-vitals',
+  ]);
+
+  const routes = () =>
+    Object.entries(document.paths).flatMap(([path, item]) =>
+      Object.entries(item)
+        .filter(([, op]) => typeof op === 'object' && op !== null && 'responses' in op)
+        .map(([method, op]) => ({
+          route: `${method.toUpperCase()} ${path}`,
+          path,
+          bearer: ((op as { security?: Record<string, unknown>[] }).security ?? []).some(
+            (requirement) => 'bearer' in requirement,
+          ),
+        })),
+    );
+
+  it('declares the bearer requirement on every route but the listed public ones', () => {
+    const unprotected = routes()
+      .filter(({ route, bearer }) => !bearer && !PUBLIC_ROUTES.has(route))
+      .map(({ route }) => route);
     expect(unprotected).toEqual([]);
+  });
+
+  it('keeps /api/auth/ anonymous: the web client sends no token there', () => {
+    const authenticated = routes()
+      .filter(({ path, bearer }) => bearer && path.startsWith('/api/auth/'))
+      .map(({ route }) => route);
+    expect(authenticated).toEqual([]);
+  });
+
+  it('lists as public only routes that exist and are public', () => {
+    const publicOnes = new Set(
+      routes()
+        .filter(({ bearer }) => !bearer)
+        .map(({ route }) => route),
+    );
+    expect([...PUBLIC_ROUTES].filter((route) => !publicOnes.has(route))).toEqual([]);
   });
 
   it('keeps every route under /api with a documented success response', () => {

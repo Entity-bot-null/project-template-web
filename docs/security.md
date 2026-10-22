@@ -212,8 +212,9 @@ password) in someone else's hands cannot take the account for good:
   owner gets a notice instead and the person asking is answered the same (202, the lookup after
   the answer): no enumeration. Limited per address like every link.
 - **Confirming** (`POST /api/auth/email-changes/confirm`, from the new mailbox, signed in or
-  not): the token works once and only while the account is as it was when it was sent (same
-  address and `security_version`: a password change in between voids it). In one transaction
+  not): the token works once and only while the account is as it was when the change was asked
+  for (same address and `security_version`: a password change in between voids it, and a request
+  whose message is still in the outbox then goes out with no link). In one transaction
   under the account's row lock: the address changes, `security_version` increases (every access
   token ends at once), every session ends (sign in again with the new address), the other
   reset and change links of the account are dropped, and the **previous** address gets a notice
@@ -221,8 +222,10 @@ password) in someone else's hands cannot take the account for good:
 - **Undoing** (`POST /api/auth/email-changes/revert`, from the previous mailbox, within **7
   days**): the previous address comes back **with a new password chosen there** (whoever changed
   the address knew the old one), `security_version` increases and every session ends. Every other
-  link of the account is dropped **except the undo links minted before this one**: they undo
-  earlier changes, so the earliest owner wins. Whoever took the account and undoes their own later
+  link of the account is dropped **except the undo links of earlier changes**, so the earliest owner
+  wins. They are ranked by the change they undo (the account's `security_version` right after it),
+  not by when their notice went out: a notice that waited in the outbox still outranks the links of
+  later changes. Whoever took the account and undoes their own later
   change cannot void the owner's link; the owner's link voids theirs (both orders are tested). The
   undo link is **not bound to the account's later state** and is never replaced by a newer one:
   changing the address again or the password does not void it either. A refused password keeps the
@@ -241,11 +244,13 @@ password) in someone else's hands cannot take the account for good:
   another user than the one who sent it.
 - **One cookie change at a time across tabs** (`web/src/auth/session.ts`): tabs share the cookie,
   and refresh (which rotates it), sign-in (which replaces it) and logout (which clears it) all
-  write it, so they take turns through one Web Lock. No tab presents a token another has just
-  rotated, and no late answer undoes a newer one: a refresh answered after another tab's sign-in
-  would put the old session back, a logout would clear the new one. A refresh gives up after 10
-  seconds without an answer, so a stalled one cannot hold the lock for every tab. Without Web Locks
-  (or when the browser refuses the lock), one retry covers a race between two refreshes.
+  write it, so they take turns through two Web Locks: refreshes and sign-ins share one, sign-ins
+  and logouts the other. No tab presents a token another has just rotated, and no late answer
+  undoes a newer one: a refresh answered after another tab's sign-in would put the old session
+  back, a logout would clear the new one. A logout never waits for a refresh. A refresh gives up
+  after 10 seconds without an answer, a sign-in or a logout after 20, so a stalled one cannot hold
+  a lock for every tab. Without Web Locks (or when the browser refuses one), one retry covers a
+  race between two refreshes.
 - **A rate-limited boot** (`429` on the first refresh of a page) waits out a `Retry-After` of up to
   5 seconds once, then settles as usual: people behind one address share the per-address limit, and
   a `429` says nothing about the session.
@@ -258,10 +263,14 @@ password) in someone else's hands cannot take the account for good:
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next
   visit would restore; the logout request leaves at once, with `keepalive` so closing the page
   does not cancel it, without waiting for a refresh in flight (any token of the family ends the
-  whole family). If the server cannot be reached, the sign-in page says so and offers a retry.
+  whole family): only another tab's sign-in on its way goes first, and that one ends this session
+  itself. A rotation that lands after the sign-out cannot bring the hint back: it is dropped again.
+  If the server cannot be reached, the sign-in page says so and offers a retry.
 - **Ordering:** a sign-in waits for a logout or a refresh still on its way, which would otherwise
   clear or replace the cookie it sets; a refresh that lands after a sign-in or a sign-out never
-  overwrites it.
+  overwrites it; a sign-in or a password change answered after a sign-out (this tab's, or another
+  tab's reaching it meanwhile) does not sign the tab back in, and the session it started is ended
+  on the server too.
 - After a sign-out the next user starts at home, not on the page the previous one left.
 
 ## Secret rotation
@@ -527,7 +536,10 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
   of silently re-enabling a default.
 - **Scrubbed again before sending** (`scrubEvent`): request reduced to method and URL without query,
   user to its id, breadcrumbs dropped (API) or stripped of URLs' query strings and secret-looking
-  fields (browser, console breadcrumbs dropped), every message and field through the log redaction.
+  fields (browser, console breadcrumbs dropped, DOM breadcrumbs reduced to the element without its
+  attributes' values: a button's label can name someone), every message and field through the log
+  redaction. A Prisma error goes by its class, code and frames, never its message, which can quote
+  the query's arguments (logs too).
 - **Production DSNs must be https** (boot check); a malformed DSN fails the boot instead of turning
   error tracking off silently. Use separate Sentry projects for API and web, restrict who can read
   them, and set the data retention the project's policy allows.

@@ -11,9 +11,18 @@
 // Contract steps: dropping a table, column, type or view; renaming a table,
 // column or type (or an enum value); changing a column's type; making a column
 // required, adding a required column without a default, or removing a
-// default; emptying a table. Expand steps (new tables, nullable columns,
-// columns with a default, indexes, looser constraints) need nothing. Only
-// plain statements are read: SQL inside a DO block or a function body is not.
+// default; emptying a table. From the migrations after TIGHTENING_FROM on,
+// also: a unique index or a constraint (CHECK, UNIQUE, PRIMARY KEY, FOREIGN
+// KEY, EXCLUDE) added to a table an earlier migration created (the previous
+// release may write what it refuses, and existing rows may break it), a
+// dropped unique index, a table moved to another schema, a DELETE without WHERE, and
+// an enum value added without IF NOT EXISTS (PostgreSQL cannot drop it, so a
+// migration that failed after adding it could not run again:
+// docs/database.md#when-a-migration-fails). The migrations before it shipped
+// before those rules, and a committed migration is never edited. Expand steps
+// (new tables, nullable columns, columns with a default, indexes, looser
+// constraints) need nothing. Only plain statements are read: SQL inside a DO
+// block or a function body is not.
 //
 //   node scripts/check-migrations.mjs [<migration.sql>...]
 //
@@ -21,10 +30,15 @@
 // It runs in `pnpm test:scripts` (CI) and on staged migrations at each commit
 // (lint-staged.config.js). Exits 1 when a contract step has no reason.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MIGRATIONS = fileURLToPath(new URL('../apps/api/prisma/migrations/', import.meta.url));
+
+/** The first migration the tightening rules apply to (by directory name). */
+export const TIGHTENING_FROM = '20261022000000';
+
+const ENUM_VALUE = 'adds an enum value without IF NOT EXISTS';
 
 /**
  * One SQL statement: its first line number, the comments before it, and its
@@ -204,16 +218,82 @@ function contractKinds(code) {
 }
 
 /**
+ * The table a statement names right after `prefix`, as PostgreSQL resolves
+ * it: unquoted names folded to lower case, quoted ones as written, the schema
+ * left out ("users", public.users and USERS are users).
+ * @param {string} text the statement as written
+ * @param {RegExp} prefix what comes before the name
+ */
+function tableIn(text, prefix) {
+  const rest = text.replace(prefix, '');
+  const name = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)`;
+  const match = new RegExp(`^${name}(?:\\s*\\.\\s*${name})*`).exec(rest);
+  if (match === null) return undefined;
+  const last = match[0].split(/\s*\.\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/).at(-1) ?? '';
+  return last.startsWith('"') ? last.slice(1, -1).replaceAll('""', '"') : last.toLowerCase();
+}
+
+/**
+ * The tightening steps of a statement (TIGHTENING_FROM): `created` holds the
+ * tables this migration created before it, which nothing writes yet.
+ * @param {Statement} statement
+ * @param {Set<string>} created
+ * @returns {string[]}
+ */
+function tighteningKinds({ code, text }, created) {
+  if (/^CREATE UNIQUE INDEX\b/.test(code)) {
+    const table = tableIn(text, /^[\s\S]*?\bON\s+(?:ONLY\s+)?/i);
+    return table !== undefined && created.has(table)
+      ? []
+      : ['adds a unique index to an existing table'];
+  }
+  // Prisma names a unique index <table>_<columns>_key: the previous release may
+  // rely on it (an upsert's conflict target). Other indexes only cost speed.
+  if (/^DROP INDEX\b/.test(code) && /_(?:p?key)"?\s*(?:CASCADE|RESTRICT)?\s*;?\s*$/i.test(text)) {
+    return ['drops a unique index'];
+  }
+  if (/^DELETE FROM\b/.test(code) && !/\bWHERE\b/.test(code)) return ['empties a table'];
+  if (/^ALTER TYPE\b.*\bADD VALUE\b/.test(code) && !/\bADD VALUE IF NOT EXISTS\b/.test(code)) {
+    return [ENUM_VALUE];
+  }
+  if (!/^ALTER TABLE\b/.test(code)) return [];
+  const table = tableIn(text, /^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?/i);
+  const isNew = table !== undefined && created.has(table);
+  const constraint = new RegExp(
+    `^ADD (?:CONSTRAINT ${NAME} )?(?:CHECK|UNIQUE|PRIMARY KEY|FOREIGN KEY|EXCLUDE)\\b`,
+  );
+  return alterTableActions(code).flatMap((action) => {
+    if (/^SET SCHEMA\b/.test(action)) return ['moves a table to another schema'];
+    return constraint.test(action) && !isNew ? ['adds a constraint to an existing table'] : [];
+  });
+}
+
+/**
  * The contract steps of a migration, each with the reason written right
  * above its statement (`-- contract: <why>`), if any.
  * @param {string} sql
+ * @param {{ tightening?: boolean }} [options] whether the tightening rules
+ *   apply (TIGHTENING_FROM): from the migration's directory name
  * @returns {{ kind: string; line: number; text: string; reason: string | undefined }[]}
  */
-export function contractSteps(sql) {
+export function contractSteps(sql, { tightening = true } = {}) {
+  /** Tables this migration creates: new, so nothing writes them yet. */
+  const created = new Set();
   return splitStatements(sql).flatMap((statement) => {
     const reason = /^\s*--\s*contract:[ \t]*(\S.*?)\s*$/im.exec(statement.comments)?.[1];
     const text = statement.text.split('\n')[0] ?? '';
-    return contractKinds(statement.code).map((kind) => ({
+    if (/^CREATE (?:UNLOGGED )?TABLE\b/.test(statement.code)) {
+      const table = tableIn(
+        statement.text,
+        /^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i,
+      );
+      if (table !== undefined) created.add(table);
+    }
+    const kinds = [
+      ...contractKinds(statement.code),
+      ...(tightening ? tighteningKinds(statement, created) : []),
+    ];
+    return kinds.map((kind) => ({
       kind,
       line: statement.line,
       text,
@@ -233,8 +313,17 @@ function checkFiles(files) {
   /** @type {string[]} */
   const acknowledged = [];
   for (const { path, label } of files) {
-    for (const step of contractSteps(readFileSync(path, 'utf8'))) {
-      if (step.reason === undefined) {
+    const migration = basename(dirname(path));
+    const tightening = !/^\d{14}_/.test(migration) || migration >= TIGHTENING_FROM;
+    for (const step of contractSteps(readFileSync(path, 'utf8'), { tightening })) {
+      if (step.reason === undefined && step.kind === ENUM_VALUE) {
+        problems.push(
+          `${label}:${String(step.line)}: ${step.kind}: ${step.text} PostgreSQL cannot drop an enum ` +
+            'value, and runs no Prisma migration in a transaction: if a later statement fails, the ' +
+            'migration cannot run again (docs/database.md#when-a-migration-fails). Write ADD VALUE ' +
+            'IF NOT EXISTS (edit the generated SQL before committing it).',
+        );
+      } else if (step.reason === undefined) {
         problems.push(
           `${label}:${String(step.line)}: ${step.kind}: ${step.text} The release before this one may ` +
             'still use what it removes or tightens, and a rollback runs it on this schema ' +

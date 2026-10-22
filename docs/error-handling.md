@@ -11,7 +11,8 @@ Every error leaves as `{ "data": null, "message": "..." }` with its HTTP status,
 | ----------------------------------------------------- | ---------- | ---------------------------------------------- |
 | `HttpException` (`NotFoundException`, ...)            | its status | its message                                    |
 | Zod validation failure (`ZodValidationPipe`)          | 400        | every issue with its path                      |
-| Body parser errors (malformed JSON, too large)        | 400 / 413  | the parser's safe message                      |
+| Malformed JSON body                                   | 400        | `The request body is not valid JSON`           |
+| Body too large (the parser's limit)                   | 413        | the parser's safe message                      |
 | Rate limit (`ThrottlerException`)                     | 429        | `Too many requests, retry later`               |
 | Prisma `P2002` unique violation                       | 409        | generic, no column names                       |
 | Prisma `P2003` foreign key                            | 409        | generic                                        |
@@ -26,7 +27,10 @@ Rules:
   client developer (English, no internals).
 - **Never leak internals.** Stack traces, SQL, file paths, library messages and secrets stay in
   the log. A 5xx is logged with method, path (no query string), status and the request id the
-  client received in `X-Request-Id`; 4xx are expected and not logged as errors.
+  client received in `X-Request-Id`; 4xx are expected and not logged as errors. A Prisma error's
+  message is neither logged nor reported (it can quote the query's arguments: an address, a
+  name): its class, code and frames are (`loggableStack`, `reportableError` in
+  `common/logging/error-summary.ts`).
 - **404 over 403 for records the caller may not see** (docs/security.md#authorization).
 - **Fail fast at boot on configuration.** A missing or invalid environment variable stops the
   process with the variable's name (docs/environment.md). A database that is down does not: the API

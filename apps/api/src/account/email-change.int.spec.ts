@@ -224,6 +224,47 @@ describe.skipIf(skipWithoutMailpit)('change of email (PostgreSQL + Mailpit)', ()
       .expect(401);
   });
 
+  it("keeps the owner's undo link the winner when the owner's notice went out after the thief's", async () => {
+    const grace = await account();
+    const thief = await signIn(t.server, grace.email);
+    const first = address();
+    await ask(thief.accessToken, first).expect(202);
+    await confirm(await linkIn(first, 'Confirm your new Integration address', CONFIRM_LINK)).expect(
+      204,
+    );
+    // The notice to the owner's address failed once: in retry backoff, as the
+    // worker schedules it (nextAttemptAt in the future).
+    await t.prisma.mailMessage.updateMany({
+      where: { kind: 'email_changed', recipient: grace.email },
+      data: { nextAttemptAt: new Date(Date.now() + 60 * 60_000) },
+    });
+    // Meanwhile they move the account again; that notice goes out at once.
+    const again = await signIn(t.server, first, TEST_PASSWORD);
+    const second = address();
+    await ask(again.accessToken, second).expect(202);
+    await confirm(
+      await linkIn(second, 'Confirm your new Integration address', CONFIRM_LINK),
+    ).expect(204);
+    const theirUndo = await linkIn(first, 'Your Integration address was changed', REVERT_LINK);
+
+    // The owner's notice is retried later; the owner undoes the first change.
+    await t.prisma.mailMessage.updateMany({
+      where: { kind: 'email_changed', recipient: grace.email, status: 'pending' },
+      data: { nextAttemptAt: new Date() },
+    });
+    const ownersUndo = await linkIn(
+      grace.email,
+      'Your Integration address was changed',
+      REVERT_LINK,
+    );
+    await revert(ownersUndo).expect(204);
+
+    // Their link undoes a later change: it died with the owner's.
+    await revert(theirUndo, 'quiet orchard compass 42').expect(404);
+    const restored = await t.prisma.user.findUniqueOrThrow({ where: { id: grace.id } });
+    expect(restored.email).toBe(grace.email);
+  });
+
   it('asks for the current password, refuses the same address, and queues nothing then', async () => {
     const grace = await account();
     const session = await signIn(t.server, grace.email);
@@ -245,6 +286,28 @@ describe.skipIf(skipWithoutMailpit)('change of email (PostgreSQL + Mailpit)', ()
       .send({ currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD })
       .expect(200);
     await confirm(token).expect(404);
+  });
+
+  it('voids a confirmation asked for before a password change, even when the message goes out after it', async () => {
+    const grace = await account();
+    // Someone else holds a session of the account and knows its password.
+    const thief = await signIn(t.server, grace.email);
+    const target = address();
+    await ask(thief.accessToken, target).expect(202);
+    // Queued, not delivered yet (retry backoff, an outage, `mail retry --failed`).
+    await t.changes.settled();
+    const owner = await signIn(t.server, grace.email);
+    await request(t.server)
+      .post('/api/account/password')
+      .set(bearer(owner.accessToken))
+      .send({ currentPassword: TEST_PASSWORD, newPassword: NEW_PASSWORD })
+      .expect(200);
+
+    // The message goes out with no link: nothing reaches the new address.
+    await t.worker.runOnce();
+    expect((await messagesTo(target)).map((m) => m.Subject)).toEqual([]);
+    const unchanged = await t.prisma.user.findUniqueOrThrow({ where: { id: grace.id } });
+    expect(unchanged.email).toBe(grace.email);
   });
 
   it('lets only one of two simultaneous confirmations through, and answers 409 for a taken address', async () => {

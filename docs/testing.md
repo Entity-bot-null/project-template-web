@@ -17,8 +17,10 @@
   `users.service.spec.ts`).
 - `*.int.spec.ts`: API integration tests, next to the module (`auth.int.spec.ts`).
 - `e2e/*.e2e.ts`: end-to-end tests.
-- `*.test.*` is **not used**: one suffix per kind keeps runners and reviewers unambiguous, and no
-  runner collects `.test.` files, so they would silently never run.
+- `*.test.*` is **not used** in the apps: one suffix per kind keeps runners and reviewers
+  unambiguous, and no app's runner collects `.test.` files, so they would silently never run. The
+  repository's own scripts are the exception: `scripts/*.test.mjs`, run by `node --test`
+  (`pnpm test:scripts`).
 
 ### Structure
 
@@ -128,7 +130,11 @@ their own stricter numbers with glob keys, for example
 built web assets with `apps/web/performance-budget.json`, and the landing's with
 `apps/landing/performance-budget.json`: its JavaScript budget is 0 kB (the pages are HTML and CSS;
 a script added to one fails the check until its budget is raised on purpose) and its CSS budget
-6 kB. The web app's budget is its measured
+6 kB. Astro never writes a script into a page (`assetsInlineLimit: 0`), and the same check reads
+every built page of the landing for what the web server's Content-Security-Policy refuses: an
+inline script or event handler, a `<style>` element or a style attribute, a `javascript:` URL, a
+file from another origin (the preview server of the E2E tests sends no CSP, so only this check
+sees them before production). The web app's budget is its measured
 build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
 Vitals chunks 5 kB, the lazy account and admin pages 13 kB, all JavaScript 157 kB, CSS 5 kB). The initial
 JavaScript is what `index.html` loads before the app starts: its entry script and every chunk it

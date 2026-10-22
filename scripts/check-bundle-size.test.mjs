@@ -1,8 +1,9 @@
 // Tests of scripts/check-bundle-size.mjs: what counts as the initial
-// JavaScript, and how budgets pass, fail or match nothing. Run: pnpm test:scripts
+// JavaScript, how budgets pass, fail or match nothing, and what a page may not
+// carry under the Content-Security-Policy. Run: pnpm test:scripts
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { checkBudgets, initialAssets } from './check-bundle-size.mjs';
+import { checkBudgets, cspProblems, initialAssets } from './check-bundle-size.mjs';
 
 // The shape Vite writes: the entry, a chunk it shares with lazy ones, the CSS.
 const HTML = `<!doctype html>
@@ -119,5 +120,47 @@ describe('checkBudgets', () => {
     assert.equal(over, false);
     assert.match(lines[0]?.line ?? '', /^NO MATCH {2}Renamed: .*fix the pattern "\^gone-"$/);
     assert.match(lines[1]?.line ?? '', /index\.html loads no script from assets\/$/);
+  });
+});
+
+describe('cspProblems', () => {
+  // The shape of a landing page: files of this origin, absolute links that
+  // only point somewhere (canonical, alternates), a data: image.
+  const PAGE = `<!doctype html><html lang="en"><head>
+    <link rel="canonical" href="https://example.com/">
+    <link rel="alternate" hreflang="es" href="https://example.com/es/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/_astro/Headline.DfKozz_w.css">
+    <script type="module" src="/_astro/menu.B1x.js"></script>
+    <script type="application/ld+json">{"@type":"WebSite"}</script>
+    </head><body><a href="https://github.com/acme">Code</a>
+    <img src="data:image/svg+xml,%3Csvg%3E" alt=""><p class="stylesheet">x</p></body></html>`;
+
+  test('passes a page made of files of this origin', () => {
+    assert.deepEqual(cspProblems(PAGE), []);
+  });
+
+  test('finds what the policy refuses: inline scripts and styles, handlers, other origins', () => {
+    const page = `<SCRIPT>document.body.dataset.menu = "ready"</SCRIPT>
+      <script type="module">document.documentElement.dataset.x=\`1\`;</script>
+      <style>p{color:red}</style>
+      <p STYLE='color: red'>x</p>
+      <button onclick="go()">Go</button>
+      <a href=" javascript:alert(1)">x</a>
+      <link rel="preload stylesheet" href="//fonts.example.net/a.css">
+      <img src="https://cdn.example.net/a.png" srcset="/a.png 1x, https://cdn.example.net/a@2x.png 2x">
+      <script src="data:text/javascript,alert(1)"></script>`;
+    assert.deepEqual(cspProblems(page), [
+      'an inline script',
+      'an inline script',
+      'a <style> element',
+      'a style attribute on <p>',
+      'an inline event handler on <button>',
+      'a javascript: URL',
+      'a file from another origin: //fonts.example.net/a.css',
+      'a file from another origin: https://cdn.example.net/a.png',
+      'a file from another origin: https://cdn.example.net/a@2x.png',
+      'a file from another origin: data:text/javascript,alert(1)',
+    ]);
   });
 });

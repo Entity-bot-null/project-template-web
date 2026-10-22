@@ -6,6 +6,7 @@ import {
   type OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
+import { errorSummary } from '../common/logging/error-summary.js';
 import { sha256Hex } from '../common/utils/sha256.js';
 import { Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -235,9 +236,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (count > 0) this.logger.log(`Swept ${count} expired sessions`);
       return count;
     } catch (error) {
-      this.logger.warn(
-        `Session sweep failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.warn(`Session sweep failed: ${errorSummary(error)}`);
       return 0;
     }
   }

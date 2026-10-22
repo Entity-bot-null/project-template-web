@@ -76,6 +76,20 @@ export class MailStore {
     return this.prisma.$transaction(work, { timeout: 10_000 });
   }
 
+  /**
+   * Extends the lease of a message this worker is still sending, by the
+   * database's clock like the claim. False once the claim is no longer held
+   * (another worker took the message over after a pause longer than the lease).
+   */
+  async renewLease(claim: Claim, leaseMs: number = MAIL_LEASE_MS): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE "mail_messages"
+      SET "locked_until" = now() + make_interval(secs => ${leaseMs / 1000}::double precision),
+          "updated_at" = now()
+      WHERE "id" = ${claim.id}::uuid AND "status" = 'sending' AND "attempts" = ${claim.attempts}`;
+    return count === 1;
+  }
+
   /** The server accepted it: the address goes, only its hash stays. */
   async markSent(claim: Claim): Promise<boolean> {
     return this.finish(claim, {

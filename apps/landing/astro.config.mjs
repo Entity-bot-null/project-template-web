@@ -59,6 +59,11 @@ export default defineConfig({
   server: { port: 4321 },
   vite: {
     plugins: [tailwindcss()],
+    // Astro writes a small script straight into the page (below Vite's inline
+    // limit) instead of a file: the Content-Security-Policy would refuse it in
+    // production only, and the 0 kB JavaScript budget, which counts files,
+    // would not see it. Every script stays a file of this origin.
+    build: { assetsInlineLimit: 0 },
     server: {
       // The port the box of `pnpm dev` shows (scripts/dev-banner.mjs): fail
       // rather than move to another one.

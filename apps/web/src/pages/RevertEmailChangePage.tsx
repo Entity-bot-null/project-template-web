@@ -47,8 +47,9 @@ function RevertEmailChangeContent({ token, dropToken }: LinkToken) {
       setPassword('');
       setOutcome('reverted');
       // The store's state now, not this render's: a boot refresh may have
-      // signed this tab in while the request was on its way.
-      if (getState().status === 'authenticated') void auth.signOut();
+      // signed this tab in while the request was on its way, or may still be
+      // on its way (signing out now keeps it from landing).
+      if (getState().status !== 'anonymous') void auth.signOut();
       return;
     }
     const { status } = result.failure;

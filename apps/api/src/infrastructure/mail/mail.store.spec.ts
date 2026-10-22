@@ -100,6 +100,25 @@ describe('MailStore', () => {
     expect(expired).toMatchObject({ status: 'expired', recipient: null });
   });
 
+  it('renews the lease of a message still being sent, fenced by its claim, by the database clock', async () => {
+    const executeRaw = vi.fn(() => Promise.resolve(1));
+    const { store } = storeWith({ $executeRaw: executeRaw });
+    await expect(store.renewLease(claimed, 90_000)).resolves.toBe(true);
+    const [sql, lease, id, attempts] = executeRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      number,
+      string,
+      number,
+    ];
+    const statement = sql.join('?');
+    expect(statement).toContain('"locked_until" = now() + make_interval');
+    expect(statement).toContain(`"status" = 'sending' AND "attempts" = ?`);
+    expect([lease, id, attempts]).toEqual([90, 'm1', 2]);
+    // Taken over by another worker meanwhile: no longer this one's.
+    executeRaw.mockResolvedValueOnce(0);
+    await expect(store.renewLease(claimed)).resolves.toBe(false);
+  });
+
   it('reports whether the fenced update found its claim', async () => {
     const { store } = storeWith({
       mailMessage: { updateMany: vi.fn(() => Promise.resolve({ count: 0 })) },

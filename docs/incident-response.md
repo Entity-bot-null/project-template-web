@@ -159,14 +159,18 @@ per-instance counters`; `Cache unavailable, serving from the source`;
   sender. Redis holds nothing that must survive (docs/disaster-recovery.md#what-to-protect).
 - **First checks:** the reason in the line: `ECONNREFUSED` or a timeout (down, network), `WRONGPASS`
   or `NOAUTH` (credentials changed), `LOADING` (Redis restarting and loading its data, transient),
-  `OOM command not allowed` (memory full), `NOPERM` (a key or command outside the ACL). The
+  `OOM command not allowed` (memory full), `NOPERM` (a key or command outside the ACL: another
+  `REDIS_KEY_PREFIX` than the ACL line's, or a command it does not list; PING still answers, but
+  readiness, which writes under the prefix, reports Redis unavailable). The
   provider's status and memory metrics; on the VPS target, `docker compose ... ps redis` and
   `logs redis` on the server.
 - **Signals:** node-redis command metrics (errors, duration), database latency (cache misses).
 - **Immediate actions:** none needed in the application: it reconnects by itself (backoff up to
   5 seconds). Watch database load and latency while the cache is out.
 - **Mitigation:** restart or fail over Redis (on the VPS target,
-  `docker compose ... up -d --wait redis`); restore the credentials; memory full: every key the
+  `docker compose ... up -d --wait redis`); restore the credentials; `NOPERM`: the same prefix and
+  the adapters' commands in the ACL line of `deploy/vps/compose.yaml` (docs/deploy-vps.md), or the
+  previous `REDIS_KEY_PREFIX`; memory full: every key the
   template writes has a TTL, so check the eviction policy and what else writes to that Redis.
 - **Roll back when:** a deployment changed `REDIS_URL` or the stores.
 - **Recovered when:** `Redis connection restored after <n>s` or `Redis answering again after <n>s`,
@@ -306,7 +310,10 @@ per-instance counters`; `Cache unavailable, serving from the source`;
     migration in a new pull request (editing the failed file is acceptable only if it has not been
     applied in any environment);
   - finishing it by hand is the last resort: apply the remaining statements, then
-    `migrate resolve --applied <migration>`;
+    `migrate resolve --applied <migration>`. It is the only way when the failed migration had
+    already added enum values without `IF NOT EXISTS` (the committed migrations before
+    `TIGHTENING_FROM` in `scripts/check-migrations.mjs` do): PostgreSQL cannot drop them, and
+    running the migration again stops at `enum label ... already exists`;
   - `Migrations changed after they were applied to this database`: nothing ran; a migration
     applied here was edited since (docs/database.md#migrations). Put the file back as it was
     applied (`git log -p -- apps/api/prisma/migrations/<name>/migration.sql` shows its versions),

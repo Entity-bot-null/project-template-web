@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { describeFailure } from '../api/errors';
 import { useAuth } from '../auth';
 import { useCapabilities } from '../auth/capabilities';
+import { getState } from '../auth/session';
 import { emailError, passwordError } from '../auth/validation';
 import { Alert } from '../components/Alert';
 import { PasswordField } from '../components/PasswordField';
@@ -44,6 +45,11 @@ export function SignInPage() {
           ? 'Invalid email or password.'
           : describeFailure(result.failure),
       );
+    } else if (getState().status !== 'authenticated') {
+      // Signed in, the guard has already left this page. Still here: another
+      // tab signed out while the sign-in was on its way, and that stands.
+      setSubmitting(false);
+      setFailure('You were signed out in another tab meanwhile. Sign in again.');
     }
   }
 

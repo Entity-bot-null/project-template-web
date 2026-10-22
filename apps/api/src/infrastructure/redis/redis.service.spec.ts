@@ -105,6 +105,15 @@ describe('RedisService', () => {
     );
     const wrongType = new ErrorReply('WRONGTYPE Operation against a key holding the wrong kind');
     await expect(service.run(() => Promise.reject(wrongType))).rejects.toBe(wrongType);
+    // Outside the ACL (another key prefix, a command it does not list): the
+    // adapters degrade, they do not fail the request.
+    const refused = new ErrorReply(
+      'NOPERM No permissions to access a key used as arguments of the command',
+    );
+    await expect(service.run(() => Promise.reject(refused))).rejects.toMatchObject({
+      name: 'RedisUnavailableError',
+      message: expect.stringContaining('NOPERM') as string,
+    });
   });
 
   it('logs an outage once, however many reconnects fail, and its recovery', () => {
@@ -145,12 +154,19 @@ describe('RedisService', () => {
     );
   });
 
-  it('reports health from a PING', async () => {
+  it('reports health from a write of its own under the prefix, as the adapters write', async () => {
     const { service, client } = serviceWith();
     service.onModuleInit();
     client.becomeReady();
     await expect(service.health()).resolves.toBe('ok');
-    client.ping.mockRejectedValueOnce(new Error('Timeout'));
+    expect(client.eval).toHaveBeenCalledWith(expect.stringContaining("'SET'"), {
+      keys: ['app:health'],
+      arguments: ['1', '10000'],
+    });
+    client.eval.mockRejectedValueOnce(new Error('Timeout'));
+    await expect(service.health()).resolves.toBe('unavailable');
+    // PING answers where the ACL refuses the prefix: readiness must not.
+    client.eval.mockRejectedValueOnce(new ErrorReply('NOPERM No permissions to access a key'));
     await expect(service.health()).resolves.toBe('unavailable');
   });
 

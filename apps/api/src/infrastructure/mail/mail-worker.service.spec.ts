@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { disabledErrorTracker, setErrorTracker } from '../../observability/error-tracker.js';
 import type { MailOutboxService } from './mail-outbox.service.js';
 import { MailWorker } from './mail-worker.service.js';
+import { MAIL_LEASE_MS } from './mail.constants.js';
 import type { MailStore, OutboxStats } from './mail.store.js';
 import type { MailTransport } from './mail.transport.js';
 import type { ClaimedMessage, MailOptions, OutgoingMail } from './mail.types.js';
@@ -67,6 +68,7 @@ function setup({
     claim: vi.fn(() => Promise.resolve(queue.shift())),
     inTransaction: vi.fn((work: (tx: unknown) => Promise<unknown>) => work('tx')),
     markSent: vi.fn(() => Promise.resolve(true)),
+    renewLease: vi.fn(() => Promise.resolve(true)),
     reschedule: vi.fn(() => Promise.resolve(true)),
     markFailed: vi.fn(() => Promise.resolve(true)),
     markExpired: vi.fn(() => Promise.resolve(true)),
@@ -326,6 +328,35 @@ describe('MailWorker', () => {
     });
     expect(context.store.reschedule).toHaveBeenCalled();
     expect(context.worker.health()).toBe('degraded');
+  });
+
+  it('renews its lease while a slow exchange goes on, and stops once it ends', async () => {
+    let answer: () => void = () => undefined;
+    const exchange = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const queued = message();
+    const context = tracked(setup({ send: () => exchange }));
+    await started(context);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      context.queue.push(queued);
+      const run = context.worker.runOnce();
+      await vi.waitFor(() => {
+        expect(context.transport.send).toHaveBeenCalled();
+      });
+      // Every step within its own timeout, the whole past the lease.
+      vi.advanceTimersByTime(MAIL_LEASE_MS * 2);
+      expect(context.store.renewLease).toHaveBeenCalledTimes(6);
+      expect(context.store.renewLease).toHaveBeenCalledWith(queued);
+      answer();
+      await run;
+      expect(context.store.markSent).toHaveBeenCalledWith(queued);
+      vi.advanceTimersByTime(MAIL_LEASE_MS);
+      expect(context.store.renewLease).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('warns when its lease ran out before it recorded a delivery (another worker may resend)', async () => {

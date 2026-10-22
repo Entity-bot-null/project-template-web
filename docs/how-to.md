@@ -249,10 +249,13 @@ export class NotesController {
 }
 ```
 
-Admin-only routes: `@Auth('admin')` on the handler or the controller. Public routes (rare):
-leave `@Auth()` out, say why in a comment, and add the route to the public ones of
+Admin-only routes: `@Auth('admin')` on the controller, or `@RequireRoles('admin')` on one
+handler of an `@Auth()` controller (`@Auth('admin')` there would register and run the guards
+twice: [authorization.md](authorization.md#roles)). Public routes (rare): leave `@Auth()` out, say
+why in a comment, and add the route, with its reason, to `PUBLIC_ROUTES` in
 `apps/api/src/openapi/openapi.spec.ts`, which fails on any other route without the bearer
-requirement.
+requirement. `/api/auth/` is for anonymous routes only (the web client sends no token there): a
+route that needs a session goes elsewhere, and the spec fails on one under `/api/auth/`.
 
 **4. Module** (`notes.module.ts`), then add `NotesModule` to the `imports` of
 `apps/api/src/app.module.ts`:
@@ -697,7 +700,10 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
   `localePath(locale, '/pricing/')`.
 - **A language.** Its code in `src/i18n/locales.ts`, its dictionary next to `en.ts` (registered in
   `src/i18n/index.ts`), its pages under `src/pages/<code>/`, its not-found page as
-  `src/pages/<code>/404.astro`. Routing, the sitemap and the alternate links follow `LOCALES`.
+  `src/pages/<code>/404.astro`. Routing, the sitemap and the alternate links follow `LOCALES`. The
+  web server answers an unknown address with the not-found page of its language: one line per
+  language in the `map $uri $landing_not_found` of `apps/web/nginx/default.conf.template`
+  (`pnpm test:scripts` checks that the two agree).
 - **A link into the app.** `appPath('sign-in')` from `src/lib/links.ts`, never a written path.
 - **A picture.** Vector images (SVG) work as they are. Raster images would need an optimizer
   (sharp), which `pnpm-workspace.yaml` keeps out because its binaries are LGPL: put a WebP or AVIF
@@ -705,10 +711,11 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
   `src/components/fragments/`, with `data-ui`, `role="img"` and a label in each language.
 - **A script.** There is none: `apps/landing/performance-budget.json` holds JavaScript at 0 kB.
   A script that becomes necessary must reach the page as a file of this origin, never inline (the
-  Content-Security-Policy refuses inline scripts: check the built HTML), and its budget is raised
-  in the same reviewed pull request.
+  Content-Security-Policy refuses inline scripts; `pnpm perf:check` reads the built pages for
+  them), and its budget is raised in the same reviewed pull request.
 
-Check: `pnpm --filter landing test`, `pnpm verify` and `pnpm build && pnpm test:e2e`
+Check: `pnpm --filter landing test`, `pnpm verify` (its `perf:check` reads the built pages),
+`pnpm test:scripts` (the web server's routes for each language) and `pnpm build && pnpm test:e2e`
 (`e2e/landing.e2e.ts` covers both languages, the 404 and the sitemap).
 
 ## Add an environment variable

@@ -1,15 +1,25 @@
+import { z } from 'zod';
 import { mintAccountToken } from '../../../auth/account-tokens.js';
 import { EMAIL_CHANGE_TTL_MS } from '../../../auth/auth.constants.js';
 import { renderMail } from './layout.js';
 import type { MailTemplate } from './registry.js';
+
+/** The account's securityVersion when the change was asked for. */
+export const EmailChangeRequestPayloadSchema = z.object({
+  securityVersion: z.string().regex(/^\d{1,9}$/),
+});
+export type EmailChangeRequestPayload = z.infer<typeof EmailChangeRequestPayloadSchema>;
 
 // A change of address, asked for on the Account page with the current
 // password (account/email-change.service.ts), is confirmed from the NEW
 // address: this message goes there, with a link whose token is minted now
 // (only its hash stored), bound to the account as it is (address and
 // securityVersion) and to this new address. Nothing changes until it is
-// used. An account holder can ask for it for any address: limited per
-// address, like the other links.
+// used. A message that waited in the outbox (retries, an outage) while the
+// account changed (a password change or reset, another change of address:
+// each raises the securityVersion) goes out with no link: that change voids
+// the request. An account holder can ask for it for any address: limited
+// per address, like the other links.
 export const emailChangeConfirmationTemplate: MailTemplate = {
   limited: true,
   ttlMs: EMAIL_CHANGE_TTL_MS,
@@ -21,6 +31,12 @@ export const emailChangeConfirmationTemplate: MailTemplate = {
     });
     // Gone, or already at this address.
     if (user === null || user.email === message.recipient) return null;
+    // Changed since it was asked for. A message without the field was queued
+    // by the previous release, during a deployment: bound as it is now.
+    const requested = EmailChangeRequestPayloadSchema.safeParse(message.payload);
+    if (requested.success && Number(requested.data.securityVersion) !== user.securityVersion) {
+      return null;
+    }
     // The address got an account meanwhile: no link to it.
     const taken = await tx.user.findUnique({
       where: { email: message.recipient },

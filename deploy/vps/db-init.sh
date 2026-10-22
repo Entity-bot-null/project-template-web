@@ -43,14 +43,17 @@ CREATE ROLE app_runtime LOGIN CONNECTION LIMIT 50 PASSWORD :'runtime_password';
 CREATE ROLE app_backup LOGIN CONNECTION LIMIT 2 PASSWORD :'backup_password' IN ROLE pg_read_all_data;
 CREATE DATABASE app OWNER app_migrator;
 
--- The runtime role's rights, given by the owner: tables the migrator creates
--- later get them too.
+-- The runtime role's rights, given by the owner: tables and sequences the
+-- migrator creates later get them too (the migration history excepted: a
+-- migration takes them back from it, apps/api/prisma/migrations).
 \connect app
 SET ROLE app_migrator;
 GRANT CONNECT ON DATABASE app TO app_runtime;
 GRANT USAGE ON SCHEMA public TO app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
 RESET ROLE;
 GRANT CONNECT ON DATABASE app TO app_backup;
 SQL

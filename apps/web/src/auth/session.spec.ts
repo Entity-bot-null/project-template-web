@@ -22,6 +22,7 @@ import {
   REFRESH_TIMEOUT_MS,
   resetForTests,
   retrySignOut,
+  SESSION_REQUEST_TIMEOUT_MS,
   setSession,
   signIn,
   signOut,
@@ -125,6 +126,20 @@ describe('refresh', () => {
     await expect(refreshed).resolves.toBe(false);
     expect(getState()).toEqual(SIGNED_OUT);
     expect(getAccessToken()).toBeNull();
+  });
+
+  it('drops the session hint a rotation set again after the sign-out', async () => {
+    const gate = deferred<Response>();
+    stubFetch({ [REFRESH]: () => gate.promise, [LOGOUT]: signedOut });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const refreshed = refresh();
+    await signOut();
+    // The rotation's answer carries the hint again (Set-Cookie).
+    setSessionHint();
+    gate.resolve(session('token-2'));
+    await expect(refreshed).resolves.toBe(false);
+    // A failed logout or a page closed now leaves the next load nothing to try.
+    expect(document.cookie).not.toContain('has_session');
   });
 
   it('keeps a refresh going when the page is reloaded or closed, so its new cookie lands', async () => {
@@ -329,6 +344,26 @@ describe('api middleware', () => {
     expect(getState().status).toBe('anonymous');
   });
 
+  it('keeps a newer session when the replay is refused for the one it replaced', async () => {
+    let meCalls = 0;
+    stubFetch({
+      [ME]: () => {
+        if (meCalls++ === 0) return failure(401, 'expired');
+        // A password change answered while the replay was on its way: the
+        // replay's token is now stale, this tab's session is not.
+        setSession({ accessToken: 'token-3', expiresIn: 900, user: member });
+        return failure(401, 'expired');
+      },
+      [REFRESH]: () => session('token-2'),
+    });
+    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+
+    const { response } = await api.GET('/api/users/me');
+    expect(response.status).toBe(401);
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
+    expect(getAccessToken()).toBe('token-3');
+  });
+
   it('does not replay when the refresh itself fails', async () => {
     const { calls } = stubFetch({
       [ME]: () => failure(401, 'expired'),
@@ -521,13 +556,18 @@ describe('signIn and signOut', () => {
   // Every tab shares one refresh cookie, and refresh, sign-in and logout all
   // set or clear it. Another tab's refresh answered after this tab's sign-in
   // would put the old session's cookie back; its logout would clear the new
-  // one. So the three go one at a time through the same cross-tab lock.
-  const exclusiveLock = () => {
-    let released: Promise<unknown> = Promise.resolve();
+  // one. So a sign-in waits for both (two locks), a refresh for a sign-in, and
+  // a logout for a sign-in only: it never waits for a refresh, or a page
+  // closed meanwhile would never send it. Web Locks are exclusive per name.
+  const exclusiveLocks = () => {
+    const released = new Map<string, Promise<unknown>>();
     const locks = {
-      request: (_name: string, work: () => Promise<unknown>) => {
-        const held = released.then(work);
-        released = held.catch(() => undefined);
+      request: (name: string, work: () => Promise<unknown>) => {
+        const held = (released.get(name) ?? Promise.resolve()).then(work);
+        released.set(
+          name,
+          held.catch(() => undefined),
+        );
         return held;
       },
     };
@@ -535,10 +575,13 @@ describe('signIn and signOut', () => {
     return locks;
   };
 
-  it("sends a sign-in only after another tab's refresh or logout let go of the lock", async () => {
-    const locks = exclusiveLock();
+  it.each([
+    ['refresh', 'auth-refresh'],
+    ['logout', 'auth-sign-in'],
+  ])("sends a sign-in only after another tab's %s let go of its lock", async (_label, lock) => {
+    const locks = exclusiveLocks();
     const otherTab = deferred<undefined>();
-    void locks.request('auth-refresh', () => otherTab.promise);
+    void locks.request(lock, () => otherTab.promise);
     const { fetchMock } = stubFetch({ [SIGN_IN]: () => session('token-1') });
 
     const signedIn = signIn(member.email, 'right');
@@ -550,11 +593,11 @@ describe('signIn and signOut', () => {
     expect(getAccessToken()).toBe('token-1');
   });
 
-  it("sends a logout only after another tab's sign-in or refresh let go of the lock", async () => {
+  it("sends a logout only after another tab's sign-in let go of its lock", async () => {
     setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
-    const locks = exclusiveLock();
+    const locks = exclusiveLocks();
     const otherTab = deferred<undefined>();
-    void locks.request('auth-refresh', () => otherTab.promise);
+    void locks.request('auth-sign-in', () => otherTab.promise);
     const { fetchMock } = stubFetch({ [LOGOUT]: signedOut });
 
     const loggedOut = signOut();
@@ -565,6 +608,55 @@ describe('signIn and signOut', () => {
     otherTab.resolve(undefined);
     await expect(loggedOut).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a logout at once while a refresh, this tab's or another's, holds its lock", async () => {
+    exclusiveLocks();
+    const gate = deferred<Response>();
+    const { calls } = stubFetch({ [REFRESH]: () => gate.promise, [LOGOUT]: signedOut });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    // Holds the refresh lock until it answers.
+    const refreshed = refresh();
+    await expect.poll(() => calls.length).toBe(1);
+
+    const loggedOut = signOut();
+    // A page closed now has already sent its keepalive logout.
+    await expect.poll(() => calls.map(routeOf)).toEqual([REFRESH, LOGOUT]);
+    await expect(loggedOut).resolves.toBe(true);
+    gate.resolve(session('token-2'));
+    await expect(refreshed).resolves.toBe(false);
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  it('gives up on a sign-in or a logout that does not answer in time, freeing the locks', async () => {
+    exclusiveLocks();
+    const signInDeadline = new AbortController();
+    const logoutDeadline = new AbortController();
+    const timeout = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockReturnValueOnce(signInDeadline.signal)
+      .mockReturnValueOnce(logoutDeadline.signal);
+    stubFetch({ [SIGN_IN]: neverAnswered, [LOGOUT]: neverAnswered });
+
+    const signedIn = signIn(member.email, 'right');
+    await vi.waitFor(() => {
+      expect(timeout).toHaveBeenCalledWith(SESSION_REQUEST_TIMEOUT_MS);
+    });
+    signInDeadline.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+    await expect(signedIn).resolves.toMatchObject({ ok: false, failure: { status: 0 } });
+
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const loggedOut = signOut();
+    await vi.waitFor(() => {
+      expect(timeout).toHaveBeenCalledTimes(2);
+    });
+    logoutDeadline.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+    await expect(loggedOut).resolves.toBe(false);
+    expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+
+    // Both locks are free again.
+    stubFetch({ [SIGN_IN]: () => session('token-2') });
+    await expect(signIn(member.email, 'right')).resolves.toMatchObject({ ok: true });
   });
 });
 
@@ -615,6 +707,23 @@ describe('other tabs', () => {
     await expect(refresh()).resolves.toBe(false);
     expect(getAccessToken()).toBeNull();
     expect(getState().status).toBe('anonymous');
+  });
+
+  it("keep a sign-out that reached this tab while its sign-in was on its way, and end that sign-in's session", async () => {
+    clearSession();
+    const gate = deferred<Response>();
+    const { calls } = stubFetch({ [SIGN_IN]: () => gate.promise, [LOGOUT]: signedOut });
+    const signedIn = signIn(member.email, 'right');
+    await expect.poll(() => calls.length).toBe(1);
+    otherTab.postMessage('signed-out');
+    // Let the message arrive before the sign-in answers.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    gate.resolve(session('token-1'));
+    // The server signed in (the result says so); this browser keeps no session.
+    await expect(signedIn).resolves.toMatchObject({ ok: true });
+    expect(getAccessToken()).toBeNull();
+    expect(getState().status).toBe('anonymous');
+    await expect.poll(() => calls.map(routeOf)).toEqual([SIGN_IN, LOGOUT]);
   });
 
   it('share a sign-in with an anonymous tab', async () => {
@@ -681,6 +790,26 @@ describe('changePassword', () => {
     late.resolve(session('token-old'));
     await renewed;
     expect(getAccessToken()).toBe('token-new');
+  });
+
+  it('keeps a sign-out made while the change was on its way, and ends the session it answered with', async () => {
+    const change = deferred<Response>();
+    const { calls } = stubFetch({ [CHANGE]: () => change.promise, [LOGOUT]: signedOut });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    // "Sign out" stays enabled while the password is being hashed.
+    await expect(signOut()).resolves.toBe(true);
+
+    // The change's answer set a cookie for a new session meanwhile.
+    setSessionHint();
+    change.resolve(session('token-new'));
+    await expect(changed).resolves.toMatchObject({ ok: true });
+    expect(getState()).toEqual(SIGNED_OUT);
+    expect(getAccessToken()).toBeNull();
+    expect(document.cookie).not.toContain('has_session');
+    // A second logout, carrying that session's cookie, ends it.
+    await expect.poll(() => calls.map(routeOf)).toEqual([CHANGE, LOGOUT, LOGOUT]);
   });
 
   it('keeps the session on a refusal, and never stores an answer that is not a session', async () => {

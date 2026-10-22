@@ -16,6 +16,7 @@ import {
   ServerRuntimeClient,
   type ServerRuntimeClientOptions,
 } from '@sentry/core/server';
+import { reportableError } from '../common/logging/error-summary.js';
 import type { ErrorContext, ErrorTracker } from './error-tracker.js';
 import { redact, redactText, redactUrl } from './redact.js';
 
@@ -103,7 +104,9 @@ export function createSentryTracker(options: SentryOptions): ErrorTracker {
   return {
     enabled: true,
     capture(error, errorContext = {}) {
-      client.captureException(error, undefined, scopeFor(base, errorContext));
+      // A Prisma error's message can quote the query's arguments: reported by
+      // class, code and frames, whoever captures it.
+      client.captureException(reportableError(error), undefined, scopeFor(base, errorContext));
     },
     async flush(timeoutMs) {
       await client.flush(timeoutMs);

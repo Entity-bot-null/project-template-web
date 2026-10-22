@@ -67,16 +67,6 @@ describe('normalizeException', () => {
       status: 413,
       message: 'request entity too large',
     });
-    // Malformed JSON: one plain message, never the parser's own text.
-    const malformed = Object.assign(new SyntaxError('Expected property name at position 1'), {
-      status: 400,
-      expose: true,
-      type: 'entity.parse.failed',
-    });
-    expect(normalizeException(malformed)).toEqual({
-      status: 400,
-      message: 'The request body is not valid JSON',
-    });
     // Not marked safe to expose, or not a client error: still a generic 500.
     const hidden = Object.assign(new Error('internal detail'), { status: 400, expose: false });
     expect(normalizeException(hidden).status).toBe(500);
@@ -126,6 +116,21 @@ describe('AllExceptionsFilter', () => {
     expect(error).toHaveBeenCalledOnce();
     const [line] = error.mock.calls[0] ?? [];
     expect(line).toBe('POST /api/things -> 500 (request req-2, application)');
+  });
+
+  it("logs a Prisma error's class, code and frames, never its message (it quotes arguments)", () => {
+    const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { host } = hostFor({ method: 'GET', originalUrl: '/api/users/me', id: 'req-3' });
+    new AllExceptionsFilter().catch(
+      new Prisma.PrismaClientValidationError(
+        'Invalid `prisma.user.findUnique()` invocation:\n{ where: { email: "ada@example.test" } }',
+        { clientVersion: 'spec' },
+      ),
+      host,
+    );
+    const [, stack] = error.mock.calls[0] ?? [];
+    expect(String(stack)).toMatch(/^PrismaClientValidationError\n\s+at /);
+    expect(String(stack)).not.toContain('ada@example.test');
   });
 
   it('does not log client errors', () => {

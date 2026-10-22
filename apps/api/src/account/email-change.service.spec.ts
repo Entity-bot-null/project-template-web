@@ -78,7 +78,6 @@ async function setup({
                 email: ACCOUNT.email,
                 targetEmail: tokenRow?.targetEmail ?? null,
                 expiresAt: new Date(NOW + 60_000),
-                createdAt: new Date(NOW - 60_000),
               },
             ]),
       );
@@ -144,10 +143,13 @@ describe('EmailChangeService.request', () => {
     expect(mail.enqueue).not.toHaveBeenCalled();
     release();
     await service.settled();
+    // Bound to the account as it was when asked for: a password change before
+    // the message goes out voids it (the template checks).
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'email_change_confirmation',
       to: 'new@example.test',
       userId: 'u1',
+      payload: { securityVersion: String(ACCOUNT.securityVersion) },
     });
     expect(mail.notifyQueued).toHaveBeenCalledOnce();
   });
@@ -215,7 +217,11 @@ describe('EmailChangeService.confirm', () => {
       kind: 'email_changed',
       to: 'ada@example.test',
       userId: 'u1',
-      payload: { changedAt: new Date(NOW).toISOString() },
+      // The securityVersion right after the change ranks its undo link.
+      payload: {
+        changedAt: new Date(NOW).toISOString(),
+        securityVersion: String(ACCOUNT.securityVersion + 1),
+      },
     });
     const [, hash] = tx.$queryRaw.mock.calls[1] as unknown as [unknown, string];
     expect(hash).toBe(hashAccountToken(TOKEN));
@@ -297,7 +303,6 @@ describe('EmailChangeService.revert', () => {
           email: 'new@example.test',
           targetEmail: 'ada@example.test',
           expiresAt: new Date(NOW + 60_000),
-          createdAt: new Date(NOW - 3_600_000),
         },
       ],
     });
@@ -316,13 +321,14 @@ describe('EmailChangeService.revert', () => {
     expect(data.email).toBe('ada@example.test');
     expect(data.securityVersion).toEqual({ increment: 1 });
     await expect(checkPassword(data.passwordHash, GOOD)).resolves.toBe(true);
-    // Every other link of the account, except undo links minted before
-    // this one: the earliest owner wins.
+    // Every other link of the account, except the undo links of earlier
+    // changes (a lower securityVersion right after the change): the earliest
+    // owner wins, whenever the notices went out.
     expect(tx.accountToken.deleteMany).toHaveBeenCalledWith({
       where: {
         userId: 'u1',
         usedAt: null,
-        NOT: { purpose: 'email_revert', createdAt: { lt: new Date(NOW - 3_600_000) } },
+        NOT: { purpose: 'email_revert', securityVersion: { lt: 4 } },
       },
     });
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {

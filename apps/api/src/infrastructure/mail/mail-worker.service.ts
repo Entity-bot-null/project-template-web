@@ -18,6 +18,7 @@ import { MailOutboxService } from './mail-outbox.service.js';
 import {
   MAIL_BACKLOG_DEGRADED_SEC,
   MAIL_FAILURE_DEGRADED_MS,
+  MAIL_LEASE_RENEW_MS,
   MAIL_OPTIONS,
   MAIL_POLL_INTERVAL_MS,
   MAIL_SHUTDOWN_GRACE_MS,
@@ -203,7 +204,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
     const started = performance.now();
     try {
-      await this.transportOrThrow().send(mail);
+      await this.sendLeased(claimed, mail, label);
     } catch (error) {
       const seconds = (performance.now() - started) / 1000;
       const failure = classifyDeliveryError(error);
@@ -232,6 +233,22 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
       this.logger.warn(
         `Sent ${label}, but its lease had run out: another worker may send it again`,
       );
+    }
+  }
+
+  // The exchange has no overall deadline (the SMTP timeouts apply to each
+  // step): the lease is renewed while it lasts, so no other worker takes the
+  // message over and sends it too.
+  private async sendLeased(claimed: ClaimedMessage, mail: OutgoingMail, label: string) {
+    const renewal = setInterval(() => {
+      void this.store.renewLease(claimed).catch((error: unknown) => {
+        this.logger.warn(`Could not renew the lease of ${label}: ${message(error)}`);
+      });
+    }, MAIL_LEASE_RENEW_MS).unref();
+    try {
+      await this.transportOrThrow().send(mail);
+    } finally {
+      clearInterval(renewal);
     }
   }
 

@@ -1,8 +1,9 @@
 // Performance budget (docs/testing.md#performance-budget): fails when the
 // built assets of an app outgrow its performance-budget.json (the web app's
-// and the landing's). Sizes are gzip, what browsers actually download, in kB
-// of 1000 bytes like Vite reports. Run after `pnpm build`; part of
-// `pnpm verify` and CI.
+// and the landing's), or when a page of the landing carries what the web
+// server's Content-Security-Policy refuses. Sizes are gzip, what browsers
+// actually download, in kB of 1000 bytes like Vite reports. Run after
+// `pnpm build`; part of `pnpm verify` and CI.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
@@ -11,7 +12,8 @@ import { gzipSync } from 'node:zlib';
  * Each app with a budget: its build folder, the folder of hashed assets
  * inside it, that folder's URL path on the site (the web app is served under
  * /app/) and its budget file.
- * @type {{ name: string; dist: URL; assets: string; assetsPath: string; budget: URL }[]}
+ * `pages`: every HTML page of the build is checked against the CSP too.
+ * @type {{ name: string; dist: URL; assets: string; assetsPath: string; budget: URL; pages?: boolean }[]}
  */
 const APPS = [
   {
@@ -27,8 +29,83 @@ const APPS = [
     assets: '_astro/',
     assetsPath: '/_astro/',
     budget: new URL('../apps/landing/performance-budget.json', import.meta.url),
+    pages: true,
   },
 ];
+
+/** `<link rel>` values that make the browser load the URL. */
+const LOADED_LINKS =
+  /^(?:stylesheet|icon|apple-touch-icon|mask-icon|manifest|preload|modulepreload|prefetch)$/i;
+
+/** The attributes the check reads: a value quoted either way, or not at all. */
+const ATTRIBUTES = {
+  href: /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+  rel: /\srel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+  src: /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+  srcset: /\ssrcset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+  style: /\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+  type: /\stype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
+};
+
+/**
+ * An attribute's value in a start tag; undefined when absent.
+ * @param {string} tag
+ * @param {keyof typeof ATTRIBUTES} name
+ */
+function attributeOf(tag, name) {
+  const match = ATTRIBUTES[name].exec(tag);
+  return match === null ? undefined : (match[1] ?? match[2] ?? match[3] ?? '');
+}
+
+/**
+ * What a page carries that the web server's Content-Security-Policy
+ * (apps/web/nginx/security-headers.conf: default-src 'self', no
+ * 'unsafe-inline', images from data: URLs aside) refuses: an inline script or
+ * event handler, a `<style>` element or a style attribute, a javascript: URL,
+ * a file from another origin. The preview server sends no CSP, so such a page
+ * would break in production only. A JSON-LD block is data, not a script.
+ * @param {string} html
+ * @returns {string[]}
+ */
+export function cspProblems(html) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const [tag] of html.matchAll(/<[a-z][\w-]*\b[^>]*>/gi)) {
+    const name = /^<([\w-]+)/.exec(tag)?.[1]?.toLowerCase() ?? '';
+    const type = attributeOf(tag, 'type') ?? '';
+    if (
+      name === 'script' &&
+      attributeOf(tag, 'src') === undefined &&
+      !/^application\/ld\+json$/i.test(type)
+    ) {
+      problems.push('an inline script');
+    }
+    if (name === 'style') problems.push('a <style> element');
+    if (attributeOf(tag, 'style') !== undefined) problems.push(`a style attribute on <${name}>`);
+    if (/\son[a-z]+\s*=/i.test(tag)) problems.push(`an inline event handler on <${name}>`);
+    if (/^\s*javascript:/i.test(attributeOf(tag, 'href') ?? '')) problems.push('a javascript: URL');
+    const rels = (attributeOf(tag, 'rel') ?? '').split(/\s+/);
+    const loaded =
+      name === 'link'
+        ? rels.some((rel) => LOADED_LINKS.test(rel))
+          ? [attributeOf(tag, 'href')]
+          : []
+        : [
+            attributeOf(tag, 'src'),
+            ...(attributeOf(tag, 'srcset') ?? '')
+              .split(',')
+              .map((candidate) => candidate.trim().split(/\s+/)[0]),
+          ];
+    const image = name === 'img' || name === 'source';
+    for (const url of loaded) {
+      if (url === undefined || url === '') continue;
+      if (image && /^data:/i.test(url)) continue;
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url))
+        problems.push(`a file from another origin: ${url}`);
+    }
+  }
+  return problems;
+}
 
 /**
  * A budget measures the assets whose file name matches `pattern`, or, with
@@ -105,6 +182,7 @@ export function checkBudgets(budgets, { files, html, gzipBytes, assetsPath = '/a
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   let failed = false;
   let over = false;
+  let refused = false;
   for (const app of APPS) {
     const assets = new URL(app.assets, app.dist);
     console.log(`${app.name}:`);
@@ -133,11 +211,34 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     for (const { ok, line } of result.lines) (ok ? console.log : console.error)(`  ${line}`);
     failed ||= result.failed;
     over ||= result.over;
+    if (app.pages === true) {
+      const pages = readdirSync(app.dist, { recursive: true })
+        .map((file) => String(file).replaceAll('\\', '/'))
+        .filter((file) => file.endsWith('.html'));
+      let found = 0;
+      for (const page of pages) {
+        for (const problem of cspProblems(readFileSync(new URL(page, app.dist), 'utf8'))) {
+          console.error(`  REFUSED BY THE CSP  ${page}: ${problem}`);
+          found += 1;
+        }
+      }
+      if (found === 0) {
+        console.log(
+          `  ok  pages: nothing the Content-Security-Policy refuses (${String(pages.length)} pages)`,
+        );
+      }
+      refused ||= found > 0;
+    }
+  }
+  if (refused) {
+    console.error(
+      'A page carries what the Content-Security-Policy refuses in production: scripts and styles go in files of this origin, never inline (docs/how-to.md#change-the-landing).',
+    );
   }
   if (over) {
     console.error(
       'Shrink the bundle (lazy-load routes, drop heavy dependencies), or raise the budget in a reviewed pull request that explains why.',
     );
   }
-  if (failed) process.exit(1);
+  if (failed || refused) process.exit(1);
 }

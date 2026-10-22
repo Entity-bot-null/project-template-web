@@ -96,10 +96,17 @@ ALTER TABLE "users" DROP COLUMN "name";
 `pnpm test:scripts` (so in CI) and on the migrations staged at each commit. Contract steps:
 dropping a table, column, type or view; renaming a table, column, type or enum value; changing a
 column's type; making a column required, adding a required column without a default, or removing a
-default; emptying a table. A Prisma change that removes an enum value writes several of them
-(retype the column, rename the types, drop the old one), each with its reason. Expand steps (new
-tables, nullable columns, columns with a default, indexes, looser constraints) need nothing. The
-check reads plain statements, not SQL inside a `DO` block or a function body.
+default; emptying a table. In the migrations from `TIGHTENING_FROM` on (the ones before it shipped
+before these rules, and a committed migration is never edited), also: a unique index or a
+constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`) added to a table an earlier
+migration created (the previous release may write what it refuses, and existing rows can make it
+fail), a dropped unique index, a table moved to another schema, a `DELETE` without `WHERE`, and an
+enum value added without `IF NOT EXISTS` (see below: write `ADD VALUE IF NOT EXISTS` in the
+generated SQL before committing it). A Prisma change that removes an enum value writes several of
+them (retype the column, rename the types, drop the old one), each with its reason. Expand steps
+(new tables and what they get in the same migration, nullable columns, columns with a default,
+indexes, looser constraints) need nothing. The check reads plain statements, not SQL inside a `DO`
+block or a function body.
 
 ### Safe migrations
 
@@ -121,7 +128,11 @@ Because the release runs the migration before the rollout, the running version k
 1. Find what took effect: `prisma migrate status` (in an environment: the `api-migrate` image with
    that command, docs/incident-response.md#10-failed-database-migration), the error in the job's
    output, and the tables the migration touches.
-2. Undo those statements (or, as a last resort, apply the rest by hand).
+2. Undo those statements (or, as a last resort, apply the rest by hand). An enum value cannot be
+   undone (PostgreSQL has no `DROP VALUE`): it stays, which the migration's rerun survives only when
+   it adds it with `ADD VALUE IF NOT EXISTS` (the check above asks for it). The migrations committed
+   before that rule add theirs without it: if one of them fails after its `ADD VALUE` statements,
+   finish it by hand and record it `--applied`.
 3. Record the outcome: `prisma migrate resolve --rolled-back <migration>` (undone) or
    `--applied <migration>` (completed by hand). Never edit `_prisma_migrations` directly.
 4. Fix the data or the migration and deploy again.

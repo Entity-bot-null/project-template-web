@@ -107,8 +107,13 @@ async function doRefresh(): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
     if (epoch === started) result = await refreshOnce();
   }
-  // A sign-in or a sign-out happened meanwhile: its outcome stands.
-  if (epoch !== started) return state.status === 'authenticated';
+  // A sign-in or a sign-out happened meanwhile: its outcome stands. After a
+  // sign-out, a rotation that landed anyway has set the session hint again,
+  // for a session the logout ends: dropped, so no page load tries it.
+  if (epoch !== started) {
+    if (result.ok && state.status === 'anonymous') expireSessionHint();
+    return state.status === 'authenticated';
+  }
   if (result.ok && isSession(result.data)) {
     setSession(result.data);
     return true;
@@ -132,8 +137,16 @@ export const REFRESH_TIMEOUT_MS = 10_000;
  */
 const BOOT_RETRY_MAX_WAIT_SEC = 5;
 
+/**
+ * How long a sign-in (a sign-up confirmation, an invitation's acceptance) and
+ * a logout may take, answer included. Like a refresh, each holds a cross-tab
+ * lock meanwhile: one that stalled would keep every other tab from signing in
+ * or renewing its session. Past this it fails like a network error.
+ */
+export const SESSION_REQUEST_TIMEOUT_MS = 20_000;
+
 function refreshOnce(): Promise<ApiResult<AuthSession>> {
-  return withAuthLock(() =>
+  return withLock(REFRESH_LOCK, () =>
     call(
       api.POST('/api/auth/refresh', {
         // The server rotates the token before it answers. A refresh the
@@ -149,14 +162,20 @@ function refreshOnce(): Promise<ApiResult<AuthSession>> {
   );
 }
 
-/**
- * Sends a request that sets or clears the shared refresh cookie (refresh,
- * sign-in, logout) under the cross-tab Web Lock, one tab at a time: no answer
- * lands after another tab's newer one and undoes it (a refresh answered after
- * a sign-in would put the old session's cookie back; a logout would clear the
- * new one).
- */
-async function withAuthLock<T>(send: () => Promise<T>): Promise<T> {
+// Requests that set or clear the shared refresh cookie go one tab at a time
+// through two cross-tab Web Locks, so no answer lands after another tab's
+// newer one and undoes it:
+//   - REFRESH_LOCK, refreshes and sign-ins: a refresh answered after a
+//     sign-in would put the old session's cookie back;
+//   - SIGN_IN_LOCK, sign-ins and logouts: a logout answered after a sign-in
+//     would clear the new session's cookie.
+// A logout never waits for a refresh: any token of the family, rotated or not,
+// ends the whole family, and a logout that waited would never leave a page
+// closed meanwhile.
+const REFRESH_LOCK = 'auth-refresh';
+const SIGN_IN_LOCK = 'auth-sign-in';
+
+async function withLock<T>(name: string, send: () => Promise<T>): Promise<T> {
   // A property, not a local: `start` sets it inside the lock's callback, where
   // control-flow analysis does not follow it.
   const attempt = { sent: false };
@@ -166,7 +185,7 @@ async function withAuthLock<T>(send: () => Promise<T>): Promise<T> {
   };
   if (!('locks' in navigator)) return start();
   try {
-    return await navigator.locks.request('auth-refresh', start);
+    return await navigator.locks.request(name, start);
   } catch (error: unknown) {
     // A browser can still refuse the lock (a sandboxed frame, a storage
     // policy): the tab then sends without it, like one without Web Locks.
@@ -217,7 +236,14 @@ export function boot(): Promise<boolean> {
 }
 
 export function signIn(email: string, password: string): Promise<ApiResult<AuthSession>> {
-  return startSession(() => call(api.POST('/api/auth/sign-in', { body: { email, password } })));
+  return startSession(() =>
+    call(
+      api.POST('/api/auth/sign-in', {
+        body: { email, password },
+        signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
+      }),
+    ),
+  );
 }
 
 /**
@@ -227,7 +253,12 @@ export function signIn(email: string, password: string): Promise<ApiResult<AuthS
  */
 export function confirmSignUp(token: string, password: string): Promise<ApiResult<AuthSession>> {
   return startSession(() =>
-    call(api.POST('/api/auth/sign-ups/confirm', { body: { token, password } })),
+    call(
+      api.POST('/api/auth/sign-ups/confirm', {
+        body: { token, password },
+        signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
+      }),
+    ),
   );
 }
 
@@ -242,7 +273,12 @@ export function acceptInvitation(
   password: string,
 ): Promise<ApiResult<AuthSession>> {
   return startSession(() =>
-    call(api.POST('/api/auth/invitations/accept', { body: { token, name, password } })),
+    call(
+      api.POST('/api/auth/invitations/accept', {
+        body: { token, name, password },
+        signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
+      }),
+    ),
   );
 }
 
@@ -268,20 +304,34 @@ async function sendStartingSession(
   // sign-in sets: the logout clears it, a late rotation replaces it.
   if (logoutInFlight) await logoutInFlight;
   if (refreshInFlight) await refreshInFlight;
-  // Another tab's refresh or logout goes through the same lock (withAuthLock).
+  // Read once both locks are held: a sign-out that came before this request
+  // left is not one it raced.
+  let started = epoch;
+  // Another tab's refresh, sign-in or logout goes through the same locks.
   // These routes are under /api/auth, which the 401 middleware leaves alone:
-  // nothing inside the lock waits for it.
-  const result = await withAuthLock(send);
+  // nothing inside the locks waits for it.
+  const result = await withLock(REFRESH_LOCK, () =>
+    withLock(SIGN_IN_LOCK, () => {
+      started = epoch;
+      return send();
+    }),
+  );
   // Checked like a refresh: a proxy, a captive portal or a deploy in progress
   // can answer 2xx with something that is not a session.
   if (result.ok && !isSession(result.data)) {
     return { ok: false, failure: { status: 502, message: 'The sign-in answer was not a session' } };
   }
-  if (result.ok) {
-    epoch += 1;
-    setSession(result.data);
-    tellOtherTabs('signed-in');
+  if (!result.ok) return result;
+  if (epoch !== started) {
+    // Another tab signed out while this request was on its way: the sign-out
+    // stands. The server did what was asked (an account may exist now), so
+    // the answer is returned, but its session is not kept and ends there too.
+    void endSessionStartedAfterSignOut();
+    return result;
   }
+  epoch += 1;
+  setSession(result.data);
+  tellOtherTabs('signed-in');
   return result;
 }
 
@@ -293,13 +343,16 @@ async function sendStartingSession(
  * cookie), and the epoch moves on, so a refresh started meanwhile cannot put
  * the ended session back when it lands.
  *
- * Unlike a sign-in it does not take the cross-tab lock: it is an
+ * Unlike a sign-in it does not take the cross-tab locks: it is an
  * authenticated request, and renewing an expired access token (the 401
- * middleware) takes that lock, which would then wait for itself forever. A
+ * middleware) takes REFRESH_LOCK, which would then wait for itself forever. A
  * renewal at that very instant (another tab's, or another request's of this
  * one) can therefore leave its older cookie in the jar. That session ended on
  * the server: the worst outcome is a sign-in with the new password, never a
  * session the change ended.
+ *
+ * A sign-out (here or in another tab) while it is on its way stands: the
+ * session the change answers with is not kept, and ends on the server too.
  */
 export async function changePassword(
   currentPassword: string,
@@ -307,16 +360,21 @@ export async function changePassword(
 ): Promise<ApiResult<AuthSession>> {
   if (logoutInFlight) await logoutInFlight;
   if (refreshInFlight) await refreshInFlight;
+  const started = epoch;
   const result = await call(
     api.POST('/api/account/password', { body: { currentPassword, newPassword } }),
   );
   if (result.ok && !isSession(result.data)) {
     return { ok: false, failure: { status: 502, message: 'The answer was not a session' } };
   }
-  if (result.ok) {
-    epoch += 1;
-    setSession(result.data);
+  if (!result.ok) return result;
+  if (epoch !== started) {
+    // The password did change; the session this browser was given ends.
+    void endSessionStartedAfterSignOut();
+    return result;
   }
+  epoch += 1;
+  setSession(result.data);
   return result;
 }
 
@@ -352,10 +410,19 @@ export async function retrySignOut(): Promise<boolean> {
 }
 
 // The logout leaves at once, with keepalive so closing the page does not
-// cancel it. It need not wait for a rotation in flight: any token of the
-// family, rotated or not, ends the whole family.
+// cancel it. It never waits for a rotation in flight (any token of the family,
+// rotated or not, ends the whole family), only for another tab's sign-in on
+// its way (SIGN_IN_LOCK), which ends this session itself if the page closes
+// meanwhile.
 function endServerSession(): Promise<boolean> {
-  logoutInFlight ??= withAuthLock(() => call(api.POST('/api/auth/logout', { keepalive: true })))
+  logoutInFlight ??= withLock(SIGN_IN_LOCK, () =>
+    call(
+      api.POST('/api/auth/logout', {
+        keepalive: true,
+        signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
+      }),
+    ),
+  )
     .then(({ ok }) => {
       if (state.status === 'anonymous') {
         emit(ok ? SIGNED_OUT : { status: 'anonymous', user: null, signedOut: 'failed' });
@@ -366,6 +433,16 @@ function endServerSession(): Promise<boolean> {
       logoutInFlight = null;
     });
   return logoutInFlight;
+}
+
+// An answer that started a session, and set its cookie, after a sign-out it
+// raced: that session ends on the server too, once a logout still on its way
+// (it may have carried the previous cookie) has answered. The hint goes first,
+// for a page closed meanwhile.
+async function endSessionStartedAfterSignOut(): Promise<void> {
+  expireSessionHint();
+  if (logoutInFlight) await logoutInFlight;
+  await endServerSession();
 }
 
 // Tabs share the cookies but not this memory. A sign-out signs the other tabs

@@ -1,3 +1,4 @@
+import { loggableStack } from './common/logging/error-summary.js';
 import { createLogger } from './common/logging/logger.js';
 import { env } from './env/env.js';
 import { errorTracker, startErrorTracking } from './observability/error-tracker.js';
@@ -18,9 +19,7 @@ const FATAL_FLUSH_TIMEOUT_MS = 2_000;
 let crashing = false;
 for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
   process.on(event, (error: unknown) => {
-    logger.fatal(
-      `${event}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
-    );
+    logger.fatal(`${event}: ${loggableStack(error)}`);
     if (crashing) return;
     crashing = true;
     errorTracker().capture(error, { level: 'fatal', origin: 'process' });

@@ -30,11 +30,18 @@ SELECT 'CREATE DATABASE app OWNER app_migrator'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'app') \gexec
 
 -- The runtime role's rights, given by the owner, as the guide does connected
--- as app_migrator: tables the migrator creates later get them too.
+-- as app_migrator: tables and sequences the migrator creates later get them
+-- too. Never the migration history: run again after the migrations, the
+-- grant on every table would give it back, so it is taken back here (a
+-- migration does so at the first deployment, apps/api/prisma/migrations).
 \connect app
 SET ROLE app_migrator;
 GRANT CONNECT ON DATABASE app TO app_runtime;
 GRANT USAGE ON SCHEMA public TO app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+SELECT 'REVOKE ALL ON TABLE public._prisma_migrations FROM app_runtime'
+WHERE to_regclass('public._prisma_migrations') IS NOT NULL \gexec
 RESET ROLE;

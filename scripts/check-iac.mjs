@@ -39,6 +39,14 @@ import { ensureImage, pullableImage, toolImage } from './tool-image.mjs';
 
 const INFRA = fileURLToPath(new URL('../infra/terraform', import.meta.url));
 const DB_INIT = fileURLToPath(new URL('../deploy/vps/db-init.sh', import.meta.url));
+// The migration that keeps the migration history to the migrator: both roles
+// scripts give the runtime role rights on every table the migrator creates.
+const HISTORY_MIGRATION = fileURLToPath(
+  new URL(
+    '../apps/api/prisma/migrations/20261022180000_keep_migration_history_to_its_owner/migration.sql',
+    import.meta.url,
+  ),
+);
 
 // Docker's release key, as docs.docker.com publishes it: the one apt may
 // trust for Docker's repository (cloud-init.yaml.tftpl).
@@ -205,6 +213,7 @@ PYTHON
       runtimePassword: passwords.RUNTIME_PASSWORD,
     }),
   );
+  copyFileSync(HISTORY_MIGRATION, join(work, 'keep-migration-history.sql'));
   check('database/roles.sql on PostgreSQL', () =>
     inContainer(
       'postgres',
@@ -235,10 +244,20 @@ fail() { echo "FAILED: $1" >&2; exit 1; }
 if psql_as app_runtime wrong-password app -c 'SELECT 1' > /dev/null 2>&1; then fail 'a wrong password was accepted'; fi
 psql_as app_migrator "$MIGRATOR_PASSWORD" app -c 'CREATE TABLE iac_check (id int PRIMARY KEY, note text)' || fail 'app_migrator cannot create a table'
 psql_as app_runtime "$RUNTIME_PASSWORD" app -c "INSERT INTO iac_check VALUES (1, 'a')" -c "UPDATE iac_check SET note = 'b'" -c 'SELECT count(*) FROM iac_check' -c 'DELETE FROM iac_check' > /dev/null || fail 'app_runtime cannot read and write the tables app_migrator creates'
+psql_as app_migrator "$MIGRATOR_PASSWORD" app -c 'CREATE TABLE iac_serial (id serial PRIMARY KEY)' || fail 'app_migrator cannot create a table with a sequence'
+psql_as app_runtime "$RUNTIME_PASSWORD" app -c 'INSERT INTO iac_serial DEFAULT VALUES' > /dev/null || fail "app_runtime cannot use the sequences app_migrator creates"
 for statement in 'CREATE TABLE iac_other (id int)' 'ALTER TABLE iac_check ADD COLUMN extra int' 'DROP TABLE iac_check' 'TRUNCATE iac_check'; do
   if psql_as app_runtime "$RUNTIME_PASSWORD" app -c "$statement" > /dev/null 2>&1; then fail "app_runtime may run: $statement"; fi
 done
-echo 'app owned by app_migrator; app_runtime: data only, 50 connections; passwords checked over SCRAM'
+echo '--- the migration history: the migrator alone, after the migrations and after roles.sql again'
+history_rights() { psql_as doadmin "$ADMIN_PASSWORD" app -c "SELECT has_table_privilege('app_runtime', '_prisma_migrations', 'SELECT,INSERT,UPDATE,DELETE')"; }
+psql_as app_migrator "$MIGRATOR_PASSWORD" app -c 'CREATE TABLE _prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64) NOT NULL)'
+[ "$(history_rights)" = t ] || fail 'the default privileges no longer reach a new table: the check below proves nothing'
+psql_as app_migrator "$MIGRATOR_PASSWORD" app < /out/keep-migration-history.sql
+[ "$(history_rights)" = f ] || fail 'app_runtime keeps rights on the migration history after the migration'
+psql_as doadmin "$ADMIN_PASSWORD" defaultdb < /out/roles.psql
+[ "$(history_rights)" = f ] || fail 'roles.sql run again gives app_runtime rights on the migration history'
+echo 'app owned by app_migrator; app_runtime: data only, sequences too, never the migration history, 50 connections; passwords checked over SCRAM'
 `,
       {
         ...passwords,
@@ -291,16 +310,21 @@ if psql_as app_runtime wrong-password -c 'SELECT 1' > /dev/null 2>&1; then fail 
 if psql_as postgres '' -c 'SELECT 1' > /dev/null 2>&1; then fail 'the superuser got in without its password'; fi
 psql_as app_migrator "$APP_MIGRATOR_PASSWORD" -c 'CREATE TABLE iac_check (id int PRIMARY KEY, note text)' || fail 'app_migrator cannot create a table'
 psql_as app_runtime "$APP_RUNTIME_PASSWORD" -c "INSERT INTO iac_check VALUES (1, 'a')" -c "UPDATE iac_check SET note = 'b'" -c 'SELECT count(*) FROM iac_check' > /dev/null || fail 'app_runtime cannot read and write the tables app_migrator creates'
+psql_as app_migrator "$APP_MIGRATOR_PASSWORD" -c 'CREATE TABLE iac_serial (id serial PRIMARY KEY)' || fail 'app_migrator cannot create a table with a sequence'
+psql_as app_runtime "$APP_RUNTIME_PASSWORD" -c 'INSERT INTO iac_serial DEFAULT VALUES' > /dev/null || fail "app_runtime cannot use the sequences app_migrator creates"
 for statement in 'CREATE TABLE iac_other (id int)' 'ALTER TABLE iac_check ADD COLUMN extra int' 'DROP TABLE iac_check' 'TRUNCATE iac_check'; do
   if psql_as app_runtime "$APP_RUNTIME_PASSWORD" -c "$statement" > /dev/null 2>&1; then fail "app_runtime may run: $statement"; fi
 done
+psql_as app_migrator "$APP_MIGRATOR_PASSWORD" -c 'CREATE TABLE _prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64) NOT NULL)'
+psql_as app_migrator "$APP_MIGRATOR_PASSWORD" < /out/keep-migration-history.sql
+[ "$(as_admin -c "SELECT has_table_privilege('app_runtime', '_prisma_migrations', 'SELECT,INSERT,UPDATE,DELETE')")" = f ] || fail 'app_runtime keeps rights on the migration history after the migration'
 [ "$(psql_as app_backup "$APP_BACKUP_PASSWORD" -c 'SELECT note FROM iac_check')" = b ] || fail 'app_backup cannot read'
 for statement in "INSERT INTO iac_check VALUES (2, 'c')" 'DELETE FROM iac_check' 'CREATE TABLE iac_other (id int)'; do
   if psql_as app_backup "$APP_BACKUP_PASSWORD" -c "$statement" > /dev/null 2>&1; then fail "app_backup may run: $statement"; fi
 done
 PGPASSWORD=$APP_BACKUP_PASSWORD pg_dump -w -h "$address" -U app_backup -d app --format=custom --no-owner --no-privileges --file=/tmp/app.dump || fail 'pg_dump as app_backup failed'
 pg_restore --list /tmp/app.dump | grep -q 'TABLE DATA public iac_check' || fail 'the backup has not the data'
-echo 'app owned by app_migrator; app_runtime: data only, 50 connections; app_backup: reads only, and dumps'
+echo 'app owned by app_migrator; app_runtime: data only, sequences too, never the migration history, 50 connections; app_backup: reads only, and dumps'
 `,
       {
         ...serverPasswords,

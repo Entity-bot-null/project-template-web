@@ -5,8 +5,17 @@ import { renderMail } from './layout.js';
 import { maskEmail } from './mask-email.js';
 import type { MailTemplate } from './registry.js';
 
-/** When the address changed (account/email-change.service.ts). */
-export const EmailChangedPayloadSchema = z.object({ changedAt: z.iso.datetime() });
+/**
+ * When the address changed (account/email-change.service.ts), and the
+ * account's securityVersion right after it, which ranks the undo link.
+ */
+export const EmailChangedPayloadSchema = z.object({
+  changedAt: z.iso.datetime(),
+  securityVersion: z
+    .string()
+    .regex(/^\d{1,9}$/)
+    .optional(),
+});
 export type EmailChangedPayload = z.infer<typeof EmailChangedPayloadSchema>;
 
 // A security notice to the PREVIOUS address after a change: the person who
@@ -14,8 +23,11 @@ export type EmailChangedPayload = z.infer<typeof EmailChangedPayloadSchema>;
 // days. Its token puts this address back and asks for a new password; it is
 // minted here, never replaces another one, and is not bound to what happens
 // to the account afterwards: whoever took the account can neither change the
-// address again nor change the password to void it. Never held back by the
-// per-address limits.
+// address again nor change the password to void it. It carries the
+// securityVersion right after the change it undoes, not the account's when
+// the notice goes out: undo links are ranked by the changes they undo, so a
+// notice delayed in the outbox still outranks those of later changes. Never
+// held back by the per-address limits.
 export const emailChangedTemplate: MailTemplate = {
   limited: false,
   ttlMs: 24 * 60 * 60_000,
@@ -31,10 +43,13 @@ export const emailChangedTemplate: MailTemplate = {
     const when = payload.success
       ? `on ${payload.data.changedAt.replace('T', ' ').replace(/\.\d+Z$|Z$/, '')} UTC`
       : 'just now';
+    // A notice without it was queued by the previous release, during a
+    // deployment: ranked by the account as it is now, as that release did.
+    const changed = payload.success ? payload.data.securityVersion : undefined;
     const token = await mintAccountToken(tx, {
       userId: user.id,
       purpose: 'email_revert',
-      securityVersion: user.securityVersion,
+      securityVersion: changed === undefined ? user.securityVersion : Number(changed),
       email: user.email,
       targetEmail: message.recipient,
       ttlMs: EMAIL_REVERT_TTL_MS,

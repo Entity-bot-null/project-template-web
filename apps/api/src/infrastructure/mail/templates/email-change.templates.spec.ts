@@ -82,11 +82,27 @@ describe('the confirmation of a new address', () => {
     expect(emailChangeConfirmationTemplate.limited).toBe(true);
   });
 
+  it('sends the link while the account is as it was when the change was asked for', async () => {
+    const { tx, client } = txWith();
+    const rendered = await emailChangeConfirmationTemplate.compose({
+      tx: client,
+      message: message({ payload: { securityVersion: '3' } }),
+      ...context,
+    });
+    expect(rendered?.text).toContain('/confirm-email-change#token=');
+    expect(createdToken(tx)).toMatchObject({ securityVersion: 3 });
+  });
+
   it.each([
     ['an account that is gone', txWith({ user: null }), message()],
     ['an account already at the address', txWith(), message({ recipient: 'ada@example.test' })],
     ['an address that got an account meanwhile', txWith({ owner: { id: 'u2' } }), message()],
     ['a message without an account', txWith(), message({ userId: null })],
+    [
+      'an account changed since it was asked for (a password change in between)',
+      txWith(),
+      message({ payload: { securityVersion: '2' } }),
+    ],
   ])('sends nothing for %s', async (_case, { tx, client }, claimed) => {
     await expect(
       emailChangeConfirmationTemplate.compose({ tx: client, message: claimed, ...context }),
@@ -165,8 +181,23 @@ describe('the notice to the previous address', () => {
     });
     // Earlier undo links keep working.
     expect(tx.accountToken.deleteMany).not.toHaveBeenCalled();
+    // Queued by the previous release (no securityVersion): ranked as it did.
+    expect(createdToken(tx)).toMatchObject({ securityVersion: 4 });
     expect(rendered?.text).toContain('for 7 days');
     expect(emailChangedTemplate.limited).toBe(false);
+  });
+
+  it('ranks its undo link by the change it undoes, not by when it goes out', async () => {
+    // Sent after later changes raised the account to 9 (retries, an outage).
+    const { tx, client } = txWith({
+      user: { id: 'u1', email: 'thief@example.test', securityVersion: 9 },
+    });
+    await emailChangedTemplate.compose({
+      tx: client,
+      message: changed({ changedAt: '2026-10-13T10:05:00.000Z', securityVersion: '4' }),
+      ...context,
+    });
+    expect(createdToken(tx)).toMatchObject({ purpose: 'email_revert', securityVersion: 4 });
   });
 
   it('still tells with a malformed payload, and nobody once undone or gone', async () => {
