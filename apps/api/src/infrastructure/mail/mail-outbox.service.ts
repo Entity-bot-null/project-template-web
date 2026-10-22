@@ -3,7 +3,12 @@ import { normalizeEmail } from '../../auth/auth.constants.js';
 import type { MailKind, Prisma } from '../../prisma/generated/client.js';
 import { recordMailDelivery, recordMailSuppressed } from '../../observability/metrics.js';
 import { currentRequestId } from '../../observability/request-context.js';
-import { MAIL_OPTIONS, MAIL_PER_ADDRESS_PER_MINUTE, MAIL_TEMPLATES } from './mail.constants.js';
+import {
+  DROPPED_WHILE_HELD,
+  MAIL_OPTIONS,
+  MAIL_PER_ADDRESS_PER_MINUTE,
+  MAIL_TEMPLATES,
+} from './mail.constants.js';
 import { recipientHash } from './mail.recipient.js';
 import type { MailOptions } from './mail.types.js';
 import type { MailTemplates } from './templates/registry.js';
@@ -120,12 +125,14 @@ export class MailOutboxService {
    * caller's transaction, like enqueue. One being composed at that moment is
    * refused by its template, which reads its row under the same lock as the
    * caller's (email-changed.template.ts); one already past composing goes out,
-   * and its worker finds the row changed. The rows are locked in id order: two
-   * of these never deadlock each other (against the sweep or a retry from the
-   * command line, which lock in their own order, the caller runs once more:
-   * onceMoreOnWriteConflict). Returns how many it dropped, and how many of them no worker held: those
-   * the caller reports with recordExpired once it has committed (a worker
-   * reports the outcome of the ones it held).
+   * and its worker finds the row changed. The rows are locked in id order,
+   * like a retry from the command line (MailStore.retryFailed): none of these
+   * deadlock each other (against the sweep, which locks in its own order, the
+   * caller runs once more: onceMoreOnWriteConflict). Returns how many it
+   * dropped, and how many of them no worker held under a live lease: those the
+   * caller reports with recordExpired once it has committed. The others are
+   * marked (DROPPED_WHILE_HELD) for the worker holding them, which reports
+   * their outcome (MailStore.fateOf); one that died holding it reports none.
    */
   async expireQueued(
     tx: Prisma.TransactionClient,
@@ -135,7 +142,9 @@ export class MailOutboxService {
     const rows = await tx.$queryRaw<{ unclaimed: boolean }[]>`
       UPDATE "mail_messages" AS "message"
       SET "status" = 'expired', "recipient" = NULL, "locked_until" = NULL,
-          "last_error" = ${reason}, "updated_at" = now()
+          "last_error" = CASE WHEN "before"."unclaimed" THEN ${reason}
+                              ELSE ${reason} || ${DROPPED_WHILE_HELD} END,
+          "updated_at" = now()
       FROM (
         SELECT "id", ("status" <> 'sending' OR "locked_until" < now()) AS "unclaimed"
         FROM "mail_messages"
@@ -156,8 +165,8 @@ export class MailOutboxService {
   /**
    * Counts the messages a caller dropped with expireQueued that no worker
    * held, after its transaction committed (a rolled-back one dropped
-   * nothing): the delivery metric then counts every message once, whoever
-   * settled it.
+   * nothing): the delivery metric then counts a dropped message at most once,
+   * whoever settled it.
    */
   recordExpired(kind: MailKind, count: number): void {
     for (let i = 0; i < count; i += 1) recordMailDelivery(kind, 'expired');

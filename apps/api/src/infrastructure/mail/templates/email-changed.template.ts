@@ -45,7 +45,9 @@ export const emailChangedTemplate: MailTemplate = {
       ? `on ${payload.data.changedAt.replace('T', ' ').replace(/\.\d+Z$|Z$/, '')} UTC`
       : 'just now';
     // A notice without it was queued by the previous release, during a
-    // deployment: ranked by the account as it is now, as that release did.
+    // deployment: ranked by the account as it is now, as that release did. It
+    // cannot be ranked better, so an undo of any later change, the thief's
+    // own included, refuses it too (docs/security.md#change-of-email).
     const changed = payload.success ? payload.data.securityVersion : undefined;
     const securityVersion = changed === undefined ? user.securityVersion : Number(changed);
     // Under the account's lock, like the undo itself, which drops the notices

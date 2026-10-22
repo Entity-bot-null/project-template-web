@@ -58,10 +58,10 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   family, the same across refreshes; not a credential). A logout that names the sessions it ends
   (`{ "sessionIds": [...] }`: the web client's retry, and its logout of a session it discarded)
   ends the cookie's family only when it is one of them, and touches the cookies only then: a
-  session started meanwhile is left alone, and gets its `has_session` hint back (the client drops
-  the hint first, for a page closed meanwhile). It tries every refresh cookie the request carries
-  (two when one was planted next to ours): only named sessions end, so that is safe. Ids compare in
-  lower case.
+  session started meanwhile is left alone, and gets its `has_session` hint back unless the refresh
+  cookies are ambiguous (the client drops the hint first, for a page closed meanwhile). It tries up
+  to four refresh cookies the request carries (two when one was planted next to ours): only named
+  sessions end, so that is safe. Ids compare in lower case.
 - **Concurrent changes:** every change to a user's sessions takes that user's row lock first, so
   sign-ins, rotations, logouts and revocations never interleave. Those transactions run in READ
   COMMITTED whatever the database's default, so what they read after the lock is what the one they
@@ -239,7 +239,14 @@ password) in someone else's hands cannot take the account for good:
   its change or an earlier one was used after it was queued (used links are kept a day), and a
   notice of the previous release older than that is dropped (only a failed one put back by hand
   gets there). A row another worker took over mints no second link. A change made after an undo
-  is told as usual. An undo that loses a deadlock to the outbox's sweep runs once more. Whoever took
+  is told as usual. An undo that loses a deadlock to the outbox's sweep runs once more. Two limits
+  hold only while a deployment replaces the previous release: a notice that release queued carries
+  no rank, so it is ranked by the account as it is when it goes out, and an undo of any later
+  change, the thief's own included, refuses it (it cannot tell the owner's notice from one that
+  would undo an undo; drain the outbox's `email_changed` notices before deploying to avoid it,
+  `pnpm --filter api mail status`); and an undo the previous release makes counts from when its
+  request arrived (its password hash comes after), so a notice this release queues during those
+  milliseconds still goes out. Whoever took
   the account and undoes their own later change cannot void the owner's link; the owner's link
   voids theirs, whichever notice went out first (every order is tested). The
   undo link is **not bound to the account's later state** and is never replaced by a newer one:
@@ -284,8 +291,11 @@ password) in someone else's hands cannot take the account for good:
   that lands after the sign-out cannot bring the hint back: it is dropped again, unless a sign-in
   followed the sign-out (the hint is then the new session's).
   If the server cannot be reached, the sign-in page says so and offers a retry, which names the
-  session the sign-out ended and every discarded session whose own logout failed (below): a newer
-  sign-in another tab made meanwhile stands. Each tab knows the browser's session, its own or the
+  session the sign-out ended and every discarded session whose own logout failed (below), at most
+  four: a newer sign-in another tab made meanwhile stands. When one of them is unknown (a discarded
+  answer of the previous release, or a sign-out of a tab that never learnt its session), the retry
+  ends the cookie's session, whichever it is. Only a logout issued since the latest sign-out sets
+  what the page says; an older one's answer cannot bring back the hint that sign-out dropped. Each tab knows the browser's session, its own or the
   one another tab announced (`BroadcastChannel`). A sign-out never joins a retry still on its way:
   it sends its own logout, for the cookie's session, whichever it is.
 - **Picking up another tab's sign-in:** an anonymous tab refreshes when told; a refresh of its own

@@ -725,20 +725,30 @@ describe('signIn and signOut', () => {
 
   it('says the sign-out may not stand when the logout of a discarded session failed, and its retry names it', async () => {
     const change = deferred<Response>();
+    const discardFails = deferred<undefined>();
     let logouts = 0;
     const { calls } = stubFetch({
       'POST /api/account/password': () => change.promise,
-      [LOGOUT]: () =>
-        logouts++ < 2 ? Promise.reject(new TypeError('Failed to fetch')) : signedOut(),
+      [LOGOUT]: () => {
+        logouts += 1;
+        // The sign-out's own logout works; the discarded session's fails.
+        if (logouts === 1) return signedOut();
+        if (logouts > 2) return signedOut();
+        return discardFails.promise.then(() => {
+          throw new TypeError('Failed to fetch');
+        });
+      },
     });
     setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const changed = changePassword('old password', 'violet harbour lantern 7');
     await expect.poll(() => calls.length).toBe(1);
-    await expect(signOut()).resolves.toBe(false);
+    await expect(signOut()).resolves.toBe(true);
+    expect(getState()).toEqual(SIGNED_OUT);
     change.resolve(session('token-D', member, DISCARDED_ID));
     await changed;
-    // Its own logout fails too: D may still be live in the jar.
     await expect.poll(() => calls.filter((call) => routeOf(call) === LOGOUT).length).toBe(2);
+    discardFails.resolve(undefined);
+    // D may still be live in the jar: the page says so.
     await vi.waitFor(() => {
       expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
     });
@@ -747,6 +757,168 @@ describe('signIn and signOut', () => {
       sessionIds: [SESSION_ID, DISCARDED_ID],
     });
     expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  it('names at most the four sessions the API takes in a retry, the signed-out one first', async () => {
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333',
+      '44444444-4444-4444-8444-444444444444',
+    ];
+    const failLogouts = () => Promise.reject(new TypeError('Failed to fetch'));
+    for (const id of ids) {
+      // Each time a password change answers after a sign-out, and the
+      // logout of the session it started fails.
+      const change = deferred<Response>();
+      stubFetch({
+        'POST /api/account/password': () => change.promise,
+        [LOGOUT]: failLogouts,
+      });
+      setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+      const changed = changePassword('old password', 'violet harbour lantern 7');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await signOut();
+      change.resolve(session(`token-${id}`, member, id));
+      await changed;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const last = stubFetch({ [LOGOUT]: signedOut });
+    await expect(retrySignOut()).resolves.toBe(true);
+    const body = (await bodyOf(last.calls.at(-1))) as { sessionIds: string[] };
+    expect(body.sessionIds).toHaveLength(4);
+    expect(body.sessionIds[0]).toBe(SESSION_ID);
+  });
+
+  it("retries a previous release's discarded session (no id) for the cookie's session, whichever it is", async () => {
+    const change = deferred<Response>();
+    let logouts = 0;
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [LOGOUT]: () => {
+        logouts += 1;
+        return logouts === 2 ? Promise.reject(new TypeError('Failed to fetch')) : signedOut();
+      },
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    await signOut();
+    // Its cookie replaced the signed-out one; the hint it set was dropped.
+    change.resolve(ok({ accessToken: 'token-old-release', expiresIn: 900, user: member }));
+    await changed;
+    await vi.waitFor(() => {
+      expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+    });
+    await expect(retrySignOut()).resolves.toBe(true);
+    await expect(bodyOf(calls.at(-1))).resolves.toBeUndefined();
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  it("forgets a discarded session whose logout failed once a sign-in ended it: this tab's, or another's", async () => {
+    for (const signInHere of [true, false]) {
+      resetForTests();
+      setSessionHint();
+      const change = deferred<Response>();
+      let logouts = 0;
+      const { calls } = stubFetch({
+        'POST /api/account/password': () => change.promise,
+        [LOGOUT]: () => {
+          logouts += 1;
+          // The discard's logout, and the sign-out after the sign-in, fail.
+          return logouts === 1 ? signedOut() : Promise.reject(new TypeError('Failed to fetch'));
+        },
+        [SIGN_IN]: () => session('token-N', member, NEWER_ID),
+        [REFRESH]: () => session('token-N', member, NEWER_ID),
+      });
+      setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+      const changed = changePassword('old password', 'violet harbour lantern 7');
+      await expect.poll(() => calls.length).toBe(1);
+      await signOut();
+      change.resolve(session('token-D', member, DISCARDED_ID));
+      await changed;
+      await vi.waitFor(() => {
+        expect(getState()).toMatchObject({ signedOut: 'failed' });
+      });
+      // A sign-in presents the jar's cookie (D's): the server ends it.
+      if (signInHere) {
+        await signIn(member.email, 'right');
+      } else {
+        const tab = new BroadcastChannel('auth');
+        tab.postMessage('signed-in');
+        tab.close();
+        await vi.waitFor(() => {
+          expect(getState().status).toBe('authenticated');
+        });
+      }
+      await expect(signOut()).resolves.toBe(false);
+      stubFetch({ [LOGOUT]: signedOut });
+      const retried = retrySignOut();
+      await expect(retried).resolves.toBe(true);
+      // Only the session signed out of last: D is no longer the jar's.
+      const last = vi.mocked(fetch).mock.calls.at(-1)?.[0] as Request;
+      await expect(bodyOf(last)).resolves.toEqual({ sessionIds: [NEWER_ID] });
+    }
+  });
+
+  it("does not let an older retry's answer say a newer, failed sign-out stands, nor bring its hint back", async () => {
+    let logouts = 0;
+    const retryGate = deferred<Response>();
+    const { calls } = stubFetch({
+      [LOGOUT]: () => {
+        logouts += 1;
+        return logouts === 2 ? retryGate.promise : Promise.reject(new TypeError('Failed to fetch'));
+      },
+      [REFRESH]: () => session('token-2', member, NEWER_ID),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    await expect(signOut()).resolves.toBe(false);
+    const retried = retrySignOut();
+    await expect.poll(() => calls.length).toBe(2);
+    // This tab picks up another tab's sign-in, then signs out of it: that fails.
+    const tab = new BroadcastChannel('auth');
+    tab.postMessage('signed-in');
+    tab.close();
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('authenticated');
+    });
+    await expect(signOut()).resolves.toBe(false);
+    // The retry answers 204, and the server set the newer session's hint back.
+    setSessionHint();
+    retryGate.resolve(signedOut());
+    await retried;
+    expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+    expect(document.cookie).not.toContain('has_session');
+  });
+
+  it("keeps a sign-in waiting for a discarded session's logout that started while it waited (no Web Locks)", async () => {
+    const change = deferred<Response>();
+    const firstLogout = deferred<Response>();
+    const discardLogout = deferred<Response>();
+    let logouts = 0;
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [LOGOUT]: () => {
+        logouts += 1;
+        return logouts === 1 ? firstLogout.promise : discardLogout.promise;
+      },
+      [SIGN_IN]: () => session('token-N', member, NEWER_ID),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    void signOut();
+    const signedIn = signIn(member.email, 'right');
+    change.resolve(session('token-D', member, DISCARDED_ID));
+    await changed;
+    await expect.poll(() => calls.filter((call) => routeOf(call) === LOGOUT).length).toBe(2);
+    firstLogout.resolve(signedOut());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The discard's answer clears the cookies: the sign-in waits for it.
+    expect(calls.map(routeOf)).not.toContain(SIGN_IN);
+    discardLogout.resolve(signedOut());
+    await expect(signedIn).resolves.toMatchObject({ ok: true });
+    expect(calls.map(routeOf).at(-1)).toBe(SIGN_IN);
   });
 
   it("does not let the logout of a previous release's discarded answer end a sign-in made after it", async () => {

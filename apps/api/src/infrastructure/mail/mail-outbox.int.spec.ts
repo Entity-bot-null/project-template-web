@@ -168,7 +168,10 @@ describe.skipIf(skipWithoutMailpit)('mail outbox (PostgreSQL + Mailpit)', () => 
     await disarmChaos();
     await expect(main.store.retryFailed({ id: failed?.id ?? '' })).resolves.toBe(1);
     await deliver(main);
-    expect(await rowsTo(main, to)).toMatchObject([{ status: 'sent', attempts: 1 }]);
+    // Attempts count from the retry; the attempt number itself goes on.
+    expect(await rowsTo(main, to)).toMatchObject([
+      { status: 'sent', attempts: 2, attemptsBase: 1 },
+    ]);
   });
 
   it('retries while the SMTP server is unreachable, and reads as degraded meanwhile', async () => {

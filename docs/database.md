@@ -102,10 +102,14 @@ constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, in the t
 column's definition) added to a table an earlier migration created (the previous release may write
 what it refuses, and existing rows can make it fail), unless it is a unique index, a `UNIQUE` or a
 foreign key that only covers columns the same migration added empty: nullable, with no default
-(nor one given later with `SET DEFAULT`), no generated or identity value, and no `UPDATE`,
-`INSERT`, `MERGE` or `COPY ... FROM` of that table anywhere in the migration, a `WITH` query's
-included (a new optional relation; `NULLS NOT DISTINCT`, a `CHECK` and a primary key never count:
-their NULLs collide, a `CHECK` may read other columns, a primary key refuses NULLs); a dropped unique index (every name of a `DROP INDEX`), unique
+(nor one given later with `SET DEFAULT`, nor a domain type that has one, in this migration or an
+earlier one), no generated or identity value, not added with `IF NOT EXISTS` (the column may be
+there already), and no `UPDATE`, `INSERT`, `MERGE` or `COPY ... FROM` of that table in the
+migration, one inside a `WITH` query, an `EXPLAIN`, a `PREPARE` or a rule included; a foreign key
+must also give way to the rows it references (`ON DELETE` and `ON UPDATE` `SET NULL`, `SET DEFAULT`
+or `CASCADE`: Prisma's optional relation), or the previous release's deletes of them are refused (a
+new optional relation; `NULLS NOT DISTINCT`, a `CHECK` and a primary key never count: their NULLs
+collide, a `CHECK` may read other columns, a primary key refuses NULLs); a dropped unique index (every name of a `DROP INDEX`), unique
 constraint or primary key; a table moved to another schema; a `DELETE` without `WHERE`; and an
 enum value added without `IF NOT EXISTS` (see below). Comments and strings anywhere in a
 statement do not hide a step. Prisma writes `ADD VALUE` without it, and
@@ -116,7 +120,8 @@ statement do not hide a step. Prisma writes `ADD VALUE` without it, and
 them (retype the column, rename the types, drop the old one), each with its reason. Expand steps
 (new tables and what they get in the same migration, nullable columns, columns with a default,
 indexes, looser constraints) need nothing. The check reads plain statements, not SQL inside a `DO`
-block or a function body.
+block, a function or procedure body (a `CALL`, a `SELECT` of a function, a trigger) or a dynamic
+statement.
 
 ### Safe migrations
 

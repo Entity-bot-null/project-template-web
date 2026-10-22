@@ -26,6 +26,11 @@ export const MAIL_LEASE_RENEW_MS = MAIL_LEASE_MS / 3;
 // out and another worker may take the message over.
 export const MAIL_EXCHANGE_MAX_MS = 10 * 60_000;
 
+// Appended to the reason of a message dropped while a worker held it under a
+// live lease (MailOutboxService.expireQueued): that worker counts it
+// (MailStore.fateOf); the caller counts the others.
+export const DROPPED_WHILE_HELD = ':held';
+
 // Retries: exponential from 30 seconds, at most an hour apart, with jitter.
 export const MAIL_RETRY_BASE_MS = 30_000;
 export const MAIL_RETRY_MAX_MS = 3_600_000;

@@ -162,9 +162,11 @@ export class AuthController {
       else if (outcome.liveUntil !== undefined) liveUntil = outcome.liveUntil;
     }
     if (retired) clearSessionCookies(res);
-    // Its hint back to a live session left alone; not with two cookies,
-    // which a refresh refuses anyway.
-    else if (liveUntil !== undefined && tokens.length === 1) setSessionHint(res, liveUntil);
+    // Its hint back to a live session left alone; not with two refresh
+    // cookies (an empty one included), which a refresh refuses anyway.
+    else if (liveUntil !== undefined && !hasAmbiguousRefreshCookie(req)) {
+      setSessionHint(res, liveUntil);
+    }
   }
 
   // Public and the same for everyone: the web app shows only what works here.

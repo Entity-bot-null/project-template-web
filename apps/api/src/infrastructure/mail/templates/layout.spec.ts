@@ -94,6 +94,7 @@ describe('the test template', () => {
       userId: null,
       payload: {},
       attempts: 1,
+      attemptsBase: 0,
       expiresAt: new Date('2026-10-13T12:00:00Z'),
       createdAt: new Date('2026-10-13T11:00:00Z'),
       requestId: null,

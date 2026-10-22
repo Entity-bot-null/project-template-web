@@ -96,8 +96,12 @@ describe('MailOutboxService', () => {
     // Locked in id order; a message being sent under a live lease is its worker's to count.
     expect(statement).toContain('ORDER BY "id"\n        FOR UPDATE');
     expect(statement).toContain(`("status" <> 'sending' OR "locked_until" < now()) AS "unclaimed"`);
+    // A message a worker holds keeps its reason, marked for that worker.
+    expect(statement).toMatch(/CASE WHEN "before"\."unclaimed" THEN \?\s+ELSE \? \|\| \? END/);
     expect(values).toEqual([
       'superseded',
+      'superseded',
+      ':held',
       'u1',
       'email_changed',
       'securityVersion',

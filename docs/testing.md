@@ -134,8 +134,8 @@ built web assets with `apps/web/performance-budget.json`, and the landing's with
 a script added to one fails the check until its budget is raised on purpose) and its CSS budget
 6 kB. Astro writes no processed script into a page (`assetsInlineLimit: 0`: it becomes a file the
 budget counts; an `is:inline` one stays inline), and the same check reads every built page of the
-landing, as a browser parses it (comments, raw text elements such as a title outside SVG and
-MathML, character references), for what the web server's Content-Security-Policy refuses: an inline script or event
+landing, as a browser parses it (comments; raw text elements such as a title, except in SVG and
+MathML where HTML is not read; character references), for what the web server's Content-Security-Policy refuses: an inline script or event
 handler, a `<style>` element or a style attribute, a `javascript:` URL, an object or an embed, a
 base or a form pointing elsewhere, a file from another origin, and any of these in an iframe's
 `srcdoc`; and every stylesheet of both apps for an `@import` or a `url()` from another origin (a

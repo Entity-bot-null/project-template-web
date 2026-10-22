@@ -88,11 +88,36 @@ it("drops an account's waiting notices of a later change, counting those no work
   }
   // An earlier change's notice is kept.
   expect(statusOf(earlier.id)?.status).toBe('pending');
-  // The worker holding it learns it was dropped under its claim.
-  await expect(t.app.get(MailStore).droppedMeanwhile({ id: held.id, attempts: 1 })).resolves.toBe(
-    true,
-  );
-  await expect(t.app.get(MailStore).droppedMeanwhile({ id: held.id, attempts: 2 })).resolves.toBe(
-    false,
-  );
+  // The worker holding it under a live lease counts it; the undo counted the
+  // one whose lease had run out, whose worker may still be alive.
+  const store = t.app.get(MailStore);
+  await expect(store.fateOf({ id: held.id, attempts: 1 })).resolves.toBe('dropped');
+  await expect(store.fateOf({ id: abandoned.id, attempts: 1 })).resolves.toBe('counted');
+  await expect(store.fateOf({ id: held.id, attempts: 2 })).resolves.toBe('taken-over');
+});
+
+it('puts a failed message back with its attempts counted from the retry, never lowering them', async () => {
+  // Alone in the outbox: the claim below takes the due message.
+  await resetDatabase(t.prisma);
+  const row = await t.prisma.mailMessage.create({
+    data: {
+      kind: 'test',
+      recipient: 'retry@example.test',
+      recipientHash: 'e'.repeat(64),
+      status: 'failed',
+      attempts: 3,
+      lastError: 'connection',
+      expiresAt: new Date(Date.now() - 60_000),
+    },
+  });
+  const store = t.app.get(MailStore);
+  await expect(store.retryFailed({ id: row.id })).resolves.toBe(1);
+  const back = await t.prisma.mailMessage.findUniqueOrThrow({ where: { id: row.id } });
+  expect(back).toMatchObject({ status: 'pending', attempts: 3, attemptsBase: 3, lastError: null });
+  expect(back.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  // A stale worker still holding attempt 1, 2 or 3 never matches the next claim (4).
+  const claimed = await store.claim();
+  expect(claimed).toMatchObject({ id: row.id, attempts: 4, attemptsBase: 3 });
+  await expect(store.markSent({ id: row.id, attempts: 1 })).resolves.toBe(false);
+  await expect(store.retryFailed({ id: 'not-an-id' })).resolves.toBe(0);
 });

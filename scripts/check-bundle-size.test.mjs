@@ -238,6 +238,29 @@ describe('cspProblems', () => {
       ['a file from another origin: https://cdn.example.net/x.png'],
     );
     assert.deepEqual(cspProblems('<math/><title><p style="x"></p></title>'), []);
+    // Each foreign element closes by its own end tag; a value's slash closes nothing.
+    assert.deepEqual(
+      cspProblems('<svg></math><title><img src="https://x.example/a.png"></title></svg>'),
+      ['a file from another origin: https://x.example/a.png'],
+    );
+    assert.deepEqual(
+      cspProblems('<svg width=24/><title><img src=https://x.example/a.png></title></svg>'),
+      ['a file from another origin: https://x.example/a.png'],
+    );
+    // CDATA in SVG is text: its </svg> ends nothing.
+    assert.deepEqual(
+      cspProblems('<svg><![CDATA[</svg>]]><title/><path/></svg><p style="x">a</p>'),
+      ['a style attribute on <p>'],
+    );
+    // Where HTML is read again (integration points, an HTML tag that ends the
+    // SVG), a title or a textarea is raw text again.
+    for (const page of [
+      '<svg><foreignObject><textarea><img src="https://x.example/a.png"></textarea></foreignObject></svg>',
+      '<math><mi><title><img src="https://x.example/a.png"></title></mi></math>',
+      '<svg><span></span><title><img src="https://x.example/a.png"></title>',
+    ]) {
+      assert.deepEqual(cspProblems(page), [], page);
+    }
     // A letter that changes length in lower case does not shift what is read.
     assert.deepEqual(
       cspProblems(
@@ -281,6 +304,20 @@ describe('cssProblems', () => {
         /* @import url(https://fonts.example.net/css); */`),
       [],
     );
+  });
+
+  test('reads @import rules only outside strings, and comments only outside strings', () => {
+    for (const css of [
+      '@importer{}.a{background:url(https://evil.example/x.png)}',
+      '.a{content:"@import"}.b{background:url(https://evil.example/x.png)}',
+      '.a{content:"/*"}.b{background:url(https://evil.example/x.png)}/* */',
+    ]) {
+      assert.deepEqual(
+        cssProblems(css),
+        ['a file from another origin: https://evil.example/x.png'],
+        css,
+      );
+    }
   });
 
   test('finds what the policy refuses: other origins, and fonts from data: URLs', () => {

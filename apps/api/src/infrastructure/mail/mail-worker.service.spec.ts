@@ -37,6 +37,7 @@ function message(overrides: Partial<ClaimedMessage> = {}): ClaimedMessage {
     userId: null,
     payload: {},
     attempts: 1,
+    attemptsBase: 0,
     expiresAt: new Date(Date.now() + 60_000),
     createdAt: new Date(Date.now() - 2_000),
     requestId: null,
@@ -72,7 +73,9 @@ function setup({
     reschedule: vi.fn(() => Promise.resolve(true)),
     markFailed: vi.fn(() => Promise.resolve(true)),
     markExpired: vi.fn(() => Promise.resolve(true)),
-    droppedMeanwhile: vi.fn(() => Promise.resolve(false)),
+    fateOf: vi.fn((): Promise<'dropped' | 'counted' | 'taken-over' | 'gone'> =>
+      Promise.resolve('taken-over'),
+    ),
     stats: vi.fn(() => Promise.resolve(stats)),
     sweep: vi.fn(() => Promise.resolve({ deleted: 0, cleared: 0, expired: 0 })),
   };
@@ -400,7 +403,7 @@ describe('MailWorker', () => {
     metrics.recordMailDelivery.mockClear();
     const dropped = tracked(setup({ queue: [message()] }));
     dropped.store.markSent.mockResolvedValueOnce(false);
-    dropped.store.droppedMeanwhile.mockResolvedValueOnce(true);
+    dropped.store.fateOf.mockResolvedValueOnce('dropped');
     await started(dropped);
     expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
     expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
@@ -411,7 +414,7 @@ describe('MailWorker', () => {
     // Dropped under this claim while it was composed: this worker counts it.
     const dropped = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
     dropped.store.markExpired.mockResolvedValueOnce(false);
-    dropped.store.droppedMeanwhile.mockResolvedValueOnce(true);
+    dropped.store.fateOf.mockResolvedValueOnce('dropped');
     await started(dropped);
     expect(dropped.store.markExpired).toHaveBeenCalledWith(expect.anything(), 'not_applicable');
     expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'expired');
@@ -436,6 +439,41 @@ describe('MailWorker', () => {
     expect(failed.store.markFailed).toHaveBeenCalledWith(expect.anything(), 'attempts_exhausted');
     expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
     expect(logs.error).not.toHaveBeenCalledWith(expect.stringContaining('Gave up on'));
+
+    // Dropped by an undo that counted it itself (its lease had run out).
+    const counted = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
+    counted.store.markExpired.mockResolvedValueOnce(false);
+    counted.store.fateOf.mockResolvedValueOnce('counted');
+    await started(counted);
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
+
+    // Deleted with its account.
+    const gone = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
+    gone.store.markExpired.mockResolvedValueOnce(false);
+    gone.store.fateOf.mockResolvedValueOnce('gone');
+    await started(gone);
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its account was deleted'));
+  });
+
+  it('counts attempts toward the limit and the backoff from the last manual retry', async () => {
+    // Attempt 5, the second since a retry made after 3 (attemptsBase): not exhausted.
+    const context = tracked(
+      setup({
+        queue: [message({ attempts: 5, attemptsBase: 3 })],
+        compose: () => Promise.reject(new Error('db down')),
+      }),
+    );
+    await started(context);
+    expect(context.store.markFailed).not.toHaveBeenCalled();
+    const [, delay] = context.store.reschedule.mock.calls[0] as unknown as [unknown, number];
+    // The backoff of a second attempt (30 s base, doubled, with jitter): not the fifth's.
+    expect(delay).toBeLessThanOrEqual(2 * 60_000);
+    // Past the limit since the retry: given up.
+    const spent = tracked(setup({ queue: [message({ attempts: 7, attemptsBase: 3 })] }));
+    await started(spent);
+    expect(spent.store.markFailed).toHaveBeenCalledWith(expect.anything(), 'attempts_exhausted');
   });
 
   it('reads as degraded while the oldest waiting message is older than 15 minutes', async () => {

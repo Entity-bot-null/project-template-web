@@ -131,6 +131,30 @@ function endTag(html, name, from) {
   return html.length;
 }
 
+/** Start tags that end foreign content (svg, math): HTML is read again. */
+const BREAKOUT = new Set(
+  'b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr i img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var'.split(
+    ' ',
+  ),
+);
+
+/**
+ * Whether an element of foreign content reads its content as HTML again (an
+ * integration point): an SVG foreignObject, desc or title; a MathML text
+ * element, or an annotation-xml holding HTML.
+ * @param {string | undefined} root 'svg' or 'math'
+ * @param {string} name
+ * @param {Map<string, string>} attributes
+ */
+function integrationPoint(root, name, attributes) {
+  if (root === 'svg') return name === 'foreignobject' || name === 'desc' || name === 'title';
+  if (root !== 'math') return false;
+  if (name === 'annotation-xml') {
+    return /^(?:text\/html|application\/xhtml\+xml)$/i.test(attributes.get('encoding') ?? '');
+  }
+  return ['mi', 'mo', 'mn', 'ms', 'mtext'].includes(name);
+}
+
 /**
  * Where a comment that starts at `open` (`<!--`) ends, as a browser ends it:
  * `<!-->` and `<!--->` at once, otherwise at the first `-->` or `--!>`.
@@ -160,15 +184,26 @@ function commentEnd(html, open) {
 export function tagsOf(html) {
   /** @type {{ name: string; attributes: Map<string, string> }[]} */
   const tags = [];
-  // Inside <svg> or <math> (foreign content) no element is raw text, and
-  // <x/> closes itself: a <title/> there hides nothing after it.
-  let foreign = 0;
+  // The open svg and math elements, and the integration points inside them
+  // where HTML is read again ('html'), innermost last. In foreign content no
+  // element is raw text, <x/> closes itself and CDATA is text.
+  /** @type {{ name: string; kind: string }[]} */
+  const scopes = [];
+  const foreign = () => {
+    const kind = scopes.at(-1)?.kind;
+    return kind === 'svg' || kind === 'math';
+  };
   let i = 0;
   while (i < html.length) {
     const open = html.indexOf('<', i);
     if (open === -1) break;
     if (html.startsWith('<!--', open)) {
       i = commentEnd(html, open);
+      continue;
+    }
+    if (foreign() && html.startsWith('<![CDATA[', open)) {
+      const end = html.indexOf(']]>', open + 9);
+      i = end === -1 ? html.length : end + 3;
       continue;
     }
     const start = /^<(\/?)([a-zA-Z][\w:-]*)/.exec(html.slice(open, open + 80));
@@ -181,10 +216,12 @@ export function tagsOf(html) {
     const attributes = new Map();
     let j = open + start[0].length;
     let selfClosing = false;
+    // Where the last unquoted value ended: a / there is the value's (width=24/).
+    let unquotedEnd = -1;
     while (j < html.length) {
       while (j < html.length && /[\s/]/.test(html[j] ?? '')) j += 1;
       if (j >= html.length || html[j] === '>') {
-        selfClosing = html[j - 1] === '/';
+        selfClosing = html[j - 1] === '/' && unquotedEnd !== j;
         j += 1;
         break;
       }
@@ -203,17 +240,33 @@ export function tagsOf(html) {
         } else {
           value = /^[^\s>]*/.exec(html.slice(j))?.[0] ?? '';
           j += value.length;
+          unquotedEnd = j;
         }
       }
       const key = attribute.toLowerCase();
       if (!attributes.has(key)) attributes.set(key, decoded(value));
     }
     tags.push({ name, attributes });
-    if (name === 'svg' || name === 'math') {
-      if (!selfClosing) foreign += 1;
-    } else if ((name === '/svg' || name === '/math') && foreign > 0) {
-      foreign -= 1;
-    } else if (foreign === 0) {
+    if (name.startsWith('/')) {
+      // Closes the innermost open svg, math or integration point of that
+      // name, and what it holds; any other end tag changes nothing here.
+      const at = scopes.map((scope) => scope.name).lastIndexOf(name.slice(1));
+      if (at !== -1) scopes.length = at;
+    } else if (foreign()) {
+      if (
+        BREAKOUT.has(name) ||
+        (name === 'font' && ['color', 'face', 'size'].some((key) => attributes.has(key)))
+      ) {
+        // Back to HTML: the foreign elements it was in end.
+        while (foreign()) scopes.pop();
+      } else if (!selfClosing && integrationPoint(scopes.at(-1)?.kind, name, attributes)) {
+        scopes.push({ name, kind: 'html' });
+      } else if (!selfClosing && (name === 'svg' || name === 'math')) {
+        scopes.push({ name, kind: name });
+      }
+    } else if (name === 'svg' || name === 'math') {
+      if (!selfClosing) scopes.push({ name, kind: name });
+    } else {
       // A raw text element's text runs to its end tag, whatever it holds.
       if (RAW_TEXT.has(name)) j = endTag(html, name, j);
       if (name === 'plaintext') j = html.length;
@@ -323,12 +376,15 @@ export function cspProblems(html) {
 export function cssProblems(css) {
   /** @type {string[]} */
   const problems = [];
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const [, url = ''] of code.matchAll(/@import\s*(?:url\(\s*)?["']?([^"')\s;]+)/gi)) {
+  const code = cssWithoutComments(css);
+  const imports = cssImports(code);
+  for (const [from, to] of imports) {
+    const url = /^@import\s*(?:url\(\s*)?["']?([^"')\s;]+)/i.exec(code.slice(from, to))?.[1] ?? '';
     if (isAbsolute(url)) problems.push(`an @import from another origin: ${url}`);
   }
   // The url() of an @import is that import's, reported once.
-  const rules = code.replace(/@import[^;]*;?/gi, '');
+  let rules = code;
+  for (const [from, to] of [...imports].reverse()) rules = rules.slice(0, from) + rules.slice(to);
   for (const [, , url = ''] of rules.matchAll(/url\(\s*(["']?)([^"')]*)\1\s*\)/gi)) {
     const target = url.trim();
     if (/^data:/i.test(target)) {
@@ -336,6 +392,75 @@ export function cssProblems(css) {
     } else if (isAbsolute(target)) problems.push(`a file from another origin: ${target}`);
   }
   return problems;
+}
+
+/**
+ * Where the strings of a stylesheet end, read from `from` on: the index after
+ * the string that starts there (a backslash escapes the next character).
+ * @param {string} css
+ * @param {number} from the opening quote's index
+ */
+function cssStringEnd(css, from) {
+  const quote = css[from];
+  let k = from + 1;
+  while (k < css.length && css[k] !== quote) k += css[k] === '\\' ? 2 : 1;
+  return k + 1;
+}
+
+/**
+ * A stylesheet without its comments, strings kept as written (a "/*" in a
+ * string starts no comment).
+ * @param {string} css
+ */
+function cssWithoutComments(css) {
+  let out = '';
+  let k = 0;
+  while (k < css.length) {
+    const c = css[k] ?? '';
+    if (c === '"' || c === "'") {
+      const end = cssStringEnd(css, k);
+      out += css.slice(k, end);
+      k = end;
+    } else if (css.startsWith('/*', k)) {
+      const end = css.indexOf('*/', k + 2);
+      k = end === -1 ? css.length : end + 2;
+    } else {
+      out += c;
+      k += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The import rules of a stylesheet (`@import`), outside strings, as
+ * [start, end) ranges (to the ; that ends each): a longer at-keyword, or a
+ * string that only says the word, is none.
+ * @param {string} css a stylesheet without comments
+ * @returns {[number, number][]}
+ */
+function cssImports(css) {
+  /** @type {[number, number][]} */
+  const ranges = [];
+  let k = 0;
+  while (k < css.length) {
+    const c = css[k] ?? '';
+    if (c === '"' || c === "'") {
+      k = cssStringEnd(css, k);
+      continue;
+    }
+    if (c === '@' && /^@import(?![\w-])/i.test(css.slice(k, k + 8))) {
+      let end = k + 7;
+      while (end < css.length && css[end] !== ';') {
+        end = css[end] === '"' || css[end] === "'" ? cssStringEnd(css, end) : end + 1;
+      }
+      ranges.push([k, Math.min(end + 1, css.length)]);
+      k = end + 1;
+      continue;
+    }
+    k += 1;
+  }
+  return ranges;
 }
 
 /**

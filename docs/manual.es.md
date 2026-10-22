@@ -915,7 +915,8 @@ docker compose ... run --rm -T api node dist/infrastructure/mail/mail.cli.js tes
 mensajes se nombran por id; `--to <dirección>` encuentra los mensajes de una dirección);
 `mail retry --failed` reenvía los fallidos una vez corregida la causa, cada uno con una validez
 nueva (una caída más larga que ella no los descarta; los enlaces empiezan su propia validez al
-enviarse). Alertas `ApiMailBacklog` y
+enviarse) y sus intentos contados desde el reintento (el número de intento sigue: `attempts=` en
+`mail status`). Alertas `ApiMailBacklog` y
 `ApiMailDeliveryFailed`, y el runbook: [incident-response.md](incident-response.md#16-email-not-delivered).
 Para rotar las credenciales SMTP, crea las nuevas en el proveedor, actualiza `MAIL_SMTP_URL`,
 redespliega y después revoca las antiguas; los mensajes que esperaban salen en su siguiente intento.

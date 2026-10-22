@@ -176,7 +176,9 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   private async deliver(claimed: ClaimedMessage): Promise<void> {
     const label = `${claimed.kind} message ${claimed.id} (attempt ${String(claimed.attempts)})`;
-    if (claimed.attempts > this.options.maxAttempts) {
+    // Counted from the last manual retry (attemptsBase): `attempts` itself
+    // never goes down, it fences the claim.
+    if (claimed.attempts - claimed.attemptsBase > this.options.maxAttempts) {
       // Taken over again and again: its worker never got to record an outcome.
       await this.fail(claimed, label, 'attempts_exhausted');
       return;
@@ -231,7 +233,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     if (await this.store.markSent(claimed)) {
       this.logger.log(`Sent ${label} in ${String(Math.round(seconds * 1000))} ms`);
     } else {
-      await this.refused(claimed, `Sent ${label}`, { counted: true });
+      await this.refused(claimed, `Sent ${label}`, { sent: true });
     }
   }
 
@@ -285,11 +287,12 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     failure: DeliveryFailure,
     seconds?: number,
   ) {
-    if (claimed.attempts >= this.options.maxAttempts) {
+    const tries = claimed.attempts - claimed.attemptsBase;
+    if (tries >= this.options.maxAttempts) {
       await this.fail(claimed, label, failure.category, seconds);
       return;
     }
-    const delayMs = retryDelayMs(claimed.attempts);
+    const delayMs = retryDelayMs(tries);
     if (!(await this.store.reschedule(claimed, delayMs, failure.category))) {
       await this.refused(claimed, `Could not send ${label}: ${failure.category}`);
       return;
@@ -322,15 +325,22 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   // An outcome the row no longer takes (MailStore.finish refused it). Dropped
   // meanwhile under this worker's claim (an undo of a change of email): the
-  // message was this worker's, and counts as expired here, unless it went out
-  // (`counted`: already counted as sent). Taken over by another worker: that
-  // worker counts it.
-  private async refused(claimed: ClaimedMessage, what: string, { counted = false } = {}) {
-    if (await this.store.droppedMeanwhile(claimed)) {
-      if (!counted) recordMailDelivery(claimed.kind, 'expired');
+  // message was this worker's, and counts as expired here when the undo left
+  // it to this worker (MailStore.fateOf) and it did not go out (`sent`: counted
+  // as sent already). Taken over by another worker: that worker counts it.
+  private async refused(claimed: ClaimedMessage, what: string, { sent = false } = {}) {
+    const fate = await this.store.fateOf(claimed);
+    if (fate === 'dropped' || fate === 'counted') {
+      // `counted`: the undo counted it (no live lease); `sent`: counted here
+      // as sent already.
+      if (fate === 'dropped' && !sent) recordMailDelivery(claimed.kind, 'expired');
       this.logger.warn(`${what}, but it was dropped meanwhile (an undo of a change of email)`);
+    } else if (fate === 'gone') {
+      this.logger.warn(`${what}, but it is gone (its account was deleted)`);
     } else {
-      this.logger.warn(`${what}, but another worker took it over: it may go out twice`);
+      this.logger.warn(
+        `${what}, but another worker took it over${sent ? ': it may have gone out twice' : ''}`,
+      );
     }
   }
 

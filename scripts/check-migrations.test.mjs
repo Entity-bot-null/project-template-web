@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   checkMigrations,
   contractSteps,
+  domainDefaults,
   splitStatements,
   TIGHTENING_FROM,
 } from './check-migrations.mjs';
@@ -233,7 +234,9 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
   test("reads a constraint written in a column's definition like one of its own", () => {
     assert.deepEqual(kinds('ALTER TABLE "users" ADD COLUMN "code" TEXT UNIQUE;'), []);
     assert.deepEqual(
-      kinds('ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id");'),
+      kinds(
+        'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;',
+      ),
       [],
     );
     assert.deepEqual(
@@ -291,12 +294,95 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
 
   test('reads keywords in a column definition, not in quoted names or a foreign key action', () => {
     for (const sql of [
-      'ALTER TABLE "users" ADD COLUMN "x" UUID REFERENCES "identity"("id");',
-      'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id") ON DELETE SET DEFAULT;',
+      'ALTER TABLE "users" ADD COLUMN "x" UUID REFERENCES "identity"("id") ON DELETE CASCADE ON UPDATE CASCADE;',
+      'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id") ON DELETE SET DEFAULT ON UPDATE SET DEFAULT;',
       'ALTER TABLE "users" ADD COLUMN "h" TEXT COLLATE "default";\nCREATE UNIQUE INDEX "users_h_key" ON "users"("h");',
       'ALTER TABLE "users" ADD COLUMN "h" TEXT DEFAULT (NULL);\nCREATE UNIQUE INDEX "users_h_key" ON "users"("h");',
     ]) {
       assert.deepEqual(kinds(sql), [], sql);
+    }
+  });
+
+  test('exempts a foreign key on a new column only when it gives way to the referenced rows', () => {
+    // RESTRICT, NO ACTION, or no action said (NO ACTION): the previous
+    // release's deletes of rows the new release references are refused.
+    for (const actions of [
+      'ON DELETE RESTRICT ON UPDATE CASCADE',
+      'ON DELETE NO ACTION ON UPDATE CASCADE',
+      'ON DELETE SET NULL',
+      '',
+    ]) {
+      assert.deepEqual(
+        kinds(
+          `ALTER TABLE "users" ADD COLUMN "avatar_id" UUID;\nALTER TABLE "users" ADD CONSTRAINT "users_avatar_id_fkey" FOREIGN KEY ("avatar_id") REFERENCES "files"("id") ${actions};`,
+        ),
+        ['adds a constraint to an existing table'],
+        actions,
+      );
+      assert.deepEqual(
+        kinds(
+          `ALTER TABLE "users" ADD COLUMN "avatar_id" UUID REFERENCES "files"("id") ${actions};`,
+        ),
+        ['adds a constraint to an existing table'],
+        actions,
+      );
+    }
+    // A UNIQUE whose NULLs stay distinct, said or not, is safe on a new column.
+    assert.deepEqual(
+      kinds(
+        'ALTER TABLE "users" ADD COLUMN "code" TEXT, ADD CONSTRAINT "users_code_key" UNIQUE NULLS DISTINCT ("code");',
+      ),
+      [],
+    );
+  });
+
+  test('counts a column as holding data when IF NOT EXISTS may find it, or a domain with a default types it', () => {
+    const unique = 'CREATE UNIQUE INDEX "users_code_key" ON "users"("code");';
+    assert.deepEqual(
+      kinds(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "code" TEXT;\n${unique}`),
+      ['adds a unique index to an existing table'],
+    );
+    assert.deepEqual(
+      kinds(
+        `CREATE DOMAIN code_t AS text DEFAULT 'x';\nALTER TABLE "users" ADD COLUMN "code" code_t;\n${unique}`,
+      ),
+      ['adds a unique index to an existing table'],
+    );
+    // One an earlier migration created (checkMigrations passes them on).
+    assert.deepEqual(
+      contractSteps(`ALTER TABLE "users" ADD COLUMN "code" public.code_t;\n${unique}`, {
+        domains: new Set(['code_t']),
+      }).map((step) => step.kind),
+      ['adds a unique index to an existing table'],
+    );
+    assert.deepEqual(
+      kinds(
+        `CREATE DOMAIN code_t AS text CHECK (VALUE <> '');\nALTER TABLE "users" ADD COLUMN "code" code_t;\n${unique}`,
+      ),
+      [],
+    );
+    assert.deepEqual(
+      [
+        ...domainDefaults(
+          'CREATE DOMAIN a AS int DEFAULT 1; CREATE DOMAIN b AS int; ALTER DOMAIN b SET DEFAULT 2; ALTER DOMAIN a DROP DEFAULT;',
+        ),
+      ],
+      ['b'],
+    );
+  });
+
+  test('sees writes led by EXPLAIN, PREPARE or a rule', () => {
+    const unique = 'CREATE UNIQUE INDEX "users_code_key" ON "users"("code");';
+    for (const write of [
+      'EXPLAIN ANALYZE UPDATE "users" SET "code" = "email";',
+      'PREPARE fill AS UPDATE "users" SET "code" = "email";\nEXECUTE fill;',
+      `CREATE RULE r AS ON INSERT TO "audit" DO ALSO UPDATE "users" SET "code" = 'x';`,
+    ]) {
+      assert.deepEqual(
+        kinds(`ALTER TABLE "users" ADD COLUMN "code" TEXT;\n${write}\n${unique}`),
+        ['adds a unique index to an existing table'],
+        write,
+      );
     }
   });
 
@@ -427,6 +513,27 @@ describe('checkMigrations', () => {
       assert.equal(problems.length, 1);
       assert.match(problems[0] ?? '', new RegExp(`^${TIGHTENING_FROM}_after_the_rules/`));
       assert.match(problems[0] ?? '', /Write ADD VALUE IF NOT EXISTS/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('knows the domains with a default an earlier migration created', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'migrations-'));
+    try {
+      mkdirSync(join(dir, '20261013000000_domain'));
+      writeFileSync(
+        join(dir, '20261013000000_domain', 'migration.sql'),
+        "CREATE DOMAIN code_t AS text DEFAULT 'x';\n",
+      );
+      mkdirSync(join(dir, `${TIGHTENING_FROM}_code`));
+      writeFileSync(
+        join(dir, `${TIGHTENING_FROM}_code`, 'migration.sql'),
+        'ALTER TABLE "users" ADD COLUMN "code" code_t;\nCREATE UNIQUE INDEX "users_code_key" ON "users"("code");\n',
+      );
+      const { problems } = checkMigrations(dir);
+      assert.equal(problems.length, 1);
+      assert.match(problems[0] ?? '', /adds a unique index to an existing table/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

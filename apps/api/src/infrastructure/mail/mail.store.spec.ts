@@ -14,6 +14,7 @@ const claimed: ClaimedMessage = {
   userId: null,
   payload: {},
   attempts: 2,
+  attemptsBase: 0,
   expiresAt: new Date('2026-10-13T12:00:00Z'),
   createdAt: new Date('2026-10-13T11:00:00Z'),
   requestId: null,
@@ -126,21 +127,35 @@ describe('MailStore', () => {
     await expect(store.markSent(claimed)).resolves.toBe(false);
   });
 
-  it('tells a message dropped under this claim from one another worker took over', async () => {
+  it('tells what became of a message whose claim refused a transition', async () => {
     const findUnique = vi.fn();
     const { store } = storeWith({ mailMessage: { findUnique } });
-    findUnique.mockResolvedValueOnce({ status: 'expired', attempts: 2 });
-    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(true);
+    const claim = { id: 'm1', attempts: 2 };
+    // Dropped under this claim by an undo that left it to this worker.
+    findUnique.mockResolvedValueOnce({
+      status: 'expired',
+      attempts: 2,
+      lastError: 'superseded:held',
+    });
+    await expect(store.fateOf(claim)).resolves.toBe('dropped');
+    // Dropped under it, counted by the undo (its lease had run out).
+    findUnique.mockResolvedValueOnce({ status: 'expired', attempts: 2, lastError: 'superseded' });
+    await expect(store.fateOf(claim)).resolves.toBe('counted');
     // A later attempt: another worker's claim, whatever became of it.
-    findUnique.mockResolvedValueOnce({ status: 'expired', attempts: 3 });
-    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(false);
-    findUnique.mockResolvedValueOnce({ status: 'sending', attempts: 3 });
-    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(false);
+    findUnique.mockResolvedValueOnce({
+      status: 'expired',
+      attempts: 3,
+      lastError: 'superseded:held',
+    });
+    await expect(store.fateOf(claim)).resolves.toBe('taken-over');
+    findUnique.mockResolvedValueOnce({ status: 'sending', attempts: 3, lastError: null });
+    await expect(store.fateOf(claim)).resolves.toBe('taken-over');
+    // Deleted with its account.
     findUnique.mockResolvedValueOnce(null);
-    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(false);
+    await expect(store.fateOf(claim)).resolves.toBe('gone');
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: 'm1' },
-      select: { status: true, attempts: true },
+      select: { status: true, attempts: true, lastError: true },
     });
   });
 
@@ -198,37 +213,39 @@ describe('MailStore', () => {
   it('puts failed messages that still have an address back in the queue, each with its kind validity', async () => {
     const now = Date.parse('2026-10-13T12:00:00Z');
     const kinds = Object.keys(MAIL_TEMPLATE_REGISTRY);
-    const { prisma, store } = storeWith({
-      mailMessage: {
-        updateMany: vi.fn(({ where }: { where: { id?: string; kind: string } }) =>
-          Promise.resolve({ count: where.kind === 'password_reset' ? 1 : 0 }),
-        ),
-      },
-    });
-    await expect(store.retryFailed({ id: 'm1' }, now)).resolves.toBe(1);
-    const calls = prisma.mailMessage.updateMany.mock.calls as unknown as [
-      { where: Record<string, unknown>; data: Record<string, unknown> },
-    ][];
-    expect(calls.map(([call]) => call.where)).toEqual(
-      kinds.map((kind) => ({ status: 'failed', recipient: { not: null }, kind, id: 'm1' })),
+    const id = '0d5f6c2a-9b7e-4c1d-8a3f-2e6b9c4d7a10';
+    const $executeRaw = vi.fn((_sql: TemplateStringsArray, ...values: unknown[]) =>
+      Promise.resolve(values.includes('password_reset') ? 1 : 0),
     );
+    const { store } = storeWith({ $executeRaw });
+    await expect(store.retryFailed({ id }, now)).resolves.toBe(1);
+    expect($executeRaw).toHaveBeenCalledTimes(kinds.length);
+    const calls = $executeRaw.mock.calls as unknown as [TemplateStringsArray, ...unknown[]][];
+    const [sql, ...values] = calls.find((call) => call.includes('password_reset')) ?? [];
+    const statement = sql?.join('?') ?? '';
+    // Attempts count from here; `attempts` itself (the claim's fence) stays.
+    expect(statement).toContain(`"attempts_base" = "message"."attempts"`);
+    expect(statement).not.toMatch(/"attempts" = 0/);
+    expect(statement).toContain(`"status" = 'failed' AND "recipient" IS NOT NULL`);
+    // Locked in id order, like expireQueued.
+    expect(statement).toContain('ORDER BY "id"');
+    expect(statement).toContain('FOR UPDATE');
     // A new validity per kind: an outage longer than it no longer drops them unsent.
-    const reset = calls.find(([call]) => call.where.kind === 'password_reset')?.[0];
-    expect(reset?.data).toEqual({
-      status: 'pending',
-      attempts: 0,
-      nextAttemptAt: new Date(now),
-      expiresAt: new Date(now + MAIL_TEMPLATE_REGISTRY.password_reset.ttlMs),
-      lastError: null,
-    });
-
-    prisma.mailMessage.updateMany.mockClear();
-    await expect(store.retryFailed({ kind: 'test' }, now)).resolves.toBe(0);
-    const onlyTest = prisma.mailMessage.updateMany.mock.calls as unknown as [
-      { where: Record<string, unknown> },
-    ][];
-    expect(onlyTest.map(([call]) => call.where)).toEqual([
-      { status: 'failed', recipient: { not: null }, kind: 'test' },
+    expect(values).toEqual([
+      new Date(now),
+      new Date(now + MAIL_TEMPLATE_REGISTRY.password_reset.ttlMs),
+      'password_reset',
+      id,
+      id,
     ]);
+
+    $executeRaw.mockClear();
+    await expect(store.retryFailed({ kind: 'test' }, now)).resolves.toBe(0);
+    expect($executeRaw).toHaveBeenCalledTimes(1);
+    expect(($executeRaw.mock.calls[0] as unknown[]).slice(1)).toContain(null);
+    // Not a message's id (a typo on the command line): nothing is touched.
+    $executeRaw.mockClear();
+    await expect(store.retryFailed({ id: 'not-an-id' }, now)).resolves.toBe(0);
+    expect($executeRaw).not.toHaveBeenCalled();
   });
 });

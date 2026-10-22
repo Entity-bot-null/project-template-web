@@ -341,6 +341,20 @@ describe('Auth (integration)', () => {
     ).resolves.toBe(1);
   });
 
+  it('gives a live session left alone no hint back when the refresh cookies are ambiguous', async () => {
+    const live = await request(t.server)
+      .post('/api/auth/sign-in')
+      .send({ email: EMAIL, password: TEST_PASSWORD })
+      .expect(200);
+    const res = await request(t.server)
+      .post('/api/auth/logout')
+      // An empty second cookie makes the pair ambiguous: a refresh refuses it.
+      .set('Cookie', `refresh_token=; ${refreshCookieOf(live)}`)
+      .send({ sessionIds: ['3b1e8d42-6c7a-4f0e-9d25-7a8c1e4b6f30'] })
+      .expect(204);
+    expect(cookiesOf(res)).toEqual([]);
+  });
+
   it("logs out like before with an empty JSON body: the cookie's session, whichever it is", async () => {
     const session = await signIn(t.server, EMAIL);
     const res = await request(t.server)

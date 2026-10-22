@@ -39,8 +39,10 @@ export interface ClaimedMessage {
   recipient: string;
   userId: string | null;
   payload: unknown;
-  /** Attempts started, this one included. */
+  /** Attempts started, this one included; never lowered (it fences the claim). */
   attempts: number;
+  /** Attempts made before the last manual retry: `attempts - attemptsBase` counts toward the limit. */
+  attemptsBase: number;
   expiresAt: Date;
   createdAt: Date;
   requestId: string | null;
