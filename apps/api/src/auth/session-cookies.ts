@@ -51,3 +51,32 @@ export function refreshTokenOf(req: Request): string | undefined {
   const value = cookies?.[REFRESH_COOKIE];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
+
+/** How many refresh cookies of one request a logout tries (refreshTokensOf). */
+const MAX_REFRESH_COOKIES = 4;
+
+/**
+ * Every refresh token the request's Cookie header carries, in order: more
+ * than one when a cookie was planted next to ours. Only for a logout that
+ * names the sessions it ends, which cannot end another one by trying it.
+ */
+export function refreshTokensOf(req: Request): string[] {
+  const tokens: string[] = [];
+  for (const pair of (req.get('Cookie') ?? '').split(';')) {
+    const separator = pair.indexOf('=');
+    if (separator === -1 || pair.slice(0, separator).trim() !== REFRESH_COOKIE) continue;
+    const value = decodedCookie(pair.slice(separator + 1).trim());
+    if (value.length > 0) tokens.push(value);
+  }
+  return tokens.slice(0, MAX_REFRESH_COOKIES);
+}
+
+// As the cookie parser reads a value: percent-decoded, kept as written when
+// that fails.
+function decodedCookie(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}

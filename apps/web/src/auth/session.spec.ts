@@ -690,44 +690,125 @@ describe('signIn and signOut', () => {
     await expect(bodyOf(calls[1])).resolves.toBeUndefined();
   });
 
-  it.each([
-    ['another tab rotated it after the first logout cleared the jar', true],
-    ["another tab's sign-in dropped its hint", false],
-  ])(
-    'names the discarded session and the signed-out one in its logout, whatever the hint says: %s',
-    async (_label, hint) => {
-      exclusiveLocks();
-      const change = deferred<Response>();
-      const firstLogout = deferred<Response>();
-      let logouts = 0;
-      const { calls } = stubFetch({
-        'POST /api/account/password': () => change.promise,
-        [LOGOUT]: () => (logouts++ === 0 ? firstLogout.promise : signedOut()),
-      });
-      setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
-      const changed = changePassword('old password', 'violet harbour lantern 7');
-      await expect.poll(() => calls.length).toBe(1);
-      void signOut();
-      await expect.poll(() => calls.map(routeOf)).toEqual(['POST /api/account/password', LOGOUT]);
-      change.resolve(session('token-P', member, DISCARDED_ID));
-      await changed;
-      if (hint) setSessionHint();
-      else clearSessionHint();
-      firstLogout.resolve(signedOut());
+  it('names the discarded session and the signed-out one in its logout, whatever the jar holds by then', async () => {
+    exclusiveLocks();
+    const change = deferred<Response>();
+    const firstLogout = deferred<Response>();
+    let logouts = 0;
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [LOGOUT]: () => (logouts++ === 0 ? firstLogout.promise : signedOut()),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    void signOut();
+    await expect.poll(() => calls.map(routeOf)).toEqual(['POST /api/account/password', LOGOUT]);
+    change.resolve(session('token-P', member, DISCARDED_ID));
+    await changed;
+    // Another tab rotates P after the first logout cleared the jar: P' and
+    // the hint land. The hint decides nothing here.
+    setSessionHint();
+    firstLogout.resolve(signedOut());
 
-      // Sent behind the first logout, whatever the jar holds by then: the
-      // server ends the cookie's session only if it is one of these (a
-      // rotated P is), and leaves a newer one alone.
-      await expect
-        .poll(() => calls.map(routeOf))
-        .toEqual(['POST /api/account/password', LOGOUT, LOGOUT]);
-      await expect(bodyOf(calls[2])).resolves.toEqual({
-        sessionIds: [DISCARDED_ID, SESSION_ID],
-      });
-      expect(calls[2]?.keepalive).toBe(true);
-      expect(getState()).toEqual(SIGNED_OUT);
-    },
-  );
+    // Sent behind the first logout: the server ends the cookie's session only
+    // if it is one of these (a rotated P is), and leaves a newer one alone.
+    await expect
+      .poll(() => calls.map(routeOf))
+      .toEqual(['POST /api/account/password', LOGOUT, LOGOUT]);
+    await expect(bodyOf(calls[2])).resolves.toEqual({
+      sessionIds: [DISCARDED_ID, SESSION_ID],
+    });
+    expect(calls[2]?.keepalive).toBe(true);
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  it('says the sign-out may not stand when the logout of a discarded session failed, and its retry names it', async () => {
+    const change = deferred<Response>();
+    let logouts = 0;
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [LOGOUT]: () =>
+        logouts++ < 2 ? Promise.reject(new TypeError('Failed to fetch')) : signedOut(),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    await expect(signOut()).resolves.toBe(false);
+    change.resolve(session('token-D', member, DISCARDED_ID));
+    await changed;
+    // Its own logout fails too: D may still be live in the jar.
+    await expect.poll(() => calls.filter((call) => routeOf(call) === LOGOUT).length).toBe(2);
+    await vi.waitFor(() => {
+      expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+    });
+    await expect(retrySignOut()).resolves.toBe(true);
+    await expect(bodyOf(calls.at(-1))).resolves.toEqual({
+      sessionIds: [SESSION_ID, DISCARDED_ID],
+    });
+    expect(getState()).toEqual(SIGNED_OUT);
+  });
+
+  it("does not let the logout of a previous release's discarded answer end a sign-in made after it", async () => {
+    exclusiveLocks();
+    const change = deferred<Response>();
+    const second = deferred<Response>();
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [SIGN_IN]: () => second.promise,
+      [LOGOUT]: signedOut,
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    await signOut();
+    const signedIn = signIn(member.email, 'right');
+    await expect.poll(() => calls.map(routeOf)).toContain(SIGN_IN);
+    // Answers of the previous release: no session id.
+    change.resolve(ok({ accessToken: 'token-old-release', expiresIn: 900, user: member }));
+    await changed;
+    // The sign-in's answer sets its cookie and the hint first.
+    setSessionHint();
+    second.resolve(ok({ accessToken: 'token-N', expiresIn: 900, user: member }));
+    await signedIn;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getAccessToken()).toBe('token-N');
+    // No logout after it: one without a body would carry the new cookie.
+    const routes = calls.map(routeOf);
+    expect(routes.slice(routes.lastIndexOf(SIGN_IN) + 1)).toEqual([]);
+  });
+
+  it('never folds a sign-out into a retry still on its way that names an older session', async () => {
+    let logouts = 0;
+    const retryGate = deferred<Response>();
+    const { calls } = stubFetch({
+      [LOGOUT]: () => {
+        logouts += 1;
+        if (logouts === 1) return Promise.reject(new TypeError('Failed to fetch'));
+        return logouts === 2 ? retryGate.promise : signedOut();
+      },
+      [REFRESH]: () => session('token-2', member, NEWER_ID),
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    await expect(signOut()).resolves.toBe(false);
+    const retried = retrySignOut();
+    await expect.poll(() => calls.length).toBe(2);
+    // This tab picks up another tab's sign-in, then signs out again.
+    const broadcast = new BroadcastChannel('auth');
+    broadcast.postMessage('signed-in');
+    broadcast.close();
+    await vi.waitFor(() => {
+      expect(getState().status).toBe('authenticated');
+    });
+    const out = signOut();
+    retryGate.resolve(signedOut());
+    await Promise.all([out, retried]);
+    // The sign-out sends its own logout, for the cookie's session: the newer one.
+    const logoutBodies = await Promise.all(
+      calls.filter((call) => routeOf(call) === LOGOUT).map((call) => bodyOf(call)),
+    );
+    expect(logoutBodies).toEqual([undefined, { sessionIds: [SESSION_ID] }, undefined]);
+  });
 
   it('ends a discarded session the previous release answered with (no id) like that release did', async () => {
     const change = deferred<Response>();
@@ -886,6 +967,28 @@ describe('other tabs', () => {
     });
     expect(getAccessToken()).toBe('token-new');
     expect(calls.map(routeOf)).toEqual([REFRESH, REFRESH]);
+  });
+
+  it('give up picking a sign-in up when another sign-out came while the stale refresh was on its way', async () => {
+    clearSession();
+    const gate = deferred<Response>();
+    let refreshes = 0;
+    const { calls } = stubFetch({
+      [REFRESH]: () =>
+        refreshes++ === 0 ? gate.promise : session('token-after', member, NEWER_ID),
+    });
+    const stale = refresh();
+    otherTab.postMessage('signed-out');
+    otherTab.postMessage('signed-in');
+    otherTab.postMessage('signed-out');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    gate.resolve(session('token-stale'));
+    await stale;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The sign-in it was told of has ended: no refresh races the logout.
+    expect(calls.map(routeOf)).toEqual([REFRESH]);
+    expect(getState().status).toBe('anonymous');
+    expect(getAccessToken()).toBeNull();
   });
 
   it('drop the session hint when the sign-in a late rotation heard of came before the sign-out', async () => {

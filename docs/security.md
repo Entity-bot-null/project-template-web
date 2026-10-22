@@ -59,7 +59,9 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
   (`{ "sessionIds": [...] }`: the web client's retry, and its logout of a session it discarded)
   ends the cookie's family only when it is one of them, and touches the cookies only then: a
   session started meanwhile is left alone, and gets its `has_session` hint back (the client drops
-  the hint first, for a page closed meanwhile).
+  the hint first, for a page closed meanwhile). It tries every refresh cookie the request carries
+  (two when one was planted next to ours): only named sessions end, so that is safe. Ids compare in
+  lower case.
 - **Concurrent changes:** every change to a user's sessions takes that user's row lock first, so
   sign-ins, rotations, logouts and revocations never interleave. Those transactions run in READ
   COMMITTED whatever the database's default, so what they read after the lock is what the one they
@@ -232,8 +234,12 @@ password) in someone else's hands cannot take the account for good:
   not by when their notice went out: a notice that waited in the outbox still outranks the links of
   later changes, and the notices of later changes still waiting in the outbox are dropped unsent
   (one being composed at that moment is not sent: its template reads its own row under the
-  account's lock the undo holds; one already composed goes out with a link the undo voided). A
-  change made after an undo is told as usual. Whoever took
+  account's lock the undo holds; one already composed goes out with a link the undo voided). The
+  previous release's undo drops nothing, so a notice also refuses its link when an undo link of
+  its change or an earlier one was used after it was queued (used links are kept a day), and a
+  notice of the previous release older than that is dropped (only a failed one put back by hand
+  gets there). A row another worker took over mints no second link. A change made after an undo
+  is told as usual. An undo that loses a deadlock to the outbox's sweep runs once more. Whoever took
   the account and undoes their own later change cannot void the owner's link; the owner's link
   voids theirs, whichever notice went out first (every order is tested). The
   undo link is **not bound to the account's later state** and is never replaced by a newer one:
@@ -278,10 +284,13 @@ password) in someone else's hands cannot take the account for good:
   that lands after the sign-out cannot bring the hint back: it is dropped again, unless a sign-in
   followed the sign-out (the hint is then the new session's).
   If the server cannot be reached, the sign-in page says so and offers a retry, which names the
-  session the sign-out ended: a newer sign-in another tab made meanwhile stands. Each tab knows the
-  browser's session, its own or the one another tab announced (`BroadcastChannel`).
+  session the sign-out ended and every discarded session whose own logout failed (below): a newer
+  sign-in another tab made meanwhile stands. Each tab knows the browser's session, its own or the
+  one another tab announced (`BroadcastChannel`). A sign-out never joins a retry still on its way:
+  it sends its own logout, for the cookie's session, whichever it is.
 - **Picking up another tab's sign-in:** an anonymous tab refreshes when told; a refresh of its own
-  still on its way from before a sign-out is waited for, not joined (its answer is dropped).
+  still on its way from before a sign-out is waited for, not joined (its answer is dropped), and
+  a sign-out that comes meanwhile calls the pick-up off.
 - **Ordering:** a sign-in waits for a logout or a refresh still on its way, which would otherwise
   clear or replace the cookie it sets; a refresh that lands after a sign-in or a sign-out never
   overwrites it; a sign-in or a password change still on its way when a sign-out reaches the tab
@@ -289,8 +298,10 @@ password) in someone else's hands cannot take the account for good:
   once sent) does not sign the tab back in, and the session it started is ended on the server too,
   by a logout that names it (and the session the sign-out ended), behind the sign-out's own: the
   server ends whichever of them the cookie holds by then, a later rotation included, and leaves a
-  newer session alone. An answer of the previous release names no session, and its logout ends the
-  cookie's, as that release did.
+  newer session alone. When that logout fails, the sign-in page says the session may still be
+  valid and its retry names it. An answer of the previous release names no session: its logout
+  ends the cookie's, as that release did, unless a newer session's answer set the hint again
+  meanwhile.
 - After a sign-out the next user starts at home, not on the page the previous one left.
 
 ## Secret rotation

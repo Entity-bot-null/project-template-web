@@ -80,3 +80,77 @@ it('mints no undo link for a notice an undo dropped while it waited for the lock
   await expect(composed).resolves.toBeNull();
   expect(await t.prisma.accountToken.count({ where: { userId: user.id } })).toBe(0);
 });
+
+it("refuses a previous release's notice once that release undid the change after it was queued", async () => {
+  // Under the previous release: the thief moved the account to B, then to C;
+  // the owner then undid the first change (back at A, the account's
+  // securityVersion raised) with a link that release left used. The notice
+  // of the thief's second change, to B, was still in the outbox (failed, then
+  // put back by hand after the upgrade).
+  const owner = await seedUser(t.prisma, { email: 'owner.back@example.test', name: 'Owner' });
+  await t.prisma.user.update({ where: { id: owner.id }, data: { securityVersion: 3 } });
+  const queuedAt = new Date(Date.now() - 60 * 60_000);
+  const undo = (usedAt: Date) =>
+    t.prisma.accountToken.create({
+      data: {
+        userId: owner.id,
+        purpose: 'email_revert',
+        tokenHash: (usedAt < queuedAt ? 'a' : 'e').repeat(64),
+        securityVersion: 1,
+        email: 'thief.b@example.test',
+        targetEmail: 'owner.back@example.test',
+        createdAt: new Date(usedAt.getTime() - 60_000),
+        usedAt,
+        expiresAt: new Date(Date.now() + 7 * 86_400_000),
+      },
+    });
+  const legacyNotice = async () => {
+    const row = await t.prisma.mailMessage.create({
+      data: {
+        kind: 'email_changed',
+        recipient: 'thief.b@example.test',
+        recipientHash: 'f'.repeat(64),
+        userId: owner.id,
+        payload: { changedAt: queuedAt.toISOString() },
+        status: 'sending',
+        attempts: 1,
+        lockedUntil: new Date(Date.now() + 60_000),
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+        createdAt: queuedAt,
+      },
+    });
+    const claimed: ClaimedMessage = {
+      id: row.id,
+      kind: row.kind,
+      recipient: 'thief.b@example.test',
+      userId: owner.id,
+      payload: row.payload,
+      attempts: 1,
+      expiresAt: row.expiresAt,
+      createdAt: row.createdAt,
+      requestId: null,
+    };
+    return t.prisma.$transaction((tx) =>
+      emailChangedTemplate.compose({
+        tx,
+        message: claimed,
+        product: 'Integration',
+        appUrl: 'https://app.example.test',
+      }),
+    );
+  };
+  const unused = () =>
+    t.prisma.accountToken.count({
+      where: { userId: owner.id, purpose: 'email_revert', usedAt: null },
+    });
+
+  // An undo used before the notice was queued is history: the notice goes out.
+  const before = await undo(new Date(queuedAt.getTime() - 60 * 60_000));
+  await expect(legacyNotice()).resolves.not.toBeNull();
+  await t.prisma.accountToken.deleteMany({ where: { userId: owner.id, NOT: { id: before.id } } });
+
+  // Used after it: the change is undone, no link the thief could use.
+  await undo(new Date(Date.now() - 60_000));
+  await expect(legacyNotice()).resolves.toBeNull();
+  await expect(unused()).resolves.toBe(0);
+});

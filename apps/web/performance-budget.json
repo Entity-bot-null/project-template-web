@@ -1,5 +1,5 @@
 {
-  "$comment": "Gzip size budgets for the built web assets, checked by `pnpm perf:check` after `pnpm build`. Set from the template's measured build rounded up: the initial JavaScript (every visit: the entry index.html loads and the chunks it preloads, whatever the bundler names them) 108.1 kB, the error tracking chunk (fetched only when WEB_SENTRY_DSN is set) 31 kB, the Web Vitals chunks (fetched after the first render, the library only for sampled page loads) 4.2 kB, the account and admin pages (password recovery and change, sign-up and its confirmation, change of email and its undo, invitations and their acceptance, fetched when opened, with the helpers only they use) 12.2 kB, the focus and error handling of their forms included, CSS 0.6 kB. The total keeps a new lazy chunk from hiding outside the named ones; it grew from 145 to 157 kB with the account and admin pages. Each project sets its own from its performance targets (docs/testing.md#performance-budget).",
+  "$comment": "Gzip size budgets for the built web assets, checked by `pnpm perf:check` after `pnpm build`. Set from the template's measured build rounded up: the initial JavaScript (every visit: the entry index.html loads and the chunks it preloads, whatever the bundler names them) 108.7 kB, the error tracking chunk (fetched only when WEB_SENTRY_DSN is set) 31 kB, the Web Vitals chunks (fetched after the first render, the library only for sampled page loads) 4.3 kB, the account and admin pages (password recovery and change, sign-up and its confirmation, change of email and its undo, invitations and their acceptance, fetched when opened, with the helpers only they use) 12.3 kB, the focus and error handling of their forms included, CSS 0.6 kB. The total keeps a new lazy chunk from hiding outside the named ones; it grew from 145 to 157 kB with the account and admin pages, and to 158 kB with the session store's sign-out guarantees across tabs (logouts that name the sessions they end, 157.03 kB measured). Each project sets its own from its performance targets (docs/testing.md#performance-budget).",
   "budgets": [
     {
       "name": "JavaScript, initial",
@@ -24,7 +24,7 @@
     {
       "name": "JavaScript, total",
       "pattern": "\\.js$",
-      "maxGzipKb": 157
+      "maxGzipKb": 158
     },
     {
       "name": "CSS",

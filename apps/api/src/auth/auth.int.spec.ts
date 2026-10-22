@@ -316,6 +316,31 @@ describe('Auth (integration)', () => {
     ).resolves.toBe(1);
   });
 
+  it('tries each refresh cookie of a logout that names its sessions: only the named one ends', async () => {
+    const signInFresh = () =>
+      request(t.server)
+        .post('/api/auth/sign-in')
+        .send({ email: EMAIL, password: TEST_PASSWORD })
+        .expect(200);
+    const idOf = (res: request.Response) => envelopeOf<{ sessionId: string }>(res).data.sessionId;
+    const discarded = await signInFresh();
+    // Another family's cookie next to it, as one planted for a parent domain.
+    const planted = await signInFresh();
+    const res = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', `${refreshCookieOf(planted)}; ${refreshCookieOf(discarded)}`)
+      // An id in upper case names the same session.
+      .send({ sessionIds: [idOf(discarded).toUpperCase()] })
+      .expect(204);
+    expect(clearsCookies(res)).toBe(true);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(discarded), revokedAt: null } }),
+    ).resolves.toBe(0);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(planted), revokedAt: null } }),
+    ).resolves.toBe(1);
+  });
+
   it("logs out like before with an empty JSON body: the cookie's session, whichever it is", async () => {
     const session = await signIn(t.server, EMAIL);
     const res = await request(t.server)

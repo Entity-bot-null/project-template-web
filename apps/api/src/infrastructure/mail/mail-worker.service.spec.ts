@@ -72,6 +72,7 @@ function setup({
     reschedule: vi.fn(() => Promise.resolve(true)),
     markFailed: vi.fn(() => Promise.resolve(true)),
     markExpired: vi.fn(() => Promise.resolve(true)),
+    droppedMeanwhile: vi.fn(() => Promise.resolve(false)),
     stats: vi.fn(() => Promise.resolve(stats)),
     sweep: vi.fn(() => Promise.resolve({ deleted: 0, cleared: 0, expired: 0 })),
   };
@@ -387,23 +388,38 @@ describe('MailWorker', () => {
     }
   });
 
-  it('warns when the row changed before it recorded a delivery (taken over, or dropped)', async () => {
-    const context = tracked(setup({ queue: [message()] }));
-    context.store.markSent.mockResolvedValueOnce(false);
-    await started(context);
-    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its row changed meanwhile'));
-    // It did go out.
+  it('says why a sent message could not be recorded: taken over, or dropped by an undo meanwhile', async () => {
+    const taken = tracked(setup({ queue: [message()] }));
+    taken.store.markSent.mockResolvedValueOnce(false);
+    await started(taken);
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('another worker took it over'));
+    // It did go out: counted as sent, once.
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'sent', expect.any(Number));
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
+
+    metrics.recordMailDelivery.mockClear();
+    const dropped = tracked(setup({ queue: [message()] }));
+    dropped.store.markSent.mockResolvedValueOnce(false);
+    dropped.store.droppedMeanwhile.mockResolvedValueOnce(true);
+    await started(dropped);
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
     expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'sent', expect.any(Number));
   });
 
-  it('counts no outcome the row refused: an undo dropped it, or another worker took it over', async () => {
+  it('counts an outcome the row refused once: as expired when an undo dropped it, not when taken over', async () => {
+    // Dropped under this claim while it was composed: this worker counts it.
     const dropped = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
     dropped.store.markExpired.mockResolvedValueOnce(false);
+    dropped.store.droppedMeanwhile.mockResolvedValueOnce(true);
     await started(dropped);
     expect(dropped.store.markExpired).toHaveBeenCalledWith(expect.anything(), 'not_applicable');
-    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
-    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its row changed meanwhile'));
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'expired');
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
 
+    // Taken over by another worker: that worker counts it.
+    metrics.recordMailDelivery.mockClear();
     const retried = tracked(
       setup({ queue: [message()], compose: () => Promise.reject(new Error('db down')) }),
     );
@@ -412,6 +428,7 @@ describe('MailWorker', () => {
     expect(retried.store.reschedule).toHaveBeenCalled();
     expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
     expect(logs.warn).not.toHaveBeenCalledWith(expect.stringContaining('retrying in'));
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('another worker took it over'));
 
     const failed = tracked(setup({ queue: [message({ attempts: 4 })] }));
     failed.store.markFailed.mockResolvedValueOnce(false);

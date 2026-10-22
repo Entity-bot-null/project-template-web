@@ -46,6 +46,7 @@ import {
   clearSessionCookies,
   hasAmbiguousRefreshCookie,
   refreshTokenOf,
+  refreshTokensOf,
   respondWithSession,
   setSessionHint,
 } from './session-cookies.js';
@@ -141,17 +142,29 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
-    const token = refreshTokenOf(req);
-    const only = body?.sessionIds;
+    // Ids compare in lower case, as the database writes them.
+    const only = body?.sessionIds?.map((id) => id.toLowerCase());
     if (only === undefined) {
+      const token = refreshTokenOf(req);
       if (token !== undefined) await this.auth.logout(token);
       clearSessionCookies(res);
       return;
     }
-    if (token === undefined) return;
-    const outcome = await this.auth.logout(token, only);
-    if (outcome.retired) clearSessionCookies(res);
-    else if (outcome.liveUntil !== undefined) setSessionHint(res, outcome.liveUntil);
+    // Every refresh cookie the request carries, two included (one planted for
+    // a parent domain next to ours): only the named sessions end, so trying
+    // each is safe, and the other one's session is left alone.
+    const tokens = refreshTokensOf(req);
+    let retired = false;
+    let liveUntil: Date | undefined;
+    for (const token of tokens) {
+      const outcome = await this.auth.logout(token, only);
+      if (outcome.retired) retired = true;
+      else if (outcome.liveUntil !== undefined) liveUntil = outcome.liveUntil;
+    }
+    if (retired) clearSessionCookies(res);
+    // Its hint back to a live session left alone; not with two cookies,
+    // which a refresh refuses anyway.
+    else if (liveUntil !== undefined && tokens.length === 1) setSessionHint(res, liveUntil);
   }
 
   // Public and the same for everyone: the web app shows only what works here.

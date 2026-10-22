@@ -117,33 +117,47 @@ export class MailOutboxService {
    * Drops, unsent, the messages of a kind about an account that still wait in
    * the outbox (pending, being sent, failed), whose payload number `key` is at
    * least `from` or missing: what a later change made moot. Inside the
-   * caller's transaction, like enqueue; returns how many, which the caller
-   * reports with recordExpired once it has committed. One being composed at
-   * that moment is refused by its template, which reads its row under the
-   * same lock as the caller's (email-changed.template.ts); one already past
-   * composing goes out, and its worker finds the row changed.
+   * caller's transaction, like enqueue. One being composed at that moment is
+   * refused by its template, which reads its row under the same lock as the
+   * caller's (email-changed.template.ts); one already past composing goes out,
+   * and its worker finds the row changed. The rows are locked in id order: two
+   * of these never deadlock each other (against the sweep or a retry from the
+   * command line, which lock in their own order, the caller runs once more:
+   * onceMoreOnWriteConflict). Returns how many it dropped, and how many of them no worker held: those
+   * the caller reports with recordExpired once it has committed (a worker
+   * reports the outcome of the ones it held).
    */
   async expireQueued(
     tx: Prisma.TransactionClient,
     input: { kind: MailKind; userId: string; key: string; from: number; reason: string },
-  ): Promise<number> {
+  ): Promise<{ dropped: number; unclaimed: number }> {
     const { kind, userId, key, from, reason } = input;
-    return tx.$executeRaw`
-      UPDATE "mail_messages"
+    const rows = await tx.$queryRaw<{ unclaimed: boolean }[]>`
+      UPDATE "mail_messages" AS "message"
       SET "status" = 'expired', "recipient" = NULL, "locked_until" = NULL,
           "last_error" = ${reason}, "updated_at" = now()
-      WHERE "user_id" = ${userId}::uuid
-        AND "kind" = ${kind}::"MailKind"
-        AND "status" IN ('pending', 'sending', 'failed')
-        AND CASE WHEN "payload"->>${key} ~ '^[0-9]{1,18}$'
-                 THEN ("payload"->>${key})::bigint >= ${from}
-                 ELSE true END`;
+      FROM (
+        SELECT "id", ("status" <> 'sending' OR "locked_until" < now()) AS "unclaimed"
+        FROM "mail_messages"
+        WHERE "user_id" = ${userId}::uuid
+          AND "kind" = ${kind}::"MailKind"
+          AND "status" IN ('pending', 'sending', 'failed')
+          AND CASE WHEN "payload"->>${key} ~ '^[0-9]{1,18}$'
+                   THEN ("payload"->>${key})::bigint >= ${from}
+                   ELSE true END
+        ORDER BY "id"
+        FOR UPDATE
+      ) AS "before"
+      WHERE "message"."id" = "before"."id"
+      RETURNING "before"."unclaimed"`;
+    return { dropped: rows.length, unclaimed: rows.filter((row) => row.unclaimed).length };
   }
 
   /**
-   * Counts messages a caller dropped with expireQueued, after its transaction
-   * committed (a rolled-back one dropped nothing): the delivery metric then
-   * counts every message once, whoever settled it.
+   * Counts the messages a caller dropped with expireQueued that no worker
+   * held, after its transaction committed (a rolled-back one dropped
+   * nothing): the delivery metric then counts every message once, whoever
+   * settled it.
    */
   recordExpired(kind: MailKind, count: number): void {
     for (let i = 0; i < count; i += 1) recordMailDelivery(kind, 'expired');

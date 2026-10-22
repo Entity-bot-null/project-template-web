@@ -152,13 +152,17 @@ function commentEnd(html, open) {
  * The tags of an HTML document, read as a browser reads them: a quoted
  * attribute value may hold `>`, comments are skipped (ended where a browser
  * ends them), and the text of a script, a style, a title, a textarea and the
- * other raw text elements is not markup. End tags come as `/name`.
+ * other raw text elements is not markup, except inside SVG and MathML, where
+ * none is. End tags come as `/name`.
  * @param {string} html
  * @returns {{ name: string; attributes: Map<string, string> }[]}
  */
 export function tagsOf(html) {
   /** @type {{ name: string; attributes: Map<string, string> }[]} */
   const tags = [];
+  // Inside <svg> or <math> (foreign content) no element is raw text, and
+  // <x/> closes itself: a <title/> there hides nothing after it.
+  let foreign = 0;
   let i = 0;
   while (i < html.length) {
     const open = html.indexOf('<', i);
@@ -176,9 +180,11 @@ export function tagsOf(html) {
     /** @type {Map<string, string>} */
     const attributes = new Map();
     let j = open + start[0].length;
+    let selfClosing = false;
     while (j < html.length) {
       while (j < html.length && /[\s/]/.test(html[j] ?? '')) j += 1;
       if (j >= html.length || html[j] === '>') {
+        selfClosing = html[j - 1] === '/';
         j += 1;
         break;
       }
@@ -203,9 +209,15 @@ export function tagsOf(html) {
       if (!attributes.has(key)) attributes.set(key, decoded(value));
     }
     tags.push({ name, attributes });
-    // A raw text element's text runs to its end tag, whatever it holds.
-    if (RAW_TEXT.has(name)) j = endTag(html, name, j);
-    if (name === 'plaintext') j = html.length;
+    if (name === 'svg' || name === 'math') {
+      if (!selfClosing) foreign += 1;
+    } else if ((name === '/svg' || name === '/math') && foreign > 0) {
+      foreign -= 1;
+    } else if (foreign === 0) {
+      // A raw text element's text runs to its end tag, whatever it holds.
+      if (RAW_TEXT.has(name)) j = endTag(html, name, j);
+      if (name === 'plaintext') j = html.length;
+    }
     i = j;
   }
   return tags;
@@ -312,7 +324,7 @@ export function cssProblems(css) {
   /** @type {string[]} */
   const problems = [];
   const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const [, url = ''] of code.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)/gi)) {
+  for (const [, url = ''] of code.matchAll(/@import\s*(?:url\(\s*)?["']?([^"')\s;]+)/gi)) {
     if (isAbsolute(url)) problems.push(`an @import from another origin: ${url}`);
   }
   // The url() of an @import is that import's, reported once.

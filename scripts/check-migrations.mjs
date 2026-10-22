@@ -13,10 +13,13 @@
 // required, adding a required column without a default, or removing a
 // default; emptying a table. From the migration named TIGHTENING_FROM on,
 // also: a unique index or a constraint (CHECK, UNIQUE, PRIMARY KEY, FOREIGN
-// KEY, EXCLUDE) added to a table an earlier migration created, unless it only
-// covers columns this migration added (the previous release may write what it
-// refuses, and existing rows may break it), a dropped unique index, unique
-// constraint or primary key, a table moved to another schema, a DELETE without WHERE, and
+// KEY, EXCLUDE, in the table or in a column's definition) added to a table an
+// earlier migration created (the previous release may write what it refuses,
+// and existing rows may break it), unless it is a unique index, a UNIQUE or a
+// foreign key that only covers columns this migration added empty (nullable,
+// no default now or later, the table not written: recordAddedColumns), never
+// with NULLS NOT DISTINCT; a dropped unique index, unique constraint or
+// primary key, a table moved to another schema, a DELETE without WHERE, and
 // an enum value added without IF NOT EXISTS (PostgreSQL cannot drop it, so a
 // migration that failed after adding it could not run again:
 // docs/database.md#when-a-migration-fails). The migrations before it shipped
@@ -365,14 +368,21 @@ function tighteningKinds({ code, bare }, created, added) {
   );
   return altered.actions.flatMap((action) => {
     if (/^SET\s+SCHEMA\b/i.test(action)) return ['moves a table to another schema'];
-    // A constraint written in the column's definition: safe on a column that
-    // holds nothing yet, except a primary key (it makes the column required).
+    // A constraint written in the column's definition: safe only on a column
+    // that holds nothing yet (recordAddedColumns: no default, never written),
+    // as a foreign key or a UNIQUE whose NULLs stay distinct. A CHECK may read
+    // other columns; a primary key makes the column required.
     const column = ADD_COLUMN.exec(action);
     if (column !== null && !CONSTRAINT_WORD.test(column[1] ?? '')) {
-      const inline = /\b(UNIQUE|PRIMARY\s+KEY|REFERENCES|CHECK)\b/i.exec(column[2] ?? '');
-      if (inline === null || created.has(altered.table)) return [];
-      const empty = !FILLED.test(column[2] ?? '') && !/^PRIMARY/i.test(inline[1] ?? '');
-      return empty ? [] : ['adds a constraint to an existing table'];
+      const definition = withoutNames(column[2] ?? '');
+      const inline = [...definition.matchAll(/\b(UNIQUE|PRIMARY\s+KEY|REFERENCES|CHECK)\b/gi)];
+      if (inline.length === 0 || created.has(altered.table)) return [];
+      const empty = added.get(altered.table)?.has(identifier(column[1] ?? '')) === true;
+      const safe =
+        empty &&
+        !/\bNULLS\s+NOT\s+DISTINCT\b/i.test(definition) &&
+        inline.every(([, word = '']) => /^(?:UNIQUE|REFERENCES)$/i.test(word));
+      return safe ? [] : ['adds a constraint to an existing table'];
     }
     const dropped = drop.exec(action);
     if (dropped !== null) {
@@ -384,8 +394,13 @@ function tighteningKinds({ code, bare }, created, added) {
     if (constraint === null) return [];
     // A CHECK or an EXCLUDE reads an expression: what it covers is not told.
     // A primary key makes its columns required: new ones too, which hold NULL.
+    // NULLS NOT DISTINCT: the NULLs of new columns collide.
     const kind = (constraint[1] ?? '').toUpperCase();
-    const columns = /^(?:UNIQUE|FOREIGN)/.test(kind) ? columnsOf(constraint[2] ?? '') : undefined;
+    const rest = constraint[2] ?? '';
+    const columns =
+      /^(?:UNIQUE|FOREIGN)/.test(kind) && !/^\s*NULLS\s+NOT\s+DISTINCT\b/i.test(rest)
+        ? columnsOf(rest)
+        : undefined;
     return onlyNew(altered.table, columns, created, added)
       ? []
       : ['adds a constraint to an existing table'];
@@ -436,45 +451,87 @@ const ADD_COLUMN = new RegExp(
 const CONSTRAINT_WORD = /^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY|FOREIGN|EXCLUDE)$/i;
 // A definition that puts a value in every existing row: a default (other
 // than NULL), a generated or identity value, a serial type; and NOT NULL,
-// which no existing row could satisfy otherwise.
+// which no existing row could satisfy otherwise. Read without its quoted
+// names (withoutNames).
 const FILLED =
-  /\b(?:NOT\s+NULL|DEFAULT(?!\s+NULL\b)|GENERATED|IDENTITY|(?:SMALL|BIG)?SERIAL[248]?)\b/i;
+  /\b(?:NOT\s+NULL|DEFAULT(?!\s+\(*\s*NULL\b)|GENERATED|IDENTITY|(?:SMALL|BIG)?SERIAL[248]?)\b/i;
+
+/**
+ * A column definition without what only looks like a keyword: quoted names
+ * (REFERENCES "identity", COLLATE "default") and a foreign key's ON DELETE
+ * or ON UPDATE SET DEFAULT.
+ * @param {string} definition
+ */
+function withoutNames(definition) {
+  return definition
+    .replace(/"(?:[^"]|"")*"/g, '"_"')
+    .replace(/\bON\s+(?:DELETE|UPDATE)\s+SET\s+DEFAULT\b/gi, '');
+}
 
 /**
  * Records the columns an ALTER TABLE adds that hold nothing yet (nullable,
  * nothing fills them), by table, unless the migration writes that table
- * (`written`: an UPDATE or an INSERT fills them too, before or after).
+ * (`written`: an UPDATE or an INSERT fills them too, before or after) or gives
+ * the column a default later (`defaulted`, table.column: the previous
+ * release's rows then get it).
  * @param {string} bare a Statement's bare form
  * @param {Map<string, Set<string>>} added
  * @param {Set<string>} written
+ * @param {Set<string>} defaulted
  */
-function recordAddedColumns(bare, added, written) {
+function recordAddedColumns(bare, added, written, defaulted) {
   const altered = alterTableOf(bare);
   if (altered === undefined || written.has(altered.table)) return;
   for (const action of altered.actions) {
     const column = ADD_COLUMN.exec(action);
     const name = column?.[1];
-    if (name === undefined || CONSTRAINT_WORD.test(name) || FILLED.test(column?.[2] ?? '')) {
+    if (name === undefined || CONSTRAINT_WORD.test(name)) continue;
+    const id = identifier(name);
+    if (FILLED.test(withoutNames(column?.[2] ?? '')) || defaulted.has(`${altered.table}.${id}`)) {
       continue;
     }
     const columns = added.get(altered.table) ?? new Set();
-    columns.add(identifier(name));
+    columns.add(id);
     added.set(altered.table, columns);
   }
 }
 
 /**
- * The table a statement writes rows of (UPDATE, INSERT, MERGE, COPY FROM), if any.
+ * The tables a statement writes rows of: the one it starts with (UPDATE,
+ * INSERT, MERGE, COPY FROM), or, led by WITH, any its queries write.
  * @param {string} bare a Statement's bare form
+ * @returns {string[]}
  */
-function writtenTable(bare) {
-  const match = new RegExp(
-    String.raw`^\s*(?:UPDATE\s+(?:ONLY\s+)?|INSERT\s+INTO\s+|MERGE\s+INTO\s+(?:ONLY\s+)?|COPY\s+)(${QUALIFIED})`,
+function writtenTables(bare) {
+  const write = String.raw`(?:UPDATE\s+(?:ONLY\s+)?|INSERT\s+INTO\s+|MERGE\s+INTO\s+(?:ONLY\s+)?)(${QUALIFIED})`;
+  if (/^\s*WITH\b/i.test(bare)) {
+    return [...bare.matchAll(new RegExp(String.raw`\b${write}`, 'gi'))].map(([, table = '']) =>
+      lastPart(table),
+    );
+  }
+  const match = new RegExp(String.raw`^\s*${write}`, 'i').exec(bare);
+  if (match !== null) return [lastPart(match[1] ?? '')];
+  const copied = new RegExp(String.raw`^\s*COPY\s+(${QUALIFIED})[\s\S]*\bFROM\b`, 'i').exec(bare);
+  return copied === null ? [] : [lastPart(copied[1] ?? '')];
+}
+
+/**
+ * The columns an ALTER TABLE gives a default (other than NULL), as
+ * table.column.
+ * @param {string} bare a Statement's bare form
+ * @returns {string[]}
+ */
+function defaultedColumns(bare) {
+  const altered = alterTableOf(bare);
+  if (altered === undefined) return [];
+  const set = new RegExp(
+    String.raw`^ALTER\s+(?:COLUMN\s+)?(${IDENT})\s+SET\s+DEFAULT\b(?!\s+\(*\s*NULL\b)`,
     'i',
-  ).exec(bare);
-  if (match === null) return undefined;
-  if (/^\s*COPY\b/i.test(bare) && !/\bFROM\b/i.test(bare)) return undefined;
-  return lastPart(match[1] ?? '');
+  );
+  return altered.actions.flatMap((action) => {
+    const name = set.exec(action)?.[1];
+    return name === undefined ? [] : [`${altered.table}.${identifier(name)}`];
+  });
 }
 
 /**
@@ -492,9 +549,9 @@ export function contractSteps(sql, { tightening = true } = {}) {
   const added = new Map();
   const statements = splitStatements(sql);
   /** Tables whose rows this migration writes: their new columns are filled. */
-  const written = new Set(
-    statements.map(({ bare }) => writtenTable(bare)).filter((table) => table !== undefined),
-  );
+  const written = new Set(statements.flatMap(({ bare }) => writtenTables(bare)));
+  /** Columns this migration gives a default: filled from then on. */
+  const defaulted = new Set(statements.flatMap(({ bare }) => defaultedColumns(bare)));
   return statements.flatMap((statement) => {
     const reason = /^\s*--\s*contract:[ \t]*(\S.*?)\s*$/im.exec(statement.comments)?.[1];
     const text = statement.text.split('\n')[0] ?? '';
@@ -505,7 +562,7 @@ export function contractSteps(sql, { tightening = true } = {}) {
       );
       if (table !== undefined) created.add(table);
     }
-    recordAddedColumns(statement.bare, added, written);
+    recordAddedColumns(statement.bare, added, written, defaulted);
     const kinds = [
       ...contractKinds(statement.code),
       ...(tightening ? tighteningKinds(statement, created, added) : []),

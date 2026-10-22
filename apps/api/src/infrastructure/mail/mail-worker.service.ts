@@ -41,9 +41,6 @@ export type MailHealth = 'ok' | 'degraded' | 'disabled';
 // Prisma's errors by class and code only: their messages can quote a query's
 // arguments, the recipient among them (common/logging/error-summary.ts).
 const message = errorSummary;
-// What a fenced outcome the row refused means (MailStore.finish).
-const CHANGED_MEANWHILE =
-  'its row changed meanwhile: another worker took the message over (it may go out twice), or it was dropped (an undo of a change of email)';
 
 // Delivers the outbox (docs/architecture.md#email). Every API instance runs
 // one worker; they share the queue safely (MailStore.claim). A worker takes
@@ -234,7 +231,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     if (await this.store.markSent(claimed)) {
       this.logger.log(`Sent ${label} in ${String(Math.round(seconds * 1000))} ms`);
     } else {
-      this.logger.warn(`Sent ${label}, but ${CHANGED_MEANWHILE}`);
+      await this.refused(claimed, `Sent ${label}`, { counted: true });
     }
   }
 
@@ -281,8 +278,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
   // Every outcome is counted here, whatever led to it (a refused send, a
   // render that failed, a worker that kept dying): the alerts read them.
   // `seconds` is the SMTP exchange, when there was one. An outcome the row no
-  // longer takes (another worker took the message over, or an undo dropped
-  // it: expireQueued, which counts it) is counted by whoever recorded it.
+  // longer takes is settled by `refused`.
   private async retryLater(
     claimed: ClaimedMessage,
     label: string,
@@ -295,7 +291,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     }
     const delayMs = retryDelayMs(claimed.attempts);
     if (!(await this.store.reschedule(claimed, delayMs, failure.category))) {
-      this.logger.warn(`Could not send ${label}: ${failure.category}; ${CHANGED_MEANWHILE}`);
+      await this.refused(claimed, `Could not send ${label}: ${failure.category}`);
       return;
     }
     recordMailDelivery(claimed.kind, 'retry', seconds);
@@ -306,7 +302,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   private async fail(claimed: ClaimedMessage, label: string, category: string, seconds?: number) {
     if (!(await this.store.markFailed(claimed, category))) {
-      this.logger.warn(`Gave up on ${label}: ${category}; ${CHANGED_MEANWHILE}`);
+      await this.refused(claimed, `Gave up on ${label}: ${category}`);
       return;
     }
     recordMailDelivery(claimed.kind, 'failed', seconds);
@@ -317,11 +313,25 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   private async expire(claimed: ClaimedMessage, label: string, reason: string) {
     if (!(await this.store.markExpired(claimed, reason))) {
-      this.logger.warn(`Dropped ${label}: ${reason}; ${CHANGED_MEANWHILE}`);
+      await this.refused(claimed, `Dropped ${label}: ${reason}`);
       return;
     }
     recordMailDelivery(claimed.kind, 'expired');
     this.logger.warn(`Dropped ${label}: ${reason}`);
+  }
+
+  // An outcome the row no longer takes (MailStore.finish refused it). Dropped
+  // meanwhile under this worker's claim (an undo of a change of email): the
+  // message was this worker's, and counts as expired here, unless it went out
+  // (`counted`: already counted as sent). Taken over by another worker: that
+  // worker counts it.
+  private async refused(claimed: ClaimedMessage, what: string, { counted = false } = {}) {
+    if (await this.store.droppedMeanwhile(claimed)) {
+      if (!counted) recordMailDelivery(claimed.kind, 'expired');
+      this.logger.warn(`${what}, but it was dropped meanwhile (an undo of a change of email)`);
+    } else {
+      this.logger.warn(`${what}, but another worker took it over: it may go out twice`);
+    }
   }
 
   private transportOrThrow(): MailTransport {

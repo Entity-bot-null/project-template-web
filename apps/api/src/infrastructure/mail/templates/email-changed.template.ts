@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { mintAccountToken } from '../../../auth/account-tokens.js';
+import { mintAccountToken, USED_ACCOUNT_TOKEN_RETENTION_MS } from '../../../auth/account-tokens.js';
 import { lockUser } from '../../../auth/sessions.service.js';
 import { EMAIL_REVERT_TTL_MS } from '../../../auth/auth.constants.js';
 import { renderMail } from './layout.js';
@@ -48,17 +48,37 @@ export const emailChangedTemplate: MailTemplate = {
     // deployment: ranked by the account as it is now, as that release did.
     const changed = payload.success ? payload.data.securityVersion : undefined;
     const securityVersion = changed === undefined ? user.securityVersion : Number(changed);
-    // Under the account's lock, like the undo itself: an undo of this change
-    // or an earlier one drops this notice in its own transaction
-    // (EmailChangeService.revert, expireQueued), and its link would take the
-    // account back. Read once the lock is held, the row tells whether that
-    // happened while this message was being composed.
+    // Under the account's lock, like the undo itself, which drops the notices
+    // of the change it undoes and of later ones in its own transaction
+    // (EmailChangeService.revert, expireQueued): read once the lock is held,
+    // the row says whether that happened while this message was being
+    // composed. A row another worker took over (a later attempt) is that
+    // worker's to send: no second link.
     await lockUser(tx, user.id);
     const row = await tx.mailMessage.findUnique({
       where: { id: message.id },
-      select: { status: true },
+      select: { status: true, attempts: true },
     });
-    if (row?.status === 'expired') return null;
+    if (row?.status !== 'sending' || row.attempts !== message.attempts) return null;
+    // The previous release's undo drops no notice: an undo link of this change
+    // or an earlier one used after this notice was queued means the change is
+    // undone already (used links are kept USED_ACCOUNT_TOKEN_RETENTION_MS).
+    const undone = await tx.accountToken.findFirst({
+      where: {
+        userId: user.id,
+        purpose: 'email_revert',
+        securityVersion: { lte: securityVersion },
+        usedAt: { gt: message.createdAt },
+      },
+      select: { id: true },
+    });
+    if (undone !== null) return null;
+    // A notice of the previous release older than that: an undo since may have
+    // left no trace. Only a failed one put back by hand gets here (a notice is
+    // valid a day); it goes unsent rather than mint a link that might undo an
+    // undo.
+    const stale = message.createdAt.getTime() < Date.now() - USED_ACCOUNT_TOKEN_RETENTION_MS;
+    if (changed === undefined && stale) return null;
     const token = await mintAccountToken(tx, {
       userId: user.id,
       purpose: 'email_revert',

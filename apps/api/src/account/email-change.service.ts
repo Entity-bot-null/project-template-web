@@ -19,6 +19,7 @@ import type { EmailChangedPayload } from '../infrastructure/mail/templates/email
 import type { PasswordChangedPayload } from '../infrastructure/mail/templates/password-changed.template.js';
 import { Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { onceMoreOnWriteConflict } from '../prisma/write-conflicts.js';
 
 const ACCOUNT_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted };
 
@@ -165,8 +166,12 @@ export class EmailChangeService {
     if (problem !== undefined) throw new BadRequestException(`password: ${problem}`);
     // Hashed before the transaction: it holds the account's lock meanwhile.
     const passwordHash = await hashPassword(password);
-    let dropped: number;
+    let dropped: { dropped: number; unclaimed: number };
     try {
+      // The undo drops several notices of the account (expireQueued): the
+      // outbox's sweep or a retry from the command line may update some of
+      // them in another order, and PostgreSQL then aborts one of the two as a
+      // deadlock. Nothing of the undo committed: it runs once more.
       dropped = await onceMoreOnWriteConflict(() =>
         this.prisma.$transaction(async (tx) => {
           await lockUser(tx, owner.userId);
@@ -222,7 +227,7 @@ export class EmailChangeService {
     } catch (error) {
       throw takenAsConflict(error);
     }
-    this.mail.recordExpired('email_changed', dropped);
+    this.mail.recordExpired('email_changed', dropped.unclaimed);
     this.mail.notifyQueued();
     this.logger.log(`Change of email of user ${owner.userId} undone: every session ended`);
   }
@@ -273,22 +278,6 @@ export class EmailChangeService {
 }
 
 // users.email is unique: an account took the address after the link was sent.
-// The undo drops several notices of the account (expireQueued), and the
-// outbox's sweep or a retry from the command line may update some of the
-// same rows in another order: PostgreSQL then aborts one of the two as a
-// deadlock (P2034). Nothing of the aborted transaction committed, so the undo
-// runs once more from the start rather than answer 500.
-async function onceMoreOnWriteConflict<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work();
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
-      return work();
-    }
-    throw error;
-  }
-}
-
 function takenAsConflict(error: unknown): unknown {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
     return new ConflictException(ADDRESS_TAKEN);

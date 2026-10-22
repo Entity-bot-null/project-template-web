@@ -25,13 +25,16 @@ interface Rows {
   /** The account at the recipient's address (by email); null: none. */
   owner?: { id: string } | null;
   /** The message's own row as the template reads it under the lock. */
-  row?: { status: string } | null;
+  row?: { status: string; attempts: number } | null;
+  /** An undo link of this change or an earlier one used after the notice was queued. */
+  undone?: { id: string } | null;
 }
 
 function txWith({
   user = { id: 'u1', email: 'ada@example.test', securityVersion: 3 },
   owner = null,
-  row = { status: 'sending' },
+  row = { status: 'sending', attempts: 1 },
+  undone = null,
 }: Rows = {}) {
   const tx = {
     // The account's lock, taken before a token is minted.
@@ -44,6 +47,7 @@ function txWith({
     accountToken: {
       deleteMany: vi.fn(() => Promise.resolve({ count: 0 })),
       create: vi.fn(() => Promise.resolve({})),
+      findFirst: vi.fn(() => Promise.resolve(undone)),
     },
     mailMessage: {
       findUnique: vi.fn(() => Promise.resolve(row)),
@@ -209,7 +213,7 @@ describe('the notice to the previous address', () => {
   it('sends no undo link once an undo dropped this notice while it was being composed', async () => {
     const { tx, client } = txWith({
       user: { id: 'u1', email: 'ada@example.test', securityVersion: 9 },
-      row: { status: 'expired' },
+      row: { status: 'expired', attempts: 1 },
     });
     await expect(
       emailChangedTemplate.compose({
@@ -228,9 +232,86 @@ describe('the notice to the previous address', () => {
     );
     expect(tx.mailMessage.findUnique).toHaveBeenCalledWith({
       where: { id: 'm1' },
-      select: { status: true },
+      select: { status: true, attempts: true },
     });
     expect(tx.accountToken.create).not.toHaveBeenCalled();
+  });
+
+  it('mints no second link for a row another worker took over (a later attempt), or one gone', async () => {
+    for (const row of [{ status: 'sending', attempts: 2 }, null]) {
+      const { tx, client } = txWith({
+        user: { id: 'u1', email: 'new@example.test', securityVersion: 4 },
+        row,
+      });
+      await expect(
+        emailChangedTemplate.compose({ tx: client, message: changed(), ...context }),
+      ).resolves.toBeNull();
+      expect(tx.accountToken.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('sends no undo link once the previous release undid this change or an earlier one after it was queued', async () => {
+    const queuedAt = new Date('2026-10-13T10:05:00.000Z');
+    const { tx, client } = txWith({
+      user: { id: 'u1', email: 'ada@example.test', securityVersion: 9 },
+      undone: { id: 't-owner' },
+    });
+    await expect(
+      emailChangedTemplate.compose({
+        tx: client,
+        message: message({
+          kind: 'email_changed',
+          recipient: 'thief@example.test',
+          payload: { changedAt: queuedAt.toISOString() },
+          createdAt: queuedAt,
+        }),
+        ...context,
+      }),
+    ).resolves.toBeNull();
+    // A notice of the previous release is ranked by the account as it is now;
+    // only an undo used after it was queued counts.
+    expect(tx.accountToken.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: 'u1',
+        purpose: 'email_revert',
+        securityVersion: { lte: 9 },
+        usedAt: { gt: queuedAt },
+      },
+      select: { id: true },
+    });
+    expect(tx.accountToken.create).not.toHaveBeenCalled();
+  });
+
+  it('drops a notice of the previous release older than a day: an undo since may have left no trace', async () => {
+    const { tx, client } = txWith({
+      user: { id: 'u1', email: 'ada@example.test', securityVersion: 9 },
+    });
+    await expect(
+      emailChangedTemplate.compose({
+        tx: client,
+        message: message({
+          kind: 'email_changed',
+          recipient: 'old@example.test',
+          payload: { changedAt: '2026-10-13T10:05:00.000Z' },
+          createdAt: new Date(Date.now() - 25 * 60 * 60_000),
+        }),
+        ...context,
+      }),
+    ).resolves.toBeNull();
+    expect(tx.accountToken.create).not.toHaveBeenCalled();
+    // This release's notices carry their change: not dropped for their age.
+    const recent = txWith({ user: { id: 'u1', email: 'ada@example.test', securityVersion: 9 } });
+    await emailChangedTemplate.compose({
+      tx: recent.client,
+      message: message({
+        kind: 'email_changed',
+        recipient: 'old@example.test',
+        payload: { changedAt: '2026-10-13T10:05:00.000Z', securityVersion: '9' },
+        createdAt: new Date(Date.now() - 25 * 60 * 60_000),
+      }),
+      ...context,
+    });
+    expect(recent.tx.accountToken.create).toHaveBeenCalled();
   });
 
   it('still mints for a change made after an earlier one was undone', async () => {

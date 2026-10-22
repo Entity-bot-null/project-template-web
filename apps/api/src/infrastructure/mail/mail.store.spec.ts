@@ -126,10 +126,31 @@ describe('MailStore', () => {
     await expect(store.markSent(claimed)).resolves.toBe(false);
   });
 
-  it('runs template work in a short transaction', async () => {
+  it('tells a message dropped under this claim from one another worker took over', async () => {
+    const findUnique = vi.fn();
+    const { store } = storeWith({ mailMessage: { findUnique } });
+    findUnique.mockResolvedValueOnce({ status: 'expired', attempts: 2 });
+    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(true);
+    // A later attempt: another worker's claim, whatever became of it.
+    findUnique.mockResolvedValueOnce({ status: 'expired', attempts: 3 });
+    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(false);
+    findUnique.mockResolvedValueOnce({ status: 'sending', attempts: 3 });
+    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(false);
+    findUnique.mockResolvedValueOnce(null);
+    await expect(store.droppedMeanwhile({ id: 'm1', attempts: 2 })).resolves.toBe(false);
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 'm1' },
+      select: { status: true, attempts: true },
+    });
+  });
+
+  it('runs template work in a short READ COMMITTED transaction, whatever the default', async () => {
     const { prisma, store } = storeWith();
     await expect(store.inTransaction((tx) => Promise.resolve(tx))).resolves.toBe('tx');
-    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 10_000 });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: 10_000,
+      isolationLevel: 'ReadCommitted',
+    });
   });
 
   it("counts the messages still to send and the oldest one's age", async () => {

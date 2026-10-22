@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { MailKind, Prisma } from '../../prisma/generated/client.js';
+import { type MailKind, Prisma } from '../../prisma/generated/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   MAIL_FAILED_ADDRESS_RETENTION_DAYS,
@@ -73,7 +73,14 @@ export class MailStore {
 
   /** Runs a template's work in a short transaction of its own (never around the SMTP exchange). */
   inTransaction<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(work, { timeout: 10_000 });
+    // READ COMMITTED whatever the database's default, like the session and
+    // account transactions: a template that waits for the account's lock
+    // (email-changed.template.ts) must then read what the transaction it
+    // waited for committed, not fail with a serialization error.
+    return this.prisma.$transaction(work, {
+      timeout: 10_000,
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
   }
 
   /**
@@ -124,6 +131,20 @@ export class MailStore {
       lockedUntil: null,
       lastError: reason,
     });
+  }
+
+  /**
+   * Whether a message whose claim refused a transition was dropped meanwhile
+   * under that very claim (an undo of a change of email: expireQueued), rather
+   * than taken over by another worker. Its outcome is then this worker's to
+   * count.
+   */
+  async droppedMeanwhile(claim: Claim): Promise<boolean> {
+    const row = await this.prisma.mailMessage.findUnique({
+      where: { id: claim.id },
+      select: { status: true, attempts: true },
+    });
+    return row?.status === 'expired' && row.attempts === claim.attempts;
   }
 
   async stats(): Promise<OutboxStats> {

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createTestApp, resetDatabase, type TestApp } from '../../../test/app.js';
+import { MailOutboxService } from './mail-outbox.service.js';
 import { MailStore } from './mail.store.js';
 
 // The outbox's lease renewal on PostgreSQL (mail.store.spec.ts reads its SQL
@@ -33,6 +34,65 @@ it('renews the lease of a message still being sent, fenced by its claim', async 
   expect(row.lockedUntil?.getTime() ?? 0).toBeGreaterThan(Date.now() + 500_000);
   // Another attempt's claim (a worker that took it over): not this one's.
   await expect(store.renewLease({ ...claimed, attempts: claimed.attempts + 1 })).resolves.toBe(
+    false,
+  );
+});
+
+it("drops an account's waiting notices of a later change, counting those no worker holds", async () => {
+  const user = await t.prisma.user.create({
+    data: { email: 'outbox@example.test', name: 'Outbox', passwordHash: 'x' },
+  });
+  const notice = (
+    status: 'pending' | 'sending' | 'failed',
+    securityVersion: string,
+    lockedUntil?: Date,
+  ) =>
+    t.prisma.mailMessage.create({
+      data: {
+        kind: 'email_changed',
+        recipient: 'previous@example.test',
+        recipientHash: 'b'.repeat(64),
+        userId: user.id,
+        payload: { changedAt: new Date().toISOString(), securityVersion },
+        status,
+        attempts: status === 'sending' ? 1 : 0,
+        lockedUntil: lockedUntil ?? null,
+        expiresAt: new Date(Date.now() + 60 * 60_000),
+      },
+      select: { id: true },
+    });
+  const pending = await notice('pending', '5');
+  const held = await notice('sending', '6', new Date(Date.now() + 60_000));
+  const abandoned = await notice('sending', '6', new Date(Date.now() - 60_000));
+  const failed = await notice('failed', '7');
+  const earlier = await notice('pending', '3');
+
+  const outcome = await t.prisma.$transaction((tx) =>
+    t.app.get(MailOutboxService).expireQueued(tx, {
+      kind: 'email_changed',
+      userId: user.id,
+      key: 'securityVersion',
+      from: 5,
+      reason: 'superseded',
+    }),
+  );
+  // The one a worker holds under a live lease is that worker's to count.
+  expect(outcome).toEqual({ dropped: 4, unclaimed: 3 });
+  const rows = await t.prisma.mailMessage.findMany({
+    where: { id: { in: [pending.id, held.id, abandoned.id, failed.id, earlier.id] } },
+    select: { id: true, status: true, recipient: true },
+  });
+  const statusOf = (id: string) => rows.find((row) => row.id === id);
+  for (const { id } of [pending, held, abandoned, failed]) {
+    expect(statusOf(id)).toEqual({ id, status: 'expired', recipient: null });
+  }
+  // An earlier change's notice is kept.
+  expect(statusOf(earlier.id)?.status).toBe('pending');
+  // The worker holding it learns it was dropped under its claim.
+  await expect(t.app.get(MailStore).droppedMeanwhile({ id: held.id, attempts: 1 })).resolves.toBe(
+    true,
+  );
+  await expect(t.app.get(MailStore).droppedMeanwhile({ id: held.id, attempts: 2 })).resolves.toBe(
     false,
   );
 });

@@ -47,6 +47,7 @@ function txWith({ minute = 0, day = 0, created = 1 } = {}) {
     );
   const tx = {
     $executeRaw: vi.fn(() => Promise.resolve(1)),
+    $queryRaw: vi.fn(() => Promise.resolve([] as { unclaimed: boolean }[])),
     mailMessage: {
       count,
       createMany: vi.fn(() => Promise.resolve({ count: created })),
@@ -69,7 +70,8 @@ describe('MailOutboxService', () => {
 
   it("drops, unsent, an account's waiting messages of a kind from a payload number on", async () => {
     const { tx, client } = txWith();
-    tx.$executeRaw.mockResolvedValueOnce(2);
+    // Two dropped: one a worker held (being sent), one nobody did.
+    tx.$queryRaw.mockResolvedValueOnce([{ unclaimed: false }, { unclaimed: true }]);
     await expect(
       unlimited.expireQueued(client, {
         kind: 'email_changed',
@@ -78,8 +80,8 @@ describe('MailOutboxService', () => {
         from: 4,
         reason: 'superseded',
       }),
-    ).resolves.toBe(2);
-    const [sql, ...values] = tx.$executeRaw.mock.calls[0] as unknown as [
+    ).resolves.toEqual({ dropped: 2, unclaimed: 1 });
+    const [sql, ...values] = tx.$queryRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       ...unknown[],
     ];
@@ -91,6 +93,9 @@ describe('MailOutboxService', () => {
     expect(statement).toContain(`"status" IN ('pending', 'sending', 'failed')`);
     // A message without the number (queued by the previous release) goes too.
     expect(statement).toContain('ELSE true END');
+    // Locked in id order; a message being sent under a live lease is its worker's to count.
+    expect(statement).toContain('ORDER BY "id"\n        FOR UPDATE');
+    expect(statement).toContain(`("status" <> 'sending' OR "locked_until" < now()) AS "unclaimed"`);
     expect(values).toEqual([
       'superseded',
       'u1',

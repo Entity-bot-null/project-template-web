@@ -177,6 +177,12 @@ export async function tokenOwner(
 }
 
 const DAY_MS = 86_400_000;
+
+/**
+ * How long a used token is kept after its use (AccountTokenSweep): as long as
+ * a check of earlier uses can see it (the notice of a change of email).
+ */
+export const USED_ACCOUNT_TOKEN_RETENTION_MS = DAY_MS;
 const SWEEP_INTERVAL_MS = 60 * 60_000;
 
 // Used and expired tokens no longer work, whatever is kept: they are deleted a
@@ -203,7 +209,12 @@ export class AccountTokenSweep implements OnModuleInit, OnModuleDestroy {
     try {
       const before = new Date(now - DAY_MS);
       const { count } = await this.prisma.accountToken.deleteMany({
-        where: { OR: [{ expiresAt: { lt: before } }, { usedAt: { lt: before } }] },
+        where: {
+          OR: [
+            { expiresAt: { lt: before } },
+            { usedAt: { lt: new Date(now - USED_ACCOUNT_TOKEN_RETENTION_MS) } },
+          ],
+        },
       });
       // Sign-ups whose link expired, and those whose message never went out
       // (its queue validity is SIGN_UP_TTL_MS): nobody can finish them.

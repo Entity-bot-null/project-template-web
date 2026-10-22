@@ -118,7 +118,7 @@ async function setup({
     }),
     expireQueued: vi.fn((_tx: unknown, input: { kind: string }) => {
       calls.push(`drop queued ${input.kind}`);
-      return Promise.resolve(2);
+      return Promise.resolve({ dropped: 3, unclaimed: 2 });
     }),
     recordExpired: vi.fn(),
     notifyQueued: vi.fn(),
@@ -345,7 +345,7 @@ describe('EmailChangeService.revert', () => {
       from: 4,
       reason: 'superseded',
     });
-    // Counted once the undo committed.
+    // Counted once the undo committed: those no worker held (a worker counts its own).
     expect(mail.recordExpired).toHaveBeenCalledWith('email_changed', 2);
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'password_changed',
@@ -401,20 +401,51 @@ describe('EmailChangeService.revert', () => {
   });
 
   it('runs the undo once more when PostgreSQL aborted it as a deadlock, and only once', async () => {
-    const deadlock = () =>
+    // From a model query (P2034), and from expireQueued's raw one (P2010
+    // carrying the adapter's kind), which is where the deadlock happens.
+    const modelDeadlock = () =>
       new Prisma.PrismaClientKnownRequestError('Transaction failed due to a write conflict', {
         code: 'P2034',
         clientVersion: 'test',
       });
-    const { service, prisma, tx, mail } = await setup({ tokenRow: revertRow });
-    tx.user.update.mockRejectedValueOnce(deadlock());
-    await expect(service.revert(TOKEN, GOOD, NOW)).resolves.toBeUndefined();
-    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
-    expect(mail.recordExpired).toHaveBeenCalledTimes(1);
+    const rawDeadlock = () =>
+      new Prisma.PrismaClientKnownRequestError('Raw query failed. Code: `40P01`', {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: {
+          driverAdapterError: {
+            cause: { originalCode: '40P01', kind: 'TransactionWriteConflict' },
+          },
+        },
+      });
+    const model = await setup({ tokenRow: revertRow });
+    model.tx.user.update.mockRejectedValueOnce(modelDeadlock());
+    await expect(model.service.revert(TOKEN, GOOD, NOW)).resolves.toBeUndefined();
+    expect(model.prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(model.mail.recordExpired).toHaveBeenCalledTimes(1);
+
+    const raw = await setup({ tokenRow: revertRow });
+    raw.mail.expireQueued.mockRejectedValueOnce(rawDeadlock());
+    await expect(raw.service.revert(TOKEN, GOOD, NOW)).resolves.toBeUndefined();
+    expect(raw.prisma.$transaction).toHaveBeenCalledTimes(2);
 
     const twice = await setup({ tokenRow: revertRow });
-    twice.tx.user.update.mockRejectedValueOnce(deadlock()).mockRejectedValueOnce(deadlock());
-    await expect(twice.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('write conflict');
+    twice.mail.expireQueued
+      .mockRejectedValueOnce(rawDeadlock())
+      .mockRejectedValueOnce(rawDeadlock());
+    await expect(twice.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('40P01');
     expect(twice.prisma.$transaction).toHaveBeenCalledTimes(2);
+
+    // Any other raw failure is not retried.
+    const other = await setup({ tokenRow: revertRow });
+    other.mail.expireQueued.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Raw query failed. Code: `23514`', {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: { driverAdapterError: { cause: { originalCode: '23514', kind: 'CheckViolation' } } },
+      }),
+    );
+    await expect(other.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('23514');
+    expect(other.prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });

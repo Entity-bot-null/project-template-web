@@ -252,6 +252,54 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     );
   });
 
+  test("flags a constraint in a column's definition unless the column holds nothing yet, as UNIQUE or a foreign key", () => {
+    for (const sql of [
+      // A backfill fills the new column.
+      `ALTER TABLE "users" ADD COLUMN "code" TEXT UNIQUE;\nUPDATE "users" SET "code" = lower("email");`,
+      'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id");\nUPDATE "users" SET "team_id" = gen_random_uuid();',
+      // Its NULLs collide.
+      'ALTER TABLE "users" ADD COLUMN "code" TEXT UNIQUE NULLS NOT DISTINCT;',
+      // A CHECK may read other columns, whatever it names.
+      'ALTER TABLE "users" ADD COLUMN "age" INTEGER CHECK ("security_version" >= 1);',
+      'ALTER TABLE "users" ADD COLUMN "age" INTEGER CHECK ("age" >= 0);',
+      'ALTER TABLE "users" ADD COLUMN "code" TEXT UNIQUE CHECK (length("code") > 2);',
+      // At table level too.
+      'ALTER TABLE "users" ADD COLUMN "code" TEXT, ADD CONSTRAINT "users_code_key" UNIQUE NULLS NOT DISTINCT ("code");',
+    ]) {
+      assert.deepEqual(kinds(sql), ['adds a constraint to an existing table'], sql);
+    }
+  });
+
+  test('counts a new column filled by a default given later, or by a write inside WITH', () => {
+    const unique = 'CREATE UNIQUE INDEX "users_code_key" ON "users"("code");';
+    for (const sql of [
+      `ALTER TABLE "users" ADD COLUMN "code" TEXT;\nALTER TABLE "users" ALTER COLUMN "code" SET DEFAULT 'x';\n${unique}`,
+      `ALTER TABLE "users" ADD COLUMN "code" TEXT, ALTER COLUMN "code" SET DEFAULT 'x';\n${unique}`,
+      `ALTER TABLE "users" ADD COLUMN "code" TEXT;\nWITH s AS (SELECT 1) UPDATE "users" SET "code" = "email";\n${unique}`,
+      `ALTER TABLE "users" ADD COLUMN "code" TEXT;\nWITH s AS (INSERT INTO public.users ("code") VALUES ('a') RETURNING 1) SELECT * FROM s;\n${unique}`,
+    ]) {
+      assert.deepEqual(kinds(sql), ['adds a unique index to an existing table'], sql);
+    }
+    // A default of NULL, and COPY ... TO, fill nothing.
+    assert.deepEqual(
+      kinds(
+        `ALTER TABLE "users" ADD COLUMN "code" TEXT, ALTER COLUMN "code" SET DEFAULT NULL;\nCOPY "users" TO STDOUT;\n${unique}`,
+      ),
+      [],
+    );
+  });
+
+  test('reads keywords in a column definition, not in quoted names or a foreign key action', () => {
+    for (const sql of [
+      'ALTER TABLE "users" ADD COLUMN "x" UUID REFERENCES "identity"("id");',
+      'ALTER TABLE "users" ADD COLUMN "team_id" UUID REFERENCES "teams"("id") ON DELETE SET DEFAULT;',
+      'ALTER TABLE "users" ADD COLUMN "h" TEXT COLLATE "default";\nCREATE UNIQUE INDEX "users_h_key" ON "users"("h");',
+      'ALTER TABLE "users" ADD COLUMN "h" TEXT DEFAULT (NULL);\nCREATE UNIQUE INDEX "users_h_key" ON "users"("h");',
+    ]) {
+      assert.deepEqual(kinds(sql), [], sql);
+    }
+  });
+
   test('finds a tightening step whatever comments or strings come before it in the statement', () => {
     for (const sql of [
       'ALTER TABLE "users"\n  -- the new rule\n  ADD CONSTRAINT "users_name_check" CHECK (length("name") > 0);',

@@ -101,10 +101,11 @@ before these rules, and a committed migration is never edited), also: a unique i
 constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, in the table or in a
 column's definition) added to a table an earlier migration created (the previous release may write
 what it refuses, and existing rows can make it fail), unless it is a unique index, a `UNIQUE` or a
-foreign key that only covers columns the same migration added empty: nullable, with no default, no
-generated or identity value, and no `UPDATE`, `INSERT` or `COPY` of that table anywhere in the
-migration (a new optional relation; `NULLS NOT DISTINCT` and a primary key never count, their
-NULLs collide or are refused); a dropped unique index (every name of a `DROP INDEX`), unique
+foreign key that only covers columns the same migration added empty: nullable, with no default
+(nor one given later with `SET DEFAULT`), no generated or identity value, and no `UPDATE`,
+`INSERT`, `MERGE` or `COPY ... FROM` of that table anywhere in the migration, a `WITH` query's
+included (a new optional relation; `NULLS NOT DISTINCT`, a `CHECK` and a primary key never count:
+their NULLs collide, a `CHECK` may read other columns, a primary key refuses NULLs); a dropped unique index (every name of a `DROP INDEX`), unique
 constraint or primary key; a table moved to another schema; a `DELETE` without `WHERE`; and an
 enum value added without `IF NOT EXISTS` (see below). Comments and strings anywhere in a
 statement do not hide a step. Prisma writes `ADD VALUE` without it, and

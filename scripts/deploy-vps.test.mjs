@@ -532,6 +532,18 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(pointer('release.previous.env'), B[3]);
   });
 
+  test('says a deployment is running, rather than read a previous release it may be writing', async () => {
+    // The first deployment: no previous release yet, until it finishes.
+    const before = calls().length;
+    const deployment = start('deploy.sh', A, { FAKE_SECONDS: '1' });
+    await logged(`pull ${A[0]}`, before);
+    const rollback = run('rollback.sh');
+    assert.equal(rollback.status, 1);
+    assert.match(rollback.stderr, /another deployment or rollback is running/);
+    assert.doesNotMatch(rollback.stderr, /no previous release recorded/);
+    assert.equal((await deployment).status, 0);
+  });
+
   test('says a deployment is running, rather than read a redeployment it may be changing', async () => {
     run('deploy.sh', A);
     run('deploy.sh', B);

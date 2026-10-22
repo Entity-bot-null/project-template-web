@@ -227,6 +227,17 @@ describe('cspProblems', () => {
       ),
       ['a style attribute on <p>'],
     );
+    // Inside SVG nothing is raw text, and <title/> closes itself; its title is
+    // an HTML integration point, so what it holds is read too.
+    assert.deepEqual(
+      cspProblems('<svg><title/><path d="M0"/></svg><p style="x">a</p><script>alert(1)</script>'),
+      ['a style attribute on <p>', 'an inline script'],
+    );
+    assert.deepEqual(
+      cspProblems('<svg><title><img src="https://cdn.example.net/x.png"></title></svg>'),
+      ['a file from another origin: https://cdn.example.net/x.png'],
+    );
+    assert.deepEqual(cspProblems('<math/><title><p style="x"></p></title>'), []);
     // A letter that changes length in lower case does not shift what is read.
     assert.deepEqual(
       cspProblems(
@@ -276,11 +287,13 @@ describe('cssProblems', () => {
     assert.deepEqual(
       cssProblems(`@import url("https://fonts.example.net/css2?family=Inter");
         @import '//cdn.example.net/x.css';
+        @import"https://fonts.example.net/minified.css";
         @font-face { src: url(data:font/woff2;base64,AAAA) format("woff2") }
         .hero { background-image: url( "https://cdn.example.net/hero.jpg" ) }`),
       [
         'an @import from another origin: https://fonts.example.net/css2?family=Inter',
         'an @import from another origin: //cdn.example.net/x.css',
+        'an @import from another origin: https://fonts.example.net/minified.css',
         'a data: URL that is not an image',
         'a file from another origin: https://cdn.example.net/hero.jpg',
       ],
