@@ -7,10 +7,14 @@ import { ERROR_RESPONSE_SCHEMA_NAME, envelope, zodToOpenApi } from './zod-schema
 // Validates the JSON body with the Zod schema AND documents it in OpenAPI
 // from the same object, so validation and contract cannot drift apart. Keep
 // `@Body()` bare on the parameter.
-export function ZodBody(schema: z.ZodType): MethodDecorator {
+export function ZodBody(
+  schema: z.ZodType,
+  { required = true }: { required?: boolean } = {},
+): MethodDecorator {
   return applyDecorators(
-    UsePipes(new ZodValidationPipe(schema, 'body')),
-    ApiBody({ schema: zodToOpenApi(schema, 'input') }),
+    // An optional body may be missing altogether (no Content-Type).
+    UsePipes(new ZodValidationPipe(required ? schema : schema.optional(), 'body')),
+    ApiBody({ schema: zodToOpenApi(schema, 'input'), required }),
   );
 }
 

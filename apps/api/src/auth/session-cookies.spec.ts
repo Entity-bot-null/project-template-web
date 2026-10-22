@@ -6,9 +6,14 @@ import { clearSessionCookies, respondWithSession } from './session-cookies.js';
 const session = {
   accessToken: 'access',
   expiresIn: 900,
+  sessionId: '7d3c1c2e-5f1a-4b8e-9a51-0c6f2b9e4d10',
   user: { id: 'u1', email: 'a@example.test', name: 'A', role: 'member' as const },
 };
-const refresh = { token: 'refresh', expiresAt: new Date('2030-01-01T00:00:00Z') };
+const refresh = {
+  token: 'refresh',
+  expiresAt: new Date('2030-01-01T00:00:00Z'),
+  familyId: '7d3c1c2e-5f1a-4b8e-9a51-0c6f2b9e4d10',
+};
 
 function response() {
   return { cookie: vi.fn(), clearCookie: vi.fn() };

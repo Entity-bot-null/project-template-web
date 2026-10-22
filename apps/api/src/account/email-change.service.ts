@@ -165,58 +165,64 @@ export class EmailChangeService {
     if (problem !== undefined) throw new BadRequestException(`password: ${problem}`);
     // Hashed before the transaction: it holds the account's lock meanwhile.
     const passwordHash = await hashPassword(password);
+    let dropped: number;
     try {
-      await this.prisma.$transaction(async (tx) => {
-        await lockUser(tx, owner.userId);
-        const current = await tx.user.findUnique({
-          where: { id: owner.userId },
-          select: { id: true, email: true, securityVersion: true },
-        });
-        if (current === null) throw new NotFoundException(INVALID_EMAIL_LINK);
-        const used = await consumeAccountToken(tx, token, 'email_revert', current, now, false);
-        if (used?.targetEmail == null) throw new NotFoundException(INVALID_EMAIL_LINK);
-        await tx.user.update({
-          where: { id: current.id },
-          data: { email: used.targetEmail, passwordHash, securityVersion: { increment: 1 } },
-        });
-        await revokeSessionsLocked(tx, current.id);
-        // Every other link of the account, except the undo links of EARLIER
-        // changes (a lower securityVersion right after the change), however
-        // late their messages went out: the earliest owner wins. Whoever took
-        // the account and undoes their own later change cannot void the
-        // owner's link; the owner's link voids theirs.
-        await tx.accountToken.deleteMany({
-          where: {
+      dropped = await onceMoreOnWriteConflict(() =>
+        this.prisma.$transaction(async (tx) => {
+          await lockUser(tx, owner.userId);
+          const current = await tx.user.findUnique({
+            where: { id: owner.userId },
+            select: { id: true, email: true, securityVersion: true },
+          });
+          if (current === null) throw new NotFoundException(INVALID_EMAIL_LINK);
+          const used = await consumeAccountToken(tx, token, 'email_revert', current, now, false);
+          if (used?.targetEmail == null) throw new NotFoundException(INVALID_EMAIL_LINK);
+          await tx.user.update({
+            where: { id: current.id },
+            data: { email: used.targetEmail, passwordHash, securityVersion: { increment: 1 } },
+          });
+          await revokeSessionsLocked(tx, current.id);
+          // Every other link of the account, except the undo links of EARLIER
+          // changes (a lower securityVersion right after the change), however
+          // late their messages went out: the earliest owner wins. Whoever took
+          // the account and undoes their own later change cannot void the
+          // owner's link; the owner's link voids theirs.
+          await tx.accountToken.deleteMany({
+            where: {
+              userId: current.id,
+              usedAt: null,
+              NOT: { purpose: 'email_revert', securityVersion: { lt: used.securityVersion } },
+            },
+          });
+          // Notices of this change or later ones that still wait in the outbox
+          // would mint undo links after this one is used: dropped unsent. One
+          // being composed right now is refused by its template, which reads
+          // its row under this lock (email-changed.template.ts); one composed
+          // before it goes out with a link the deleteMany above voids.
+          const superseded = await this.mail.expireQueued(tx, {
+            kind: 'email_changed',
             userId: current.id,
-            usedAt: null,
-            NOT: { purpose: 'email_revert', securityVersion: { lt: used.securityVersion } },
-          },
-        });
-        // Notices of this change or later ones that still wait in the outbox
-        // would mint undo links after this one is used: dropped unsent. One
-        // being sent right now is refused by its template, which sees this
-        // link used (email-changed.template.ts).
-        await this.mail.expireQueued(tx, {
-          kind: 'email_changed',
-          userId: current.id,
-          key: 'securityVersion',
-          from: used.securityVersion,
-          reason: 'superseded',
-        });
-        const payload: PasswordChangedPayload = {
-          changedAt: new Date(now).toISOString(),
-          via: 'reset',
-        };
-        await this.mail.enqueue(tx, {
-          kind: 'password_changed',
-          to: used.targetEmail,
-          userId: current.id,
-          payload,
-        });
-      }, ACCOUNT_TRANSACTION);
+            key: 'securityVersion',
+            from: used.securityVersion,
+            reason: 'superseded',
+          });
+          const payload: PasswordChangedPayload = {
+            changedAt: new Date(now).toISOString(),
+            via: 'reset',
+          };
+          await this.mail.enqueue(tx, {
+            kind: 'password_changed',
+            to: used.targetEmail,
+            userId: current.id,
+            payload,
+          });
+          return superseded;
+        }, ACCOUNT_TRANSACTION),
+      );
     } catch (error) {
       throw takenAsConflict(error);
     }
+    this.mail.recordExpired('email_changed', dropped);
     this.mail.notifyQueued();
     this.logger.log(`Change of email of user ${owner.userId} undone: every session ended`);
   }
@@ -267,6 +273,22 @@ export class EmailChangeService {
 }
 
 // users.email is unique: an account took the address after the link was sent.
+// The undo drops several notices of the account (expireQueued), and the
+// outbox's sweep or a retry from the command line may update some of the
+// same rows in another order: PostgreSQL then aborts one of the two as a
+// deadlock (P2034). Nothing of the aborted transaction committed, so the undo
+// runs once more from the start rather than answer 500.
+async function onceMoreOnWriteConflict<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+      return work();
+    }
+    throw error;
+  }
+}
+
 function takenAsConflict(error: unknown): unknown {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
     return new ConflictException(ADDRESS_TAKEN);

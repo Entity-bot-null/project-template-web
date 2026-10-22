@@ -38,8 +38,9 @@ Rules:
   orchestrator holds traffic back without restarting it in a loop.
 - **Non-JSON bodies** are refused with 415 before any parsing (`common/http/json-only.middleware.ts`).
 - **Session cookies follow the answer:** a refresh that fails with 401 clears them; one that fails
-  on the server side (5xx) keeps them, since the session may be fine; logout clears them even when
-  it fails.
+  on the server side (5xx) keeps them, since the session may be fine. A logout clears them once the
+  session ended (one that names its sessions, only when it ended one of them) and keeps them when
+  it fails on the server side, so the sign-in page's retry can still end the session.
 - **Errors outside a request** (an uncaught exception, an unhandled rejection) are logged at
   `fatal` and stop the process, which the orchestrator restarts (docs/observability.md).
 

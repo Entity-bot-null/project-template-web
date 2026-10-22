@@ -97,13 +97,14 @@ schemas; their inferred types are the TypeScript types. Response objects come fr
 **Authentication flow:**
 
 ```
-sign-in ─► 200 { accessToken (15 min), user }   + Set-Cookie: the refresh token (httpOnly;
-          __Host-refresh_token in production, refresh_token on /api/auth elsewhere)
-          (a new session family; the browser's previous one, if any, ends)
+sign-in ─► 200 { accessToken (15 min), sessionId, user }   + Set-Cookie: the refresh token
+          (httpOnly; __Host-refresh_token in production, refresh_token on /api/auth elsewhere)
+          (a new session family, named by sessionId; the browser's previous one, if any, ends)
 API call ─► Authorization: Bearer <accessToken>
 401 ─► POST /api/auth/refresh (cookie) ─► new access token + rotated cookie ─► replay once
 reload ─► boot: POST /api/auth/refresh (only if the has_session hint cookie exists)
 logout ─► the session family ends, cookies cleared, other tabs signed out
+          ({ sessionIds }: only when the cookie's session is one of those)
 replay of an old refresh token ─► its whole family ends (theft), logged
 ```
 

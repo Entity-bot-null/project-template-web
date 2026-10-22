@@ -118,8 +118,9 @@ async function setup({
     }),
     expireQueued: vi.fn((_tx: unknown, input: { kind: string }) => {
       calls.push(`drop queued ${input.kind}`);
-      return Promise.resolve(0);
+      return Promise.resolve(2);
     }),
+    recordExpired: vi.fn(),
     notifyQueued: vi.fn(),
   };
   const service = new EmailChangeService(
@@ -344,6 +345,8 @@ describe('EmailChangeService.revert', () => {
       from: 4,
       reason: 'superseded',
     });
+    // Counted once the undo committed.
+    expect(mail.recordExpired).toHaveBeenCalledWith('email_changed', 2);
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'password_changed',
       to: 'ada@example.test',
@@ -394,5 +397,24 @@ describe('EmailChangeService.revert', () => {
     const failing = await setup({ tokenRow: revertRow });
     failing.tx.user.update.mockRejectedValueOnce(new Error('database down'));
     await expect(failing.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('database down');
+    expect(failing.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the undo once more when PostgreSQL aborted it as a deadlock, and only once', async () => {
+    const deadlock = () =>
+      new Prisma.PrismaClientKnownRequestError('Transaction failed due to a write conflict', {
+        code: 'P2034',
+        clientVersion: 'test',
+      });
+    const { service, prisma, tx, mail } = await setup({ tokenRow: revertRow });
+    tx.user.update.mockRejectedValueOnce(deadlock());
+    await expect(service.revert(TOKEN, GOOD, NOW)).resolves.toBeUndefined();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(mail.recordExpired).toHaveBeenCalledTimes(1);
+
+    const twice = await setup({ tokenRow: revertRow });
+    twice.tx.user.update.mockRejectedValueOnce(deadlock()).mockRejectedValueOnce(deadlock());
+    await expect(twice.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('write conflict');
+    expect(twice.prisma.$transaction).toHaveBeenCalledTimes(2);
   });
 });

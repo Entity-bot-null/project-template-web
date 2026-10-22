@@ -40,9 +40,10 @@ export function reportableError(error: unknown): unknown {
 /** How deep a cause chain is made safe (Sentry's own default limit is 5). */
 const MAX_CAUSES = 5;
 
-// Sentry's linkedErrorsIntegration reports an error's causes too: a Prisma
-// error anywhere down the chain is replaced, and an error above it copied with
-// its safe causes (never changed in place: the caller may still use it).
+// Sentry's linkedErrorsIntegration reports an error's causes too, and the
+// errors of an AggregateError: a Prisma error anywhere down is replaced, and
+// an error above it copied with its safe causes and errors (never changed in
+// place: the caller may still use it).
 function safeChain(error: unknown, depth: number): unknown {
   if (!(error instanceof Error) || depth > MAX_CAUSES) return error;
   const cause: unknown = error.cause;
@@ -57,8 +58,14 @@ function safeChain(error: unknown, depth: number): unknown {
     safe.stack = loggableStack(error);
     return safe;
   }
-  if (safeCause === cause) return error;
-  const copy = new Error(error.message, options);
+  const errors = error instanceof AggregateError ? (error.errors as unknown[]) : undefined;
+  const safeErrors = errors?.map((inner) => safeChain(inner, depth + 1));
+  const errorsChanged = safeErrors?.some((inner, index) => inner !== errors?.[index]) === true;
+  if (safeCause === cause && !errorsChanged) return error;
+  const copy =
+    safeErrors === undefined
+      ? new Error(error.message, options)
+      : new AggregateError(safeErrors, error.message, options);
   copy.name = error.name;
   if (error.stack !== undefined) copy.stack = error.stack;
   return copy;

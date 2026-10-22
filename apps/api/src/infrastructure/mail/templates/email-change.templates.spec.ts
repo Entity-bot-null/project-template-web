@@ -24,14 +24,14 @@ interface Rows {
   user?: Record<string, unknown> | null;
   /** The account at the recipient's address (by email); null: none. */
   owner?: { id: string } | null;
-  /** A used undo link of this change or an earlier one; null: none. */
-  undone?: { id: string } | null;
+  /** The message's own row as the template reads it under the lock. */
+  row?: { status: string } | null;
 }
 
 function txWith({
   user = { id: 'u1', email: 'ada@example.test', securityVersion: 3 },
   owner = null,
-  undone = null,
+  row = { status: 'sending' },
 }: Rows = {}) {
   const tx = {
     // The account's lock, taken before a token is minted.
@@ -44,7 +44,9 @@ function txWith({
     accountToken: {
       deleteMany: vi.fn(() => Promise.resolve({ count: 0 })),
       create: vi.fn(() => Promise.resolve({})),
-      findFirst: vi.fn(() => Promise.resolve(undone)),
+    },
+    mailMessage: {
+      findUnique: vi.fn(() => Promise.resolve(row)),
     },
   };
   return { tx, client: tx as unknown as Prisma.TransactionClient };
@@ -204,10 +206,10 @@ describe('the notice to the previous address', () => {
     expect(createdToken(tx)).toMatchObject({ purpose: 'email_revert', securityVersion: 4 });
   });
 
-  it('sends no undo link once this change or an earlier one was undone', async () => {
+  it('sends no undo link once an undo dropped this notice while it was being composed', async () => {
     const { tx, client } = txWith({
       user: { id: 'u1', email: 'ada@example.test', securityVersion: 9 },
-      undone: { id: 't-owner' },
+      row: { status: 'expired' },
     });
     await expect(
       emailChangedTemplate.compose({
@@ -220,18 +222,28 @@ describe('the notice to the previous address', () => {
         ...context,
       }),
     ).resolves.toBeNull();
-    // Looked up under the account's lock, for this change and earlier ones.
-    expect(tx.$queryRaw).toHaveBeenCalled();
-    expect(tx.accountToken.findFirst).toHaveBeenCalledWith({
-      where: {
-        userId: 'u1',
-        purpose: 'email_revert',
-        usedAt: { not: null },
-        securityVersion: { lte: 5 },
-      },
-      select: { id: true },
+    // Its own row, read once the account's lock is held (the undo holds it).
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.mailMessage.findUnique.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(tx.mailMessage.findUnique).toHaveBeenCalledWith({
+      where: { id: 'm1' },
+      select: { status: true },
     });
     expect(tx.accountToken.create).not.toHaveBeenCalled();
+  });
+
+  it('still mints for a change made after an earlier one was undone', async () => {
+    // The undo is history: this notice's row was queued after it, still sending.
+    const { tx, client } = txWith({
+      user: { id: 'u1', email: 'third@example.test', securityVersion: 3 },
+    });
+    await emailChangedTemplate.compose({
+      tx: client,
+      message: changed({ changedAt: '2026-10-13T10:05:00.000Z', securityVersion: '3' }),
+      ...context,
+    });
+    expect(createdToken(tx)).toMatchObject({ purpose: 'email_revert', securityVersion: 3 });
   });
 
   it('still tells with a malformed payload, and nobody once undone or gone', async () => {

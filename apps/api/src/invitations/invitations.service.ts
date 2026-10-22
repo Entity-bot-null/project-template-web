@@ -184,7 +184,7 @@ export class InvitationsService {
     this.logger.log(`Account ${user.id} (${user.role}) created from invitation ${invitation.id}`);
     if (previousToken !== undefined) await this.sessions.retire(previousToken, 'sign-in');
     const refresh = await this.sessions.create(user.id, passwordHash);
-    return { session: await this.auth.sessionFor(user, refresh.securityVersion), refresh };
+    return { session: await this.auth.sessionFor(user, refresh), refresh };
   }
 }
 

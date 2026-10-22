@@ -1,7 +1,7 @@
 // Performance budget (docs/testing.md#performance-budget): fails when the
 // built assets of an app outgrow its performance-budget.json (the web app's
-// and the landing's), or when a page of the landing carries what the web
-// server's Content-Security-Policy refuses. Sizes are gzip, what browsers
+// and the landing's), or when a page of the landing, or a stylesheet of
+// either, carries what the web server's Content-Security-Policy refuses. Sizes are gzip, what browsers
 // actually download, in kB of 1000 bytes like Vite reports. Run after
 // `pnpm build`; part of `pnpm verify` and CI.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -38,34 +38,125 @@ const LOADED_LINKS =
   /^(?:stylesheet|icon|apple-touch-icon|mask-icon|manifest|preload|modulepreload|prefetch)$/i;
 const IMAGE_LINKS = /^(?:icon|apple-touch-icon|mask-icon)$/i;
 
+/** Named character references that can spell a URL's scheme or its slashes. */
+const NAMED = new Map([
+  ['colon', ':'],
+  ['tab', '\t'],
+  ['newline', '\n'],
+  ['sol', '/'],
+  ['bsol', '\\'],
+  ['period', '.'],
+  ['quot', '"'],
+  ['apos', "'"],
+  ['lt', '<'],
+  ['gt', '>'],
+  ['amp', '&'],
+]);
+
 /**
- * The few character references a URL in our pages may use.
+ * A code point as a browser decodes a numeric reference: one out of range,
+ * NUL or a surrogate is U+FFFD.
+ * @param {number} code
+ */
+function codePoint(code) {
+  const replaced = code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff);
+  return String.fromCodePoint(replaced || Number.isNaN(code) ? 0xfffd : code);
+}
+
+/**
+ * An attribute value with its character references decoded: numeric ones,
+ * and the named ones that matter for a URL.
  * @param {string} value
  */
 function decoded(value) {
-  return value
-    .replace(/&#x([0-9a-f]+);?/gi, (/** @type {string} */ _, /** @type {string} */ hex) =>
-      String.fromCodePoint(Number.parseInt(hex, 16)),
-    )
-    .replace(/&#([0-9]+);?/g, (/** @type {string} */ _, /** @type {string} */ dec) =>
-      String.fromCodePoint(Number(dec)),
-    )
-    .replaceAll('&quot;', '"')
-    .replaceAll('&apos;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&amp;', '&');
+  return value.replace(
+    /&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));?/gi,
+    (
+      /** @type {string} */ reference,
+      /** @type {string | undefined} */ hex,
+      /** @type {string | undefined} */ dec,
+      /** @type {string | undefined} */ named,
+    ) => {
+      if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
+      if (dec !== undefined) return codePoint(Number(dec));
+      return NAMED.get((named ?? '').toLowerCase()) ?? reference;
+    },
+  );
+}
+
+/**
+ * A URL as a browser reads it: tabs and line breaks dropped wherever they
+ * are, leading spaces and control characters too.
+ * @param {string} url
+ */
+function urlOf(url) {
+  const kept = url.replace(/[\t\n\r]/g, '');
+  let start = 0;
+  while (start < kept.length && kept.charCodeAt(start) <= 0x20) start += 1;
+  return kept.slice(start);
+}
+
+const isJavaScriptUrl = (/** @type {string} */ url) => /^javascript:/i.test(urlOf(url));
+// Another origin: a scheme, or two slashes either way (a browser reads a
+// backslash as a slash in an http(s) URL).
+const isAbsolute = (/** @type {string} */ url) =>
+  /^(?:[a-z][a-z0-9+.-]*:|[\\/]{2})/i.test(urlOf(url));
+
+/**
+ * Elements whose text a browser does not parse as markup, up to their end
+ * tag (`plaintext` has none: the rest of the page is its text).
+ */
+const RAW_TEXT = new Set([
+  'script',
+  'style',
+  'title',
+  'textarea',
+  'xmp',
+  'iframe',
+  'noembed',
+  'noframes',
+]);
+
+/**
+ * Where the end tag `</name` starts from `from` on, in any letter case; the
+ * end of the document without one.
+ * @param {string} html
+ * @param {string} name
+ * @param {number} from
+ */
+function endTag(html, name, from) {
+  for (let k = html.indexOf('</', from); k !== -1; k = html.indexOf('</', k + 2)) {
+    if (html.slice(k + 2, k + 2 + name.length).toLowerCase() === name) return k;
+  }
+  return html.length;
+}
+
+/**
+ * Where a comment that starts at `open` (`<!--`) ends, as a browser ends it:
+ * `<!-->` and `<!--->` at once, otherwise at the first `-->` or `--!>`.
+ * @param {string} html
+ * @param {number} open
+ */
+function commentEnd(html, open) {
+  if (html.startsWith('>', open + 4)) return open + 5;
+  if (html.startsWith('->', open + 4)) return open + 6;
+  const ends = [html.indexOf('-->', open + 4), html.indexOf('--!>', open + 4)].filter(
+    (end) => end !== -1,
+  );
+  if (ends.length === 0) return html.length;
+  const end = Math.min(...ends);
+  return end + (html.startsWith('--!>', end) ? 4 : 3);
 }
 
 /**
  * The tags of an HTML document, read as a browser reads them: a quoted
- * attribute value may hold `>`, comments are skipped, and the text of a
- * script or style element is not markup. End tags come as `/name`.
+ * attribute value may hold `>`, comments are skipped (ended where a browser
+ * ends them), and the text of a script, a style, a title, a textarea and the
+ * other raw text elements is not markup. End tags come as `/name`.
  * @param {string} html
  * @returns {{ name: string; attributes: Map<string, string> }[]}
  */
 export function tagsOf(html) {
-  const lower = html.toLowerCase();
   /** @type {{ name: string; attributes: Map<string, string> }[]} */
   const tags = [];
   let i = 0;
@@ -73,8 +164,7 @@ export function tagsOf(html) {
     const open = html.indexOf('<', i);
     if (open === -1) break;
     if (html.startsWith('<!--', open)) {
-      const end = html.indexOf('-->', open + 4);
-      i = end === -1 ? html.length : end + 3;
+      i = commentEnd(html, open);
       continue;
     }
     const start = /^<(\/?)([a-zA-Z][\w:-]*)/.exec(html.slice(open, open + 80));
@@ -113,11 +203,9 @@ export function tagsOf(html) {
       if (!attributes.has(key)) attributes.set(key, decoded(value));
     }
     tags.push({ name, attributes });
-    // A script's or a style's text runs to its end tag, whatever it holds.
-    if (name === 'script' || name === 'style') {
-      const end = lower.indexOf(`</${name}`, j);
-      j = end === -1 ? html.length : end;
-    }
+    // A raw text element's text runs to its end tag, whatever it holds.
+    if (RAW_TEXT.has(name)) j = endTag(html, name, j);
+    if (name === 'plaintext') j = html.length;
     i = j;
   }
   return tags;
@@ -129,7 +217,8 @@ export function tagsOf(html) {
  * 'unsafe-inline', object-src 'none', base-uri and form-action 'self',
  * images from data: URLs aside) refuses: an inline script or event handler, a
  * `<style>` element or a style attribute, a javascript: URL, an object or an
- * embed, a base or a form pointing elsewhere, a file from another origin. The
+ * embed, a base or a form pointing elsewhere, a file from another origin, and
+ * any of those in an iframe's srcdoc (which takes the page's policy). The
  * preview server sends no CSP, so such a page would break in production only.
  * A JSON-LD block is data, not a script.
  * @param {string} html
@@ -140,7 +229,7 @@ export function cspProblems(html) {
   const problems = [];
   /** The element a <source> belongs to: its files are images in a picture. */
   let media = '';
-  const absolute = (/** @type {string} */ url) => /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
+  const absolute = isAbsolute;
   for (const { name, attributes } of tagsOf(html)) {
     if (name === 'picture' || name === 'video' || name === 'audio') media = name;
     if (name === '/picture' || name === '/video' || name === '/audio') media = '';
@@ -159,7 +248,11 @@ export function cspProblems(html) {
       problems.push(`an inline event handler on <${name}>`);
     }
     for (const key of ['href', 'xlink:href', 'src', 'action', 'formaction', 'poster', 'data']) {
-      if (/^javascript:/i.test(attribute(key) ?? '')) problems.push('a javascript: URL');
+      if (isJavaScriptUrl(attribute(key) ?? '')) problems.push('a javascript: URL');
+    }
+    const srcdoc = attributes.get('srcdoc');
+    if (name === 'iframe' && srcdoc !== undefined) {
+      for (const problem of cspProblems(srcdoc)) problems.push(`in an iframe's srcdoc: ${problem}`);
     }
     if (name === 'object' || name === 'embed' || name === 'applet') {
       problems.push(`an <${name}> (object-src 'none')`);
@@ -170,7 +263,7 @@ export function cspProblems(html) {
     }
     for (const key of ['action', 'formaction']) {
       const target = attribute(key);
-      if (target !== undefined && absolute(target) && !/^javascript:/i.test(target)) {
+      if (target !== undefined && absolute(target) && !isJavaScriptUrl(target)) {
         problems.push(`a form sent to another origin: ${target}`);
       }
     }
@@ -181,6 +274,9 @@ export function cspProblems(html) {
       const image =
         rels.some((rel) => IMAGE_LINKS.test(rel)) || attribute('as')?.toLowerCase() === 'image';
       loaded.push({ url: attribute('href'), image });
+      for (const candidate of (attribute('imagesrcset') ?? '').split(',')) {
+        loaded.push({ url: candidate.trim().split(/\s+/)[0], image });
+      }
     } else if (name === 'use' || name === 'image' || name === 'feimage') {
       const image = name !== 'use';
       loaded.push({ url: attribute('href'), image }, { url: attribute('xlink:href'), image });
@@ -196,10 +292,36 @@ export function cspProblems(html) {
       if (name === 'video') loaded.push({ url: attribute('poster'), image: true });
     }
     for (const { url, image } of loaded) {
-      if (url === undefined || url === '' || /^javascript:/i.test(url)) continue;
-      if (image && /^data:/i.test(url)) continue;
+      if (url === undefined || url === '' || isJavaScriptUrl(url)) continue;
+      if (image && /^data:/i.test(urlOf(url))) continue;
       if (absolute(url)) problems.push(`a file from another origin: ${url}`);
     }
+  }
+  return problems;
+}
+
+/**
+ * What a stylesheet loads that the Content-Security-Policy refuses: an import
+ * (`@import`) or a url() from another origin (a web font's stylesheet, for
+ * instance: self-host it), or a data: URL that is not an image (only images
+ * may come from data: URLs; a font may not).
+ * @param {string} css
+ * @returns {string[]}
+ */
+export function cssProblems(css) {
+  /** @type {string[]} */
+  const problems = [];
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const [, url = ''] of code.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)/gi)) {
+    if (isAbsolute(url)) problems.push(`an @import from another origin: ${url}`);
+  }
+  // The url() of an @import is that import's, reported once.
+  const rules = code.replace(/@import[^;]*;?/gi, '');
+  for (const [, , url = ''] of rules.matchAll(/url\(\s*(["']?)([^"')]*)\1\s*\)/gi)) {
+    const target = url.trim();
+    if (/^data:/i.test(target)) {
+      if (!/^data:image\//i.test(target)) problems.push('a data: URL that is not an image');
+    } else if (isAbsolute(target)) problems.push(`a file from another origin: ${target}`);
   }
   return problems;
 }
@@ -308,6 +430,20 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     for (const { ok, line } of result.lines) (ok ? console.log : console.error)(`  ${line}`);
     failed ||= result.failed;
     over ||= result.over;
+    const stylesheets = readdirSync(assets).filter((file) => file.endsWith('.css'));
+    let refusedStyles = 0;
+    for (const file of stylesheets) {
+      for (const problem of cssProblems(readFileSync(new URL(file, assets), 'utf8'))) {
+        console.error(`  REFUSED BY THE CSP  ${app.assets}${file}: ${problem}`);
+        refusedStyles += 1;
+      }
+    }
+    if (refusedStyles === 0) {
+      console.log(
+        `  ok  stylesheets: nothing the Content-Security-Policy refuses (${String(stylesheets.length)} files)`,
+      );
+    }
+    refused ||= refusedStyles > 0;
     if (app.pages === true) {
       const pages = readdirSync(app.dist, { recursive: true })
         .map((file) => String(file).replaceAll('\\', '/'))
@@ -329,7 +465,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   }
   if (refused) {
     console.error(
-      'A page carries what the Content-Security-Policy refuses in production: scripts and styles go in files of this origin, never inline (docs/how-to.md#change-the-landing).',
+      'A page or a stylesheet carries what the Content-Security-Policy refuses in production: scripts, styles and fonts go in files of this origin, never inline or from another site (docs/how-to.md#change-the-landing).',
     );
   }
   if (over) {

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetCapabilitiesForTests } from '../auth/capabilities';
 import { clearSession, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { deferred, failure, ok, session, stubFetch } from '../test/http';
+import { deferred, failure, ok, session, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const SIGN_IN = 'POST /api/auth/sign-in';
@@ -85,7 +85,7 @@ describe('SignInPage', () => {
       'POST /api/auth/logout': () =>
         attempts++ === 0 ? failure(503, 'unavailable') : new Response(null, { status: 204 }),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     renderRoute('/');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Sign out' }));

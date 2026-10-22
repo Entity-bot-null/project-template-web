@@ -255,6 +255,78 @@ describe('Auth (integration)', () => {
       .expect(401);
   });
 
+  it('ends only the sessions a logout names, and gives a live one started meanwhile its hint back', async () => {
+    const signInFresh = () =>
+      request(t.server)
+        .post('/api/auth/sign-in')
+        .send({ email: EMAIL, password: TEST_PASSWORD })
+        .expect(200);
+    const idOf = (res: request.Response) => envelopeOf<{ sessionId: string }>(res).data.sessionId;
+    // A session the browser discarded (it answered after a sign-out it raced),
+    // rotated since by another tab: the id stays the same across rotations.
+    const discarded = await signInFresh();
+    const rotated = await request(t.server)
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookieOf(discarded))
+      .expect(200);
+    expect(idOf(rotated)).toBe(idOf(discarded));
+    const newer = await signInFresh();
+
+    // The jar holds the newer session: left alone, its hint set again.
+    const kept = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', refreshCookieOf(newer))
+      .send({ sessionIds: [idOf(discarded)] })
+      .expect(204);
+    expect(cookiesOf(kept).some((cookie) => cookie.startsWith('refresh_token='))).toBe(false);
+    expect(cookiesOf(kept).find((cookie) => cookie.startsWith('has_session='))).toMatch(
+      /^has_session=1; .*Expires=/,
+    );
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(newer), revokedAt: null } }),
+    ).resolves.toBe(1);
+
+    // The jar holds the discarded family (its rotated cookie): ended, cleared.
+    const ended = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', refreshCookieOf(rotated))
+      .send({ sessionIds: [idOf(discarded)] })
+      .expect(204);
+    expect(clearsCookies(ended)).toBe(true);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(discarded), revokedAt: null } }),
+    ).resolves.toBe(0);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(newer), revokedAt: null } }),
+    ).resolves.toBe(1);
+
+    // No cookie: nothing to end, no cookie touched. A malformed id: refused.
+    const none = await request(t.server)
+      .post('/api/auth/logout')
+      .send({ sessionIds: [idOf(discarded)] })
+      .expect(204);
+    expect(cookiesOf(none)).toEqual([]);
+    await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', refreshCookieOf(newer))
+      .send({ sessionIds: ['not-a-session'] })
+      .expect(400);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(newer), revokedAt: null } }),
+    ).resolves.toBe(1);
+  });
+
+  it("logs out like before with an empty JSON body: the cookie's session, whichever it is", async () => {
+    const session = await signIn(t.server, EMAIL);
+    const res = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', session.refreshCookie)
+      .send({})
+      .expect(204);
+    expect(clearsCookies(res)).toBe(true);
+    await expect(t.prisma.session.count({ where: { revokedAt: null } })).resolves.toBe(0);
+  });
+
   it('ends the session this browser already had when it signs in again', async () => {
     const before = await signIn(t.server, EMAIL);
     const again = await request(t.server)

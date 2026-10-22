@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetCapabilitiesForTests, useCapabilities } from '../auth/capabilities';
 import { getAccessToken, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, json, ok, session, stubFetch } from '../test/http';
+import { failure, json, ok, session, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const CHANGE = 'POST /api/account/password';
@@ -19,7 +19,7 @@ const GOOD = 'violet harbour lantern 7';
 beforeEach(() => {
   resetForTests();
   resetCapabilitiesForTests();
-  setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+  setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 });
 afterEach(() => {
   resetForTests();

@@ -345,6 +345,37 @@ describe.skipIf(skipWithoutMailpit)('change of email (PostgreSQL + Mailpit)', ()
     expect(restored.email).toBe(grace.email);
   });
 
+  it('tells the previous address of a change made after an earlier change was undone', async () => {
+    const grace = await account();
+    const session = await signIn(t.server, grace.email);
+    const first = address();
+    await ask(session.accessToken, first).expect(202);
+    await confirm(await linkIn(first, 'Confirm your new Integration address', CONFIRM_LINK)).expect(
+      204,
+    );
+    await revert(
+      await linkIn(grace.email, 'Your Integration address was changed', REVERT_LINK),
+    ).expect(204);
+
+    // Within the day the used undo link is kept: a new change, by the owner
+    // or by someone who got the new password, is told all the same.
+    const again = await signIn(t.server, grace.email, NEW_PASSWORD);
+    const second = address();
+    await ask(again.accessToken, second, NEW_PASSWORD).expect(202);
+    await confirm(
+      await linkIn(second, 'Confirm your new Integration address', CONFIRM_LINK),
+    ).expect(204);
+    const undo = await linkIn(grace.email, 'Your Integration address was changed', REVERT_LINK);
+    expect(
+      (await messagesTo(grace.email)).filter(
+        (m) => m.Subject === 'Your Integration address was changed',
+      ),
+    ).toHaveLength(2);
+    await revert(undo, 'quiet orchard compass 42').expect(204);
+    const restored = await t.prisma.user.findUniqueOrThrow({ where: { id: grace.id } });
+    expect(restored.email).toBe(grace.email);
+  });
+
   it('asks for the current password, refuses the same address, and queues nothing then', async () => {
     const grace = await account();
     const session = await signIn(t.server, grace.email);

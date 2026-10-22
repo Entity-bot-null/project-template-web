@@ -48,21 +48,17 @@ export const emailChangedTemplate: MailTemplate = {
     // deployment: ranked by the account as it is now, as that release did.
     const changed = payload.success ? payload.data.securityVersion : undefined;
     const securityVersion = changed === undefined ? user.securityVersion : Number(changed);
-    // Under the account's lock, like the undo itself: when an undo link of this
-    // change or of an earlier one was used meanwhile, this change is undone
-    // already and its link would take the account back. The undo drops such
-    // notices still in the outbox; this covers one being sent at that moment.
+    // Under the account's lock, like the undo itself: an undo of this change
+    // or an earlier one drops this notice in its own transaction
+    // (EmailChangeService.revert, expireQueued), and its link would take the
+    // account back. Read once the lock is held, the row tells whether that
+    // happened while this message was being composed.
     await lockUser(tx, user.id);
-    const undone = await tx.accountToken.findFirst({
-      where: {
-        userId: user.id,
-        purpose: 'email_revert',
-        usedAt: { not: null },
-        securityVersion: { lte: securityVersion },
-      },
-      select: { id: true },
+    const row = await tx.mailMessage.findUnique({
+      where: { id: message.id },
+      select: { status: true },
     });
-    if (undone !== null) return null;
+    if (row?.status === 'expired') return null;
     const token = await mintAccountToken(tx, {
       userId: user.id,
       purpose: 'email_revert',

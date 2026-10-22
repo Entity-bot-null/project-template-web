@@ -81,4 +81,19 @@ describe('reportableError', () => {
     // The caller's error keeps its chain.
     expect(((wrapped.cause as Error).cause as Error).message).toContain('ada@example.test');
   });
+
+  it('makes the errors of an AggregateError safe too (Sentry reports them as linked errors)', () => {
+    const aggregate = new AggregateError([new Error('first'), validation()], 'Every write failed');
+    const reported = reportableError(aggregate) as AggregateError;
+    expect(reported).not.toBe(aggregate);
+    expect(reported).toBeInstanceOf(AggregateError);
+    expect(reported.message).toBe('Every write failed');
+    const [first, second] = reported.errors as [Error, Error];
+    expect(first).toBe(aggregate.errors[0]);
+    expect(second.name).toBe('PrismaClientValidationError');
+    expect(`${second.message}\n${second.stack ?? ''}`).not.toContain('ada@example.test');
+    // Nothing to replace: the same error.
+    const harmless = new AggregateError([new Error('a')], 'b');
+    expect(reportableError(harmless)).toBe(harmless);
+  });
 });

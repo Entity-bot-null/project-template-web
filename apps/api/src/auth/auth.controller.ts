@@ -27,6 +27,8 @@ import {
   AuthCapabilitiesSchema,
   type AuthSession,
   AuthSessionSchema,
+  type LogoutDto,
+  LogoutSchema,
   type PasswordResetConfirmDto,
   PasswordResetConfirmSchema,
   type PasswordResetRequestDto,
@@ -45,6 +47,7 @@ import {
   hasAmbiguousRefreshCookie,
   refreshTokenOf,
   respondWithSession,
+  setSessionHint,
 } from './session-cookies.js';
 import { SignUpService } from './sign-up.service.js';
 
@@ -119,15 +122,36 @@ export class AuthController {
   // the cookies are cleared. When the database cannot be reached the cookies
   // stay: the family is still live, and the client's retry needs the cookie
   // to end it (a cleared one would make the retry a no-op that reads as done).
+  // A logout that names its sessions touches the cookies only when it ended
+  // one of them: the jar then holds a session started meanwhile, whose hint
+  // the client may have dropped already (it drops it first), so a live one
+  // gets it back.
   @Post('logout')
   @HttpCode(204)
-  @ApiOperation({ summary: 'End the current session family and clear the cookies' })
+  @ApiOperation({
+    summary: 'End the current session family and clear the cookies',
+    description:
+      "Without sessionIds, ends the refresh cookie's session, whichever it is. With them, ends it only when it is one of those sessions (AuthSession.sessionId), and clears the cookies only then; a live session started meanwhile is left alone, with its session hint set again.",
+  })
+  @ZodBody(LogoutSchema, { required: false })
   @ApiResponse({ status: 204, description: 'Signed out' })
-  @ApiErrors(403)
-  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
+  @ApiErrors(400, 403)
+  async logout(
+    @Body() body: LogoutDto | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
     const token = refreshTokenOf(req);
-    if (token !== undefined) await this.auth.logout(token);
-    clearSessionCookies(res);
+    const only = body?.sessionIds;
+    if (only === undefined) {
+      if (token !== undefined) await this.auth.logout(token);
+      clearSessionCookies(res);
+      return;
+    }
+    if (token === undefined) return;
+    const outcome = await this.auth.logout(token, only);
+    if (outcome.retired) clearSessionCookies(res);
+    else if (outcome.liveUntil !== undefined) setSessionHint(res, outcome.liveUntil);
   }
 
   // Public and the same for everyone: the web app shows only what works here.

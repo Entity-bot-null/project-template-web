@@ -134,10 +134,13 @@ built web assets with `apps/web/performance-budget.json`, and the landing's with
 a script added to one fails the check until its budget is raised on purpose) and its CSS budget
 6 kB. Astro writes no processed script into a page (`assetsInlineLimit: 0`: it becomes a file the
 budget counts; an `is:inline` one stays inline), and the same check reads every built page of the
-landing, as a browser parses it, for what the web server's Content-Security-Policy refuses: an
-inline script or event handler, a `<style>` element or a style attribute, a `javascript:` URL, an
-object or an embed, a base or a form pointing elsewhere, a file from another origin (the preview server of the E2E tests sends no CSP, so only this check
-sees them before production). The web app's budget is its measured
+landing, as a browser parses it (comments, raw text elements such as a title, character
+references), for what the web server's Content-Security-Policy refuses: an inline script or event
+handler, a `<style>` element or a style attribute, a `javascript:` URL, an object or an embed, a
+base or a form pointing elsewhere, a file from another origin, and any of these in an iframe's
+`srcdoc`; and every stylesheet of both apps for an `@import` or a `url()` from another origin (a
+web font's stylesheet: self-host it) or a `data:` URL that is not an image (the preview server of
+the E2E tests sends no CSP, so only this check sees them before production). The web app's budget is its measured
 build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
 Vitals chunks 5 kB, the lazy account and admin pages 13 kB, all JavaScript 157 kB, CSS 5 kB). The initial
 JavaScript is what `index.html` loads before the app starts: its entry script and every chunk it

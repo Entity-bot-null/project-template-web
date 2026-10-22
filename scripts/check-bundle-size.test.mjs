@@ -3,7 +3,7 @@
 // carry under the Content-Security-Policy. Run: pnpm test:scripts
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { checkBudgets, cspProblems, initialAssets } from './check-bundle-size.mjs';
+import { checkBudgets, cspProblems, cssProblems, initialAssets } from './check-bundle-size.mjs';
 
 // The shape Vite writes: the entry, a chunk it shares with lazy ones, the CSS.
 const HTML = `<!doctype html>
@@ -210,6 +210,80 @@ describe('cspProblems', () => {
         <input type="image" src="data:image/png;base64,AAAA" alt="Go">
         <picture><source srcset="data:image/webp;base64,AAAA"><img src="data:image/png;base64,AAAA" alt=""></picture>`),
       [],
+    );
+  });
+
+  test('ends comments where a browser does, and reads raw text elements as text', () => {
+    // <!--> and <!---> end at once; --!> ends a comment too.
+    assert.deepEqual(cspProblems('<!--><script>alert(1)</script><!-- end -->'), [
+      'an inline script',
+    ]);
+    assert.deepEqual(cspProblems('<!---><p style="x">a</p>'), ['a style attribute on <p>']);
+    assert.deepEqual(cspProblems('<!-- a --!><p style="x">a</p>'), ['a style attribute on <p>']);
+    // Text a browser does not parse as markup, and what follows it is.
+    assert.deepEqual(
+      cspProblems(
+        '<title>Use the <script> tag</title><textarea><!-- </textarea><p style="x">a</p>',
+      ),
+      ['a style attribute on <p>'],
+    );
+    // A letter that changes length in lower case does not shift what is read.
+    assert.deepEqual(
+      cspProblems(
+        `${'İ'.repeat(12)}<script type="application/ld+json">{}</script><script>x</script>`,
+      ),
+      ['an inline script'],
+    );
+  });
+
+  test('decodes character references as a browser does, and never stops on a bad one', () => {
+    assert.deepEqual(cspProblems('<a title="&#x110000; &#99999999999; &#0;">x</a>'), []);
+    assert.deepEqual(
+      cspProblems(`<a href="java&Tab;script&colon;alert(1)">x</a>
+        <a href="&#x6A;avascript:go()">x</a>
+        <a href="java\nscript:go()">x</a>`),
+      ['a javascript: URL', 'a javascript: URL', 'a javascript: URL'],
+    );
+    // Backslashes read as slashes: another origin.
+    assert.deepEqual(cspProblems('<img src="\\\\cdn.example.net/a.png" alt="">'), [
+      'a file from another origin: \\\\cdn.example.net/a.png',
+    ]);
+  });
+
+  test("finds image candidates of a preload, and what an iframe's srcdoc carries", () => {
+    assert.deepEqual(
+      cspProblems(`<link rel="preload" as="image" imagesrcset="/a.png 1x, https://cdn.example.net/b.png 2x">
+        <iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;"></iframe>`),
+      [
+        'a file from another origin: https://cdn.example.net/b.png',
+        "in an iframe's srcdoc: an inline script",
+      ],
+    );
+  });
+});
+
+describe('cssProblems', () => {
+  test('passes a stylesheet of this origin, with images from data: URLs', () => {
+    assert.deepEqual(
+      cssProblems(`@import "/_astro/base.css";
+        .a { background: url(data:image/svg+xml,%3Csvg%3E) } .b { background: url('/i.png') }
+        /* @import url(https://fonts.example.net/css); */`),
+      [],
+    );
+  });
+
+  test('finds what the policy refuses: other origins, and fonts from data: URLs', () => {
+    assert.deepEqual(
+      cssProblems(`@import url("https://fonts.example.net/css2?family=Inter");
+        @import '//cdn.example.net/x.css';
+        @font-face { src: url(data:font/woff2;base64,AAAA) format("woff2") }
+        .hero { background-image: url( "https://cdn.example.net/hero.jpg" ) }`),
+      [
+        'an @import from another origin: https://fonts.example.net/css2?family=Inter',
+        'an @import from another origin: //cdn.example.net/x.css',
+        'a data: URL that is not an image',
+        'a file from another origin: https://cdn.example.net/hero.jpg',
+      ],
     );
   });
 });

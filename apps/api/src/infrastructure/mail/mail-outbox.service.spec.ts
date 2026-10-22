@@ -6,6 +6,9 @@ import { deriveRecipientKey, recipientHash } from './mail.recipient.js';
 import type { MailOptions } from './mail.types.js';
 import type { MailTemplate, MailTemplates } from './templates/registry.js';
 
+const metrics = vi.hoisted(() => ({ recordMailDelivery: vi.fn(), recordMailSuppressed: vi.fn() }));
+vi.mock('../../observability/metrics.js', () => metrics);
+
 const options: MailOptions = {
   smtpUrl: 'smtp://localhost:1035',
   from: { address: 'no-reply@acme.test' },
@@ -96,6 +99,15 @@ describe('MailOutboxService', () => {
       'securityVersion',
       4,
     ]);
+  });
+
+  it('counts the messages a caller dropped, once its transaction committed', () => {
+    metrics.recordMailDelivery.mockClear();
+    unlimited.recordExpired('email_changed', 2);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(2);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('email_changed', 'expired');
+    unlimited.recordExpired('email_changed', 0);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(2);
   });
 
   it('queues nothing when email is off: no row, no token to deliver later', async () => {

@@ -25,9 +25,24 @@ export const AuthSessionSchema = z.object({
   accessToken: z.string(),
   /** Seconds until the access token expires. */
   expiresIn: z.number().int(),
+  /**
+   * This browser session's id, the same across refreshes. Not a credential: a
+   * logout that names it ends only that session (LogoutSchema).
+   */
+  sessionId: z.uuid(),
   user: AuthUserSchema,
 });
 export type AuthSession = z.infer<typeof AuthSessionSchema>;
+
+// A logout that names the sessions it ends (one the browser started and
+// discarded after a sign-out it raced, a retried sign-out): the refresh
+// cookie's session ends only when it is one of them, so a session started
+// meanwhile is left alone. Without them (or without a body), the cookie's
+// session ends, whichever it is.
+export const LogoutSchema = z.object({
+  sessionIds: z.array(z.uuid()).min(1).max(4).optional(),
+});
+export type LogoutDto = z.infer<typeof LogoutSchema>;
 
 // The claims of the access token: the signer builds exactly this and the
 // guard accepts exactly this, so a new claim changes both at once. sv is the

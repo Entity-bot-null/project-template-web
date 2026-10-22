@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { normalizeEmail } from '../../auth/auth.constants.js';
 import type { MailKind, Prisma } from '../../prisma/generated/client.js';
-import { recordMailSuppressed } from '../../observability/metrics.js';
+import { recordMailDelivery, recordMailSuppressed } from '../../observability/metrics.js';
 import { currentRequestId } from '../../observability/request-context.js';
 import { MAIL_OPTIONS, MAIL_PER_ADDRESS_PER_MINUTE, MAIL_TEMPLATES } from './mail.constants.js';
 import { recipientHash } from './mail.recipient.js';
@@ -117,8 +117,11 @@ export class MailOutboxService {
    * Drops, unsent, the messages of a kind about an account that still wait in
    * the outbox (pending, being sent, failed), whose payload number `key` is at
    * least `from` or missing: what a later change made moot. Inside the
-   * caller's transaction, like enqueue. A message being sent right now cannot
-   * be stopped: its template has to refuse it at render time.
+   * caller's transaction, like enqueue; returns how many, which the caller
+   * reports with recordExpired once it has committed. One being composed at
+   * that moment is refused by its template, which reads its row under the
+   * same lock as the caller's (email-changed.template.ts); one already past
+   * composing goes out, and its worker finds the row changed.
    */
   async expireQueued(
     tx: Prisma.TransactionClient,
@@ -135,6 +138,15 @@ export class MailOutboxService {
         AND CASE WHEN "payload"->>${key} ~ '^[0-9]{1,18}$'
                  THEN ("payload"->>${key})::bigint >= ${from}
                  ELSE true END`;
+  }
+
+  /**
+   * Counts messages a caller dropped with expireQueued, after its transaction
+   * committed (a rolled-back one dropped nothing): the delivery metric then
+   * counts every message once, whoever settled it.
+   */
+  recordExpired(kind: MailKind, count: number): void {
+    for (let i = 0; i < count; i += 1) recordMailDelivery(kind, 'expired');
   }
 
   /**

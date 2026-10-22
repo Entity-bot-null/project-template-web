@@ -7,6 +7,7 @@ import {
   failure,
   ok,
   session,
+  SESSION_ID,
   setSessionHint,
   stubFetch,
 } from '../test/http';
@@ -35,6 +36,14 @@ const LOGOUT = 'POST /api/auth/logout';
 const SIGNED_OUT = { status: 'anonymous', user: null, signedOut: 'done' };
 const routeOf = (request: Request) => `${request.method} ${new URL(request.url).pathname}`;
 const signedOut = () => new Response(null, { status: 204 });
+/** The JSON body a request carried, undefined when it had none. */
+const bodyOf = async (request: Request | undefined): Promise<unknown> => {
+  const text = (await request?.clone().text()) ?? '';
+  return text === '' ? undefined : (JSON.parse(text) as unknown);
+};
+// Sessions (refresh token families) other than the fixtures' SESSION_ID.
+const DISCARDED_ID = '3b1e8d42-6c7a-4f0e-9d25-7a8c1e4b6f30';
+const NEWER_ID = '9e2c4a71-0b3d-4e8f-a6c5-1d7f3b9e2a40';
 // An answer that never comes: like fetch, it gives up only when the request's
 // signal aborts.
 const neverAnswered = (request: Request) =>
@@ -91,7 +100,7 @@ describe('refresh', () => {
   });
 
   it('keeps a session through a server error or a network failure', async () => {
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     stubFetch({ [REFRESH]: () => failure(503, 'Service unavailable') });
     await expect(refresh()).resolves.toBe(false);
     stubFetch({ [REFRESH]: () => Promise.reject(new TypeError('Failed to fetch')) });
@@ -116,7 +125,7 @@ describe('refresh', () => {
   it('never restores a session the user signed out of while it was refreshing', async () => {
     const gate = deferred<Response>();
     const { calls } = stubFetch({ [REFRESH]: () => gate.promise, [LOGOUT]: signedOut });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const refreshed = refresh();
     // The logout does not wait for the rotation: any token of the family ends it.
@@ -131,7 +140,7 @@ describe('refresh', () => {
   it('drops the session hint a rotation set again after the sign-out', async () => {
     const gate = deferred<Response>();
     stubFetch({ [REFRESH]: () => gate.promise, [LOGOUT]: signedOut });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const refreshed = refresh();
     await signOut();
     // The rotation's answer carries the hint again (Set-Cookie).
@@ -184,7 +193,7 @@ describe('refresh', () => {
     stubFetch({
       [REFRESH]: (request) => (attempts++ === 0 ? neverAnswered(request) : session('token-2')),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const stalled = refresh();
     await vi.waitFor(() => {
@@ -308,7 +317,7 @@ describe('boot', () => {
 describe('api middleware', () => {
   it('sends the bearer token outside /api/auth, never on the auth routes', async () => {
     const { calls } = stubFetch({ [ME]: () => ok(member), [REFRESH]: () => session('token-2') });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     await api.GET('/api/users/me');
     await api.POST('/api/auth/refresh');
@@ -322,7 +331,7 @@ describe('api middleware', () => {
       [ME]: () => (meCalls++ === 0 ? failure(401, 'expired') : ok(member)),
       [REFRESH]: () => session('token-2'),
     });
-    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+    setSession({ accessToken: 'stale', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const { data, response } = await api.GET('/api/users/me');
     expect(response.status).toBe(200);
@@ -336,7 +345,7 @@ describe('api middleware', () => {
       [ME]: () => failure(401, 'expired'),
       [REFRESH]: () => session('token-2'),
     });
-    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+    setSession({ accessToken: 'stale', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const { response } = await api.GET('/api/users/me');
     expect(response.status).toBe(401);
@@ -351,12 +360,12 @@ describe('api middleware', () => {
         if (meCalls++ === 0) return failure(401, 'expired');
         // A password change answered while the replay was on its way: the
         // replay's token is now stale, this tab's session is not.
-        setSession({ accessToken: 'token-3', expiresIn: 900, user: member });
+        setSession({ accessToken: 'token-3', expiresIn: 900, sessionId: SESSION_ID, user: member });
         return failure(401, 'expired');
       },
       [REFRESH]: () => session('token-2'),
     });
-    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+    setSession({ accessToken: 'stale', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const { response } = await api.GET('/api/users/me');
     expect(response.status).toBe(401);
@@ -369,7 +378,7 @@ describe('api middleware', () => {
       [ME]: () => failure(401, 'expired'),
       [REFRESH]: () => failure(401, 'Invalid session'),
     });
-    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+    setSession({ accessToken: 'stale', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     await api.GET('/api/users/me');
     // The request, the refresh and its one retry; no replay.
@@ -391,11 +400,11 @@ describe('api middleware', () => {
       [ME]: () => {
         if (meCalls++ > 0) return ok(member);
         // Another request refreshed while this one was on its way.
-        setSession({ accessToken: 'token-2', expiresIn: 900, user: member });
+        setSession({ accessToken: 'token-2', expiresIn: 900, sessionId: SESSION_ID, user: member });
         return failure(401, 'expired');
       },
     });
-    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+    setSession({ accessToken: 'stale', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const { response } = await api.GET('/api/users/me');
     expect(response.status).toBe(200);
@@ -407,11 +416,11 @@ describe('api middleware', () => {
     const { calls } = stubFetch({
       [ME]: () => {
         // Another tab signed in as someone else meanwhile.
-        setSession({ accessToken: 'token-2', expiresIn: 900, user: admin });
+        setSession({ accessToken: 'token-2', expiresIn: 900, sessionId: SESSION_ID, user: admin });
         return failure(401, 'expired');
       },
     });
-    setSession({ accessToken: 'stale', expiresIn: 900, user: member });
+    setSession({ accessToken: 'stale', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const { response } = await api.GET('/api/users/me');
     expect(response.status).toBe(401);
@@ -434,7 +443,7 @@ describe('signIn and signOut', () => {
   it('forgets the session at once, before the server answers the logout', async () => {
     const gate = deferred<Response>();
     const { calls } = stubFetch({ [LOGOUT]: () => gate.promise });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const done = signOut();
     expect(getState()).toEqual(SIGNED_OUT);
@@ -448,7 +457,7 @@ describe('signIn and signOut', () => {
   it('drops the session hint at once, before the server answers', async () => {
     const gate = deferred<Response>();
     stubFetch({ [LOGOUT]: () => gate.promise });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const done = signOut();
     // A page closed now leaves nothing for the next visit to restore.
     expect(document.cookie).not.toContain('has_session');
@@ -458,7 +467,7 @@ describe('signIn and signOut', () => {
 
   it('says so when the server could not end the session, and retries', async () => {
     stubFetch({ [LOGOUT]: () => Promise.reject(new TypeError('Failed to fetch')) });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     await expect(signOut()).resolves.toBe(false);
     expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
@@ -477,7 +486,7 @@ describe('signIn and signOut', () => {
       [LOGOUT]: signedOut,
       [SIGN_IN]: () => session('token-3'),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     void refresh();
     void signOut();
@@ -495,7 +504,7 @@ describe('signIn and signOut', () => {
   it('holds a sign-in until a logout still on its way has landed', async () => {
     const gate = deferred<Response>();
     const { calls } = stubFetch({ [LOGOUT]: () => gate.promise, [SIGN_IN]: () => session('t') });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 
     const out = signOut();
     const back = signIn(member.email, 'right');
@@ -514,7 +523,7 @@ describe('signIn and signOut', () => {
   // cookies: landing after the sign-in, it would delete the new one.
   async function afterAFailedSignOut() {
     stubFetch({ [LOGOUT]: () => Promise.reject(new TypeError('Failed to fetch')) });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     await expect(signOut()).resolves.toBe(false);
   }
 
@@ -594,7 +603,7 @@ describe('signIn and signOut', () => {
   });
 
   it("sends a logout only after another tab's sign-in let go of its lock", async () => {
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const locks = exclusiveLocks();
     const otherTab = deferred<undefined>();
     void locks.request('auth-sign-in', () => otherTab.promise);
@@ -614,7 +623,7 @@ describe('signIn and signOut', () => {
     exclusiveLocks();
     const gate = deferred<Response>();
     const { calls } = stubFetch({ [REFRESH]: () => gate.promise, [LOGOUT]: signedOut });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     // Holds the refresh lock until it answers.
     const refreshed = refresh();
     await expect.poll(() => calls.length).toBe(1);
@@ -656,26 +665,103 @@ describe('signIn and signOut', () => {
       [SIGN_IN]: () => second.promise,
       [LOGOUT]: signedOut,
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const changed = changePassword('old password', 'violet harbour lantern 7');
     await expect.poll(() => calls.length).toBe(1);
     await signOut();
     // Signed back in: on its way, holding both locks.
     const signedIn = signIn(member.email, 'right');
     await expect.poll(() => calls.map(routeOf)).toContain(SIGN_IN);
-    change.resolve(session('token-change'));
+    change.resolve(session('token-change', member, DISCARDED_ID));
     await changed;
     // The sign-in's answer sets its cookie and the hint, after the change's.
     setSessionHint();
-    second.resolve(session('token-D'));
+    second.resolve(session('token-D', member, NEWER_ID));
     await signedIn;
-    await new Promise((resolve) => setTimeout(resolve, 20));
 
+    await expect
+      .poll(() => calls.map(routeOf))
+      .toEqual(['POST /api/account/password', LOGOUT, SIGN_IN, LOGOUT]);
     expect(getAccessToken()).toBe('token-D');
     expect(getState()).toEqual({ status: 'authenticated', user: member });
-    // No logout after it: it would carry the new session's cookie.
-    const routes = calls.map(routeOf);
-    expect(routes.slice(routes.lastIndexOf(SIGN_IN) + 1)).toEqual([]);
+    // The logout after it carries the new session's cookie: it names the
+    // sessions it ends, which the server leaves the new one out of.
+    await expect(bodyOf(calls[3])).resolves.toEqual({ sessionIds: [DISCARDED_ID, SESSION_ID] });
+    await expect(bodyOf(calls[1])).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['another tab rotated it after the first logout cleared the jar', true],
+    ["another tab's sign-in dropped its hint", false],
+  ])(
+    'names the discarded session and the signed-out one in its logout, whatever the hint says: %s',
+    async (_label, hint) => {
+      exclusiveLocks();
+      const change = deferred<Response>();
+      const firstLogout = deferred<Response>();
+      let logouts = 0;
+      const { calls } = stubFetch({
+        'POST /api/account/password': () => change.promise,
+        [LOGOUT]: () => (logouts++ === 0 ? firstLogout.promise : signedOut()),
+      });
+      setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+      const changed = changePassword('old password', 'violet harbour lantern 7');
+      await expect.poll(() => calls.length).toBe(1);
+      void signOut();
+      await expect.poll(() => calls.map(routeOf)).toEqual(['POST /api/account/password', LOGOUT]);
+      change.resolve(session('token-P', member, DISCARDED_ID));
+      await changed;
+      if (hint) setSessionHint();
+      else clearSessionHint();
+      firstLogout.resolve(signedOut());
+
+      // Sent behind the first logout, whatever the jar holds by then: the
+      // server ends the cookie's session only if it is one of these (a
+      // rotated P is), and leaves a newer one alone.
+      await expect
+        .poll(() => calls.map(routeOf))
+        .toEqual(['POST /api/account/password', LOGOUT, LOGOUT]);
+      await expect(bodyOf(calls[2])).resolves.toEqual({
+        sessionIds: [DISCARDED_ID, SESSION_ID],
+      });
+      expect(calls[2]?.keepalive).toBe(true);
+      expect(getState()).toEqual(SIGNED_OUT);
+    },
+  );
+
+  it('ends a discarded session the previous release answered with (no id) like that release did', async () => {
+    const change = deferred<Response>();
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [LOGOUT]: signedOut,
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    await signOut();
+    change.resolve(ok({ accessToken: 'token-old-release', expiresIn: 900, user: member }));
+    await changed;
+    await expect
+      .poll(() => calls.map(routeOf))
+      .toEqual(['POST /api/account/password', LOGOUT, LOGOUT]);
+    // The cookie's session, whichever it is.
+    await expect(bodyOf(calls[2])).resolves.toBeUndefined();
+  });
+
+  it('names the session the sign-out ended when it retries: a newer sign-in in another tab stands', async () => {
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    let attempts = 0;
+    const { calls } = stubFetch({
+      [LOGOUT]: () =>
+        attempts++ === 0 ? Promise.reject(new TypeError('Failed to fetch')) : signedOut(),
+    });
+    await expect(signOut()).resolves.toBe(false);
+    expect(getState()).toEqual({ status: 'anonymous', user: null, signedOut: 'failed' });
+    await expect(retrySignOut()).resolves.toBe(true);
+    expect(getState()).toEqual(SIGNED_OUT);
+    // The sign-out: the cookie's session, whichever. The retry: that one only.
+    await expect(bodyOf(calls[0])).resolves.toBeUndefined();
+    await expect(bodyOf(calls[1])).resolves.toEqual({ sessionIds: [SESSION_ID] });
   });
 
   it('gives up on a sign-in or a logout that does not answer in time, freeing the locks', async () => {
@@ -695,7 +781,7 @@ describe('signIn and signOut', () => {
     signInDeadline.abort(new DOMException('The operation timed out.', 'TimeoutError'));
     await expect(signedIn).resolves.toMatchObject({ ok: false, failure: { status: 0 } });
 
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const loggedOut = signOut();
     await vi.waitFor(() => {
       expect(timeout).toHaveBeenCalledTimes(2);
@@ -728,12 +814,13 @@ describe('other tabs', () => {
     await signIn(member.email, 'right');
     await signOut();
     await vi.waitFor(() => {
-      expect(heard).toEqual(['signed-in', 'signed-out']);
+      // The new session's id goes with the sign-in, for the others' logouts.
+      expect(heard).toEqual(['signed-in', { session: SESSION_ID }, 'signed-out']);
     });
   });
 
   it('sign this tab out when one of them signs out', async () => {
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     otherTab.postMessage('signed-out');
     await vi.waitFor(() => {
       expect(getState()).toEqual(SIGNED_OUT);
@@ -776,10 +863,13 @@ describe('other tabs', () => {
     await expect.poll(() => calls.map(routeOf)).toEqual([SIGN_IN, LOGOUT]);
   });
 
-  it('leave the session hint alone when a sign-in followed the sign-out a late rotation raced', async () => {
+  it('leave the session hint alone when a sign-in followed the sign-out a late rotation raced, and pick that sign-in up', async () => {
     clearSession();
     const gate = deferred<Response>();
-    stubFetch({ [REFRESH]: () => gate.promise });
+    let refreshes = 0;
+    const { calls } = stubFetch({
+      [REFRESH]: () => (refreshes++ === 0 ? gate.promise : session('token-new', member, NEWER_ID)),
+    });
     const refreshed = refresh();
     otherTab.postMessage('signed-out');
     otherTab.postMessage('signed-in');
@@ -789,6 +879,58 @@ describe('other tabs', () => {
     gate.resolve(session('token-of-the-new-session'));
     await refreshed;
     expect(document.cookie).toContain('has_session');
+    // Its answer is dropped (it started before the sign-out): the sign-in is
+    // picked up by a refresh of its own.
+    await vi.waitFor(() => {
+      expect(getState()).toEqual({ status: 'authenticated', user: member });
+    });
+    expect(getAccessToken()).toBe('token-new');
+    expect(calls.map(routeOf)).toEqual([REFRESH, REFRESH]);
+  });
+
+  it('drop the session hint when the sign-in a late rotation heard of came before the sign-out', async () => {
+    clearSession();
+    const gate = deferred<Response>();
+    const { calls } = stubFetch({ [REFRESH]: () => gate.promise });
+    const refreshed = refresh();
+    otherTab.postMessage('signed-in');
+    otherTab.postMessage('signed-out');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    setSessionHint();
+    gate.resolve(session('token-of-the-ended-session'));
+    await refreshed;
+    // The logout ends the session that rotation renewed: nothing to keep.
+    expect(document.cookie).not.toContain('has_session');
+    expect(calls.map(routeOf)).toEqual([REFRESH]);
+    expect(getState().status).toBe('anonymous');
+  });
+
+  it('keep naming the session a failed sign-out ended when another tab signs out meanwhile', async () => {
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    let attempts = 0;
+    const { calls } = stubFetch({
+      [LOGOUT]: () =>
+        attempts++ === 0 ? Promise.reject(new TypeError('Failed to fetch')) : signedOut(),
+    });
+    await expect(signOut()).resolves.toBe(false);
+    otherTab.postMessage('signed-out');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(retrySignOut()).resolves.toBe(true);
+    await expect(bodyOf(calls[1])).resolves.toEqual({ sessionIds: [SESSION_ID] });
+  });
+
+  it("learn the browser's session from another tab, and name it when retrying a sign-out", async () => {
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
+    otherTab.postMessage({ session: NEWER_ID });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    let attempts = 0;
+    const { calls } = stubFetch({
+      [LOGOUT]: () =>
+        attempts++ === 0 ? Promise.reject(new TypeError('Failed to fetch')) : signedOut(),
+    });
+    await expect(signOut()).resolves.toBe(false);
+    await expect(retrySignOut()).resolves.toBe(true);
+    await expect(bodyOf(calls[1])).resolves.toEqual({ sessionIds: [NEWER_ID] });
   });
 
   it('share a sign-in with an anonymous tab', async () => {
@@ -825,7 +967,7 @@ describe('changePassword', () => {
       [REFRESH]: () => rotation.promise,
       [CHANGE]: () => session('token-3'),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const renewed = refresh();
     const changed = changePassword('old password', 'violet harbour lantern 7');
     await Promise.resolve();
@@ -846,7 +988,7 @@ describe('changePassword', () => {
     const change = deferred<Response>();
     const late = deferred<Response>();
     const { calls } = stubFetch({ [CHANGE]: () => change.promise, [REFRESH]: () => late.promise });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const changed = changePassword('old password', 'violet harbour lantern 7');
     await expect.poll(() => calls.length).toBe(1);
     const renewed = refresh();
@@ -860,7 +1002,7 @@ describe('changePassword', () => {
   it('keeps a sign-out made while the change was on its way, and ends the session it answered with', async () => {
     const change = deferred<Response>();
     const { calls } = stubFetch({ [CHANGE]: () => change.promise, [LOGOUT]: signedOut });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const changed = changePassword('old password', 'violet harbour lantern 7');
     await expect.poll(() => calls.length).toBe(1);
     // "Sign out" stays enabled while the password is being hashed.
@@ -878,7 +1020,7 @@ describe('changePassword', () => {
   });
 
   it('keeps the session on a refusal, and never stores an answer that is not a session', async () => {
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     stubFetch({ [CHANGE]: () => failure(403, 'The current password is wrong') });
     const refused = await changePassword('wrong', 'violet harbour lantern 7');
     expect(refused).toEqual({
@@ -903,7 +1045,7 @@ describe('confirmSignUp', () => {
       [REFRESH]: () => rotation.promise,
       [CONFIRM]: () => session('token-new', admin),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const renewed = refresh();
     const confirmed = confirmSignUp('t'.repeat(43), 'violet harbour lantern 7');
     await Promise.resolve();

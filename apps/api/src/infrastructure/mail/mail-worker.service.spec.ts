@@ -387,11 +387,38 @@ describe('MailWorker', () => {
     }
   });
 
-  it('warns when its lease ran out before it recorded a delivery (another worker may resend)', async () => {
+  it('warns when the row changed before it recorded a delivery (taken over, or dropped)', async () => {
     const context = tracked(setup({ queue: [message()] }));
     context.store.markSent.mockResolvedValueOnce(false);
     await started(context);
-    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('lease had run out'));
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its row changed meanwhile'));
+    // It did go out.
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'sent', expect.any(Number));
+  });
+
+  it('counts no outcome the row refused: an undo dropped it, or another worker took it over', async () => {
+    const dropped = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
+    dropped.store.markExpired.mockResolvedValueOnce(false);
+    await started(dropped);
+    expect(dropped.store.markExpired).toHaveBeenCalledWith(expect.anything(), 'not_applicable');
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its row changed meanwhile'));
+
+    const retried = tracked(
+      setup({ queue: [message()], compose: () => Promise.reject(new Error('db down')) }),
+    );
+    retried.store.reschedule.mockResolvedValueOnce(false);
+    await started(retried);
+    expect(retried.store.reschedule).toHaveBeenCalled();
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).not.toHaveBeenCalledWith(expect.stringContaining('retrying in'));
+
+    const failed = tracked(setup({ queue: [message({ attempts: 4 })] }));
+    failed.store.markFailed.mockResolvedValueOnce(false);
+    await started(failed);
+    expect(failed.store.markFailed).toHaveBeenCalledWith(expect.anything(), 'attempts_exhausted');
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.error).not.toHaveBeenCalledWith(expect.stringContaining('Gave up on'));
   });
 
   it('reads as degraded while the oldest waiting message is older than 15 minutes', async () => {

@@ -21,7 +21,11 @@ const SIGNED_OUT: AuthState = { status: 'anonymous', user: null, signedOut: 'don
 let accessToken: string | null = null;
 let state: AuthState = LOADING;
 let refreshInFlight: Promise<boolean> | null = null;
+// The epoch the refresh in flight started in.
+let refreshEpoch = 0;
 let logoutInFlight: Promise<boolean> | null = null;
+// Logouts of sessions this tab started and discarded (endDiscardedSession).
+const discardsInFlight = new Set<Promise<unknown>>();
 let signInInFlight: Promise<ApiResult<AuthSession>> | null = null;
 let booted = false;
 // Bumped by every sign-in and sign-out: a refresh already running when one
@@ -29,8 +33,16 @@ let booted = false;
 let epoch = 0;
 // Bumped by every session started, in this tab or (told) in another: a
 // rotation that lands after a sign-out leaves the hint alone when a sign-in
-// followed it, since the hint is that sign-in's.
+// followed the sign-out, since the hint is that sign-in's.
 let sessionsStarted = 0;
+let sessionsAtSignOut = 0;
+// The session the browser's refresh cookie holds, as far as this tab knows
+// (AuthSession.sessionId, the same across refreshes): its own, or one another
+// tab started and told about. A sign-out remembers it: a retried logout, and
+// the logout of a session discarded after the sign-out, name it, so they end
+// that session and never a newer one.
+let browserSession: string | null = null;
+let signedOutSession: string | null = null;
 const listeners = new Set<() => void>();
 
 function emit(next: AuthState): void {
@@ -60,7 +72,14 @@ export function subscribe(listener: () => void): () => void {
 /** Stores a session answered by sign-in or refresh. */
 export function setSession(session: AuthSession): void {
   accessToken = session.accessToken;
+  browserSession = sessionIdOf(session);
   emit({ status: 'authenticated', user: session.user });
+}
+
+// An answer from the previous release, during a deployment, names no session.
+function sessionIdOf(session: AuthSession): string | null {
+  const id: unknown = session.sessionId;
+  return typeof id === 'string' ? id : null;
 }
 
 /** Forgets the session locally; the cookie is the server's business. */
@@ -76,9 +95,12 @@ export function clearSession(): void {
  * could not answer.
  */
 export function refresh(): Promise<boolean> {
-  refreshInFlight ??= doRefresh().finally(() => {
-    refreshInFlight = null;
-  });
+  if (refreshInFlight === null) {
+    refreshEpoch = epoch;
+    refreshInFlight = doRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
   return refreshInFlight;
 }
 
@@ -92,7 +114,6 @@ export function refresh(): Promise<boolean> {
 // at boot, which has to settle somewhere.
 async function doRefresh(): Promise<boolean> {
   const started = epoch;
-  const startedSessions = sessionsStarted;
   let result = await refreshOnce();
   if (!result.ok && result.failure.status === 401 && epoch === started) {
     result = await refreshOnce();
@@ -117,7 +138,7 @@ async function doRefresh(): Promise<boolean> {
   // for a session the logout ends: dropped, so no page load tries it, unless
   // a sign-in followed the sign-out (the hint is then the new session's).
   if (epoch !== started) {
-    if (result.ok && state.status === 'anonymous' && sessionsStarted === startedSessions) {
+    if (result.ok && state.status === 'anonymous' && sessionsStarted === sessionsAtSignOut) {
       expireSessionHint();
     }
     return state.status === 'authenticated';
@@ -310,7 +331,7 @@ async function sendStartingSession(
 ): Promise<ApiResult<AuthSession>> {
   // A logout or a rotation still on its way would overwrite the cookie this
   // sign-in sets: the logout clears it, a late rotation replaces it.
-  if (logoutInFlight) await logoutInFlight;
+  await logoutsSettled();
   if (refreshInFlight) await refreshInFlight;
   // Read once both locks are held: a sign-out that came before this request
   // left is not one it raced.
@@ -334,13 +355,14 @@ async function sendStartingSession(
     // Another tab signed out while this request was on its way: the sign-out
     // stands. The server did what was asked (an account may exist now), so
     // the answer is returned, but its session is not kept and ends there too.
-    void endSessionStartedAfterSignOut();
+    endDiscardedSession(result.data);
     return result;
   }
   epoch += 1;
   sessionsStarted += 1;
   setSession(result.data);
   tellOtherTabs('signed-in');
+  tellSession();
   return result;
 }
 
@@ -367,7 +389,7 @@ export async function changePassword(
   currentPassword: string,
   newPassword: string,
 ): Promise<ApiResult<AuthSession>> {
-  if (logoutInFlight) await logoutInFlight;
+  await logoutsSettled();
   if (refreshInFlight) await refreshInFlight;
   const started = epoch;
   const result = await call(
@@ -379,12 +401,15 @@ export async function changePassword(
   if (!result.ok) return result;
   if (epoch !== started) {
     // The password did change; the session this browser was given ends.
-    void endSessionStartedAfterSignOut();
+    endDiscardedSession(result.data);
     return result;
   }
   epoch += 1;
   sessionsStarted += 1;
   setSession(result.data);
+  // A new session (the change ended every other one): the other tabs learn
+  // its id, and pick it up when their access token is refused.
+  tellSession();
   return result;
 }
 
@@ -396,11 +421,20 @@ export async function changePassword(
 export function signOut(): Promise<boolean> {
   epoch += 1;
   accessToken = null;
+  noteSignOut();
   // First, so a page closed right now leaves nothing the next visit restores.
   expireSessionHint();
   emit(SIGNED_OUT);
   tellOtherTabs('signed-out');
   return endServerSession();
+}
+
+// A tab that knew no session by then (signed out already) keeps the one its
+// own sign-out ended: its retry still names it.
+function noteSignOut(): void {
+  signedOutSession = browserSession ?? signedOutSession;
+  browserSession = null;
+  sessionsAtSignOut = sessionsStarted;
 }
 
 /**
@@ -409,14 +443,16 @@ export function signOut(): Promise<boolean> {
  * answer by clearing the cookies, the new one included if it landed after the
  * sign-in. A sign-in that succeeds has ended the old session itself (the
  * server retires the family of the cookie it presents); only a failed one
- * leaves the logout to do.
+ * leaves the logout to do. The retry names the session the sign-out ended:
+ * another tab's sign-in queued ahead of it (Web Locks) set a newer cookie,
+ * which it leaves alone.
  */
 export async function retrySignOut(): Promise<boolean> {
   if (signInInFlight) {
     await signInInFlight;
     if (state.status === 'authenticated') return true;
   }
-  return endServerSession();
+  return endServerSession(signedOutSession);
 }
 
 // The logout leaves at once, with keepalive so closing the page does not
@@ -424,19 +460,11 @@ export async function retrySignOut(): Promise<boolean> {
 // rotated or not, ends the whole family), only for another tab's sign-in on
 // its way (SIGN_IN_LOCK): a sign-in that succeeds ends the session it
 // replaces, so a page closed meanwhile loses nothing then; one that fails
-// leaves it to this logout, or to a retry. `needed`, read once the lock is
-// held, can call it off.
-function endServerSession(needed: () => boolean = () => true): Promise<boolean> {
-  logoutInFlight ??= withLock(SIGN_IN_LOCK, () =>
-    needed()
-      ? call(
-          api.POST('/api/auth/logout', {
-            keepalive: true,
-            signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
-          }),
-        )
-      : Promise.resolve({ ok: true as const, data: null }),
-  )
+// leaves it to this logout, or to a retry. A sign-out ends the cookie's
+// session, whichever it is (a tab may not know another's newer one); a retry
+// names the one the sign-out ended (`only`), when known.
+function endServerSession(only: string | null = null): Promise<boolean> {
+  logoutInFlight ??= withLock(SIGN_IN_LOCK, () => sendLogout(only === null ? [] : [only]))
     .then(({ ok }) => {
       if (state.status === 'anonymous') {
         emit(ok ? SIGNED_OUT : { status: 'anonymous', user: null, signedOut: 'failed' });
@@ -449,30 +477,64 @@ function endServerSession(needed: () => boolean = () => true): Promise<boolean> 
   return logoutInFlight;
 }
 
+function sendLogout(sessionIds: readonly string[]): Promise<ApiResult<unknown>> {
+  return call(
+    api.POST('/api/auth/logout', {
+      ...(sessionIds.length > 0 && { body: { sessionIds: [...new Set(sessionIds)] } }),
+      keepalive: true,
+      signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
+    }),
+  );
+}
+
 // An answer that started a session, and set its cookie, after a sign-out it
-// raced: that session ends on the server too, once a logout still on its way
-// (it may have carried the previous cookie) has answered, unless a newer
-// session's cookie replaced its own meanwhile. The hint goes first, for a page
-// closed meanwhile.
-async function endSessionStartedAfterSignOut(): Promise<void> {
+// raced: that session is not kept, and ends on the server by a logout that
+// names it (and the session the sign-out ended). Whatever else the jar holds
+// by then, a session another tab started meanwhile, is left alone, and the
+// server sets its hint back. The hint goes first, for a page closed
+// meanwhile. Under SIGN_IN_LOCK, behind the sign-out's own logout: its answer
+// clears the cookies, and no other tab's sign-in lands while it is on its way.
+function endDiscardedSession(discarded: AuthSession): void {
   expireSessionHint();
+  const id = sessionIdOf(discarded);
+  // An answer from the previous release names no session: the logout ends
+  // the cookie's, as that release did.
+  const named = id === null ? [] : [id, ...(signedOutSession === null ? [] : [signedOutSession])];
+  const ending: Promise<unknown> = withLock(SIGN_IN_LOCK, () => sendLogout(named)).finally(() => {
+    discardsInFlight.delete(ending);
+  });
+  discardsInFlight.add(ending);
+}
+
+// A sign-in or a password change waits for every logout on its way: answered
+// after it, a logout would clear the new session's cookie. With Web Locks the
+// sign-in's lock already orders them; without, this does, in this tab.
+async function logoutsSettled(): Promise<void> {
   if (logoutInFlight) await logoutInFlight;
-  // Checked once the lock is held: a sign-in answered meanwhile (this tab's,
-  // or another's: it held the same lock) set the hint again, with a cookie
-  // that replaced the discarded session's in the jar. That one is out of
-  // reach, and the newer session must stand.
-  await endServerSession(() => !hasSessionHint());
+  if (discardsInFlight.size > 0) await Promise.all(discardsInFlight);
 }
 
 // Tabs share the cookies but not this memory. A sign-out signs the other tabs
 // out at once (they still hold an access token); a sign-in lets the anonymous
 // ones pick the new session up with a refresh.
-type TabMessage = 'signed-in' | 'signed-out';
+// `{ session }` names the browser's new session for the others' logouts (a
+// tab of the previous release ignores it, and reads 'signed-in' as before).
+type TabMessage = 'signed-in' | 'signed-out' | { session: string };
 const tabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('auth') : null;
 
 function tellOtherTabs(message: TabMessage): void {
   tabs?.postMessage(message);
 }
+
+function tellSession(): void {
+  if (browserSession !== null) tellOtherTabs({ session: browserSession });
+}
+
+const isSessionMessage = (data: unknown): data is { session: string } =>
+  typeof data === 'object' &&
+  data !== null &&
+  'session' in data &&
+  typeof data.session === 'string';
 
 tabs?.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
   if (data === 'signed-out') {
@@ -480,12 +542,23 @@ tabs?.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
     // up the sign-in that just ended, and that refresh must not land.
     epoch += 1;
     accessToken = null;
+    noteSignOut();
     if (state.status !== 'anonymous') emit(SIGNED_OUT);
   } else if (data === 'signed-in') {
     sessionsStarted += 1;
-    if (state.status !== 'authenticated') void refresh();
+    if (state.status !== 'authenticated') void pickUpSignIn();
+  } else if (isSessionMessage(data)) {
+    browserSession = data.session;
   }
 });
+
+// A refresh still on its way from before a sign-out has its answer dropped
+// when it lands (the epoch moved on): the sign-in another tab just made is
+// picked up by a refresh of its own, after it, rather than by joining it.
+async function pickUpSignIn(): Promise<void> {
+  if (refreshInFlight !== null && refreshEpoch !== epoch) await refreshInFlight;
+  if (state.status !== 'authenticated') await refresh();
+}
 
 /** Test seam: back to a fresh page load. */
 export function resetForTests(): void {
@@ -493,7 +566,11 @@ export function resetForTests(): void {
   state = LOADING;
   refreshInFlight = null;
   logoutInFlight = null;
+  discardsInFlight.clear();
   signInInFlight = null;
+  browserSession = null;
+  signedOutSession = null;
+  sessionsAtSignOut = sessionsStarted;
   booted = false;
   listeners.clear();
 }

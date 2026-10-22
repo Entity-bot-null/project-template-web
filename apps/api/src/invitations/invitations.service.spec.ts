@@ -110,7 +110,12 @@ function setup({
     }),
     notifyQueued: vi.fn(),
   };
-  const refresh = { token: 'refresh', expiresAt: new Date(NOW + 1000), securityVersion: 0 };
+  const refresh = {
+    token: 'refresh',
+    expiresAt: new Date(NOW + 1000),
+    familyId: 'family-1',
+    securityVersion: 0,
+  };
   const sessions = {
     create: vi.fn(() => {
       calls.push('start session');
@@ -118,7 +123,7 @@ function setup({
     }),
     retire: vi.fn(() => {
       calls.push('end previous session');
-      return Promise.resolve();
+      return Promise.resolve({ retired: true });
     }),
   };
   const auth = { sessionFor: vi.fn(() => Promise.resolve({ accessToken: 'access' })) };

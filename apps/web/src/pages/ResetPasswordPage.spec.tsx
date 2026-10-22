@@ -8,6 +8,7 @@ import {
   deferred,
   failure,
   session,
+  SESSION_ID,
   setSessionHint,
   stubFetch,
 } from '../test/http';
@@ -25,6 +26,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetForTests();
+  // Set by the test of a tab still booting: gone even when it fails.
+  clearSessionHint();
 });
 
 async function choose(password: string) {
@@ -126,7 +129,7 @@ describe('ResetPasswordPage', () => {
       [CONFIRM]: done,
       'POST /api/auth/logout': () => new Response(null, { status: 204 }),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     renderRoute(LINK);
     await choose(GOOD);
     await screen.findByRole('heading', { name: 'Password changed' });
@@ -163,7 +166,7 @@ describe('ResetPasswordPage', () => {
     await choose(GOOD);
     // Signed in after the click, before the answer.
     act(() => {
-      setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+      setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     });
     answer.resolve(done());
     await screen.findByRole('heading', { name: 'Password changed' });
@@ -193,7 +196,6 @@ describe('ResetPasswordPage', () => {
     refreshed.resolve(session('token-1'));
     await expect(booting).resolves.toBe(false);
     expect(getState().status).toBe('anonymous');
-    clearSessionHint();
   });
 
   it('moves the focus to the field with the problem, and to the heading of a new view', async () => {

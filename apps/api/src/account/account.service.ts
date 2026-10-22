@@ -88,6 +88,6 @@ export class AccountService {
 
     const refresh = await this.sessions.create(user.id, passwordHash);
     const { passwordHash: _hash, ...authUser } = user;
-    return { session: await this.auth.sessionFor(authUser, refresh.securityVersion), refresh };
+    return { session: await this.auth.sessionFor(authUser, refresh), refresh };
   }
 }

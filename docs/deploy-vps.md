@@ -115,7 +115,7 @@ in files on the server, readable by the deploy user only.
 | `backup.env`           | `PGPASSWORD`, the backup role's (`db` profile)                                                                                                                  | no (server only) |
 | `release.env`          | the digests and release running now (written by `deploy.sh`)                                                                                                    | no (server only) |
 | `release.previous.env` | the release before it                                                                                                                                           | no (server only) |
-| `release.redeployed`   | present when the last deployment redeployed the running release: `rollback.sh` then refuses, unless `--previous`                                                | no (server only) |
+| `release.redeployed`   | present when the last successful deployment redeployed the running release: `rollback.sh` then refuses, unless `--previous`                                     | no (server only) |
 | `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                                                                                               | no (server only) |
 
 Why `realip.conf`: the web image replaces `X-Forwarded-For` with the address that connected to it

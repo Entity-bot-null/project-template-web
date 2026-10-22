@@ -713,6 +713,9 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
   A script that becomes necessary must reach the page as a file of this origin, never inline (the
   Content-Security-Policy refuses inline scripts; `pnpm perf:check` reads the built pages for
   them), and its budget is raised in the same reviewed pull request.
+- **A font.** Self-hosted, in `public/` or imported by the stylesheet as a file: the policy refuses
+  a font, or a font's stylesheet, from another site (Google Fonts' `@import` included), and a font
+  inlined as a `data:` URL; `pnpm perf:check` reads the stylesheets for them.
 
 Check: `pnpm --filter landing test`, `pnpm verify` (its `perf:check` reads the built pages),
 `pnpm test:scripts` (the web server's routes for each language) and `pnpm build && pnpm test:e2e`

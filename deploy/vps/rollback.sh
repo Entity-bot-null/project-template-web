@@ -17,11 +17,6 @@ set -eu
 
 cd "$(dirname "$0")"
 
-if [ ! -f release.previous.env ]; then
-  echo "rollback: no previous release recorded (release.previous.env)" >&2
-  exit 1
-fi
-
 # The lock of deploy.sh: never two of them at once on this server.
 exec 9> .deploy.lock
 if ! flock -n 9; then
@@ -29,7 +24,11 @@ if ! flock -n 9; then
   exit 1
 fi
 
-# Read under the lock: a deployment running meanwhile may change it.
+# Read under the lock: a deployment running meanwhile may change them.
+if [ ! -f release.previous.env ]; then
+  echo "rollback: no previous release recorded (release.previous.env)" >&2
+  exit 1
+fi
 if [ -f release.redeployed ] && [ "${1:-}" != "--previous" ]; then
   running=$(grep '^APP_RELEASE=' release.env | cut -d= -f2)
   previous=$(grep '^APP_RELEASE=' release.previous.env | cut -d= -f2)

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { resetCapabilitiesForTests } from '../auth/capabilities';
 import { resetForTests, setSession } from '../auth/session';
 import { admin } from '../test/fixtures';
-import { deferred, ok, stubFetch } from '../test/http';
+import { deferred, ok, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 import { initSentry } from './sentry';
 
@@ -24,7 +24,7 @@ const pending = {
 beforeEach(() => {
   resetForTests();
   resetCapabilitiesForTests();
-  setSession({ accessToken: 'admin-token', expiresIn: 900, user: admin });
+  setSession({ accessToken: 'admin-token', expiresIn: 900, sessionId: SESSION_ID, user: admin });
 });
 afterEach(async () => {
   resetForTests();

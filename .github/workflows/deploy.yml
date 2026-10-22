@@ -142,7 +142,11 @@ jobs:
         id: recorded
         env:
           RECORDS: ${{ needs.resolve.outputs.records }}
-        run: echo "run-id=$(jq -r --arg image "$IMAGE_NAME" '.[$image] // empty' <<< "$RECORDS")" >> "$GITHUB_OUTPUT"
+        # On its own line: a jq failure inside $(...) passed to echo would go
+        # unseen, and production would rebuild instead of reusing the digest.
+        run: |
+          run_id=$(jq -r --arg image "$IMAGE_NAME" '.[$image] // empty' <<< "$RECORDS")
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
       # Staging recorded this commit's image already: production gets the very
       # same digest, never a rebuild.
       - name: Reuse it

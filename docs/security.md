@@ -54,7 +54,12 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 - **Logout** ends the family of the presented cookie, even if that token was already rotated (a tab
   that missed a rotation still signs the session out), then clears both cookies. When the database
   cannot be reached it answers 500 and keeps them: the family is still live, and the sign-in page's
-  retry needs the cookie to end it.
+  retry needs the cookie to end it. Every session answer names its session (`sessionId`, the
+  family, the same across refreshes; not a credential). A logout that names the sessions it ends
+  (`{ "sessionIds": [...] }`: the web client's retry, and its logout of a session it discarded)
+  ends the cookie's family only when it is one of them, and touches the cookies only then: a
+  session started meanwhile is left alone, and gets its `has_session` hint back (the client drops
+  the hint first, for a page closed meanwhile).
 - **Concurrent changes:** every change to a user's sessions takes that user's row lock first, so
   sign-ins, rotations, logouts and revocations never interleave. Those transactions run in READ
   COMMITTED whatever the database's default, so what they read after the lock is what the one they
@@ -226,7 +231,9 @@ password) in someone else's hands cannot take the account for good:
   wins. They are ranked by the change they undo (the account's `security_version` right after it),
   not by when their notice went out: a notice that waited in the outbox still outranks the links of
   later changes, and the notices of later changes still waiting in the outbox are dropped unsent
-  (one being sent at that moment carries no link: its template sees the undo used). Whoever took
+  (one being composed at that moment is not sent: its template reads its own row under the
+  account's lock the undo holds; one already composed goes out with a link the undo voided). A
+  change made after an undo is told as usual. Whoever took
   the account and undoes their own later change cannot void the owner's link; the owner's link
   voids theirs, whichever notice went out first (every order is tested). The
   undo link is **not bound to the account's later state** and is never replaced by a newer one:
@@ -270,13 +277,20 @@ password) in someone else's hands cannot take the account for good:
   session itself, and if it fails this logout follows (or the sign-in page's retry). A rotation
   that lands after the sign-out cannot bring the hint back: it is dropped again, unless a sign-in
   followed the sign-out (the hint is then the new session's).
-  If the server cannot be reached, the sign-in page says so and offers a retry.
+  If the server cannot be reached, the sign-in page says so and offers a retry, which names the
+  session the sign-out ended: a newer sign-in another tab made meanwhile stands. Each tab knows the
+  browser's session, its own or the one another tab announced (`BroadcastChannel`).
+- **Picking up another tab's sign-in:** an anonymous tab refreshes when told; a refresh of its own
+  still on its way from before a sign-out is waited for, not joined (its answer is dropped).
 - **Ordering:** a sign-in waits for a logout or a refresh still on its way, which would otherwise
   clear or replace the cookie it sets; a refresh that lands after a sign-in or a sign-out never
   overwrites it; a sign-in or a password change still on its way when a sign-out reaches the tab
   (this tab's, or another tab's; a sign-in still waiting for a lock is not on its way yet, and stands
   once sent) does not sign the tab back in, and the session it started is ended on the server too,
-  unless a newer session's answer replaced its cookie meanwhile (the readable hint says so).
+  by a logout that names it (and the session the sign-out ended), behind the sign-out's own: the
+  server ends whichever of them the cookie holds by then, a later rotation included, and leaves a
+  newer session alone. An answer of the previous release names no session, and its logout ends the
+  cookie's, as that release did.
 - After a sign-out the next user starts at home, not on the page the previous one left.
 
 ## Secret rotation

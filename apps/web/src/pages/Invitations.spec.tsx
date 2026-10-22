@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetCapabilitiesForTests } from '../auth/capabilities';
 import { clearSession, getAccessToken, getState, resetForTests, setSession } from '../auth/session';
 import { admin, member } from '../test/fixtures';
-import { deferred, failure, json, ok, session, stubFetch } from '../test/http';
+import { deferred, failure, json, ok, session, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 // The administrators' invitations page, and the page an invitation's link
@@ -38,7 +38,7 @@ afterEach(() => {
 
 describe('AdminInvitationsPage', () => {
   beforeEach(() => {
-    setSession({ accessToken: 'admin-token', expiresIn: 900, user: admin });
+    setSession({ accessToken: 'admin-token', expiresIn: 900, sessionId: SESSION_ID, user: admin });
   });
 
   async function invite(email: string, role?: 'Admin') {
@@ -201,7 +201,12 @@ describe('AdminInvitationsPage', () => {
 
   it('keeps members out', async () => {
     stubFetch({});
-    setSession({ accessToken: 'member-token', expiresIn: 900, user: member });
+    setSession({
+      accessToken: 'member-token',
+      expiresIn: 900,
+      sessionId: SESSION_ID,
+      user: member,
+    });
     const router = renderRoute('/admin/invitations');
     await screen.findByRole('heading', { name: `Welcome, ${member.name}` });
     expect(router.state.location.pathname).toBe('/');

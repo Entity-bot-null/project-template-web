@@ -33,7 +33,7 @@ export default async function setup(): Promise<void> {
     throw new Error(
       status === 2
         ? 'prisma/schema.prisma has changes no migration makes: create one with `pnpm db:migrate --name <name>` (docs/database.md).'
-        : 'The migrations do not replay on an empty database (what `prisma migrate dev` does on its shadow database): see the error above.',
+        : '`prisma migrate diff` failed (see its error above): most often a migration that does not replay on an empty database, which `prisma migrate dev` needs for its shadow database.',
       { cause: error },
     );
   }

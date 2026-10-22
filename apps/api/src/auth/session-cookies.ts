@@ -20,8 +20,13 @@ export function respondWithSession(
   message: string,
 ): ApiEnvelope<AuthSession> {
   res.cookie(REFRESH_COOKIE, refresh.token, refreshCookieOptions(refresh.expiresAt));
-  res.cookie(SESSION_HINT_COOKIE, '1', sessionHintCookieOptions(refresh.expiresAt));
+  setSessionHint(res, refresh.expiresAt);
   return { data: session, message };
+}
+
+/** The readable hint that a session lives, until it expires (see respondWithSession). */
+export function setSessionHint(res: Response, expiresAt: Date): void {
+  res.cookie(SESSION_HINT_COOKIE, '1', sessionHintCookieOptions(expiresAt));
 }
 
 // A browser deletes a cookie by name, domain and path, so clearing uses the

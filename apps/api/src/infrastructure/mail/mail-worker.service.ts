@@ -41,6 +41,9 @@ export type MailHealth = 'ok' | 'degraded' | 'disabled';
 // Prisma's errors by class and code only: their messages can quote a query's
 // arguments, the recipient among them (common/logging/error-summary.ts).
 const message = errorSummary;
+// What a fenced outcome the row refused means (MailStore.finish).
+const CHANGED_MEANWHILE =
+  'its row changed meanwhile: another worker took the message over (it may go out twice), or it was dropped (an undo of a change of email)';
 
 // Delivers the outbox (docs/architecture.md#email). Every API instance runs
 // one worker; they share the queue safely (MailStore.claim). A worker takes
@@ -231,9 +234,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     if (await this.store.markSent(claimed)) {
       this.logger.log(`Sent ${label} in ${String(Math.round(seconds * 1000))} ms`);
     } else {
-      this.logger.warn(
-        `Sent ${label}, but its lease had run out: another worker may send it again`,
-      );
+      this.logger.warn(`Sent ${label}, but ${CHANGED_MEANWHILE}`);
     }
   }
 
@@ -243,9 +244,10 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
   private async sendLeased(claimed: ClaimedMessage, mail: OutgoingMail, label: string) {
     const started = Date.now();
     const renewal = setInterval(() => {
-      // A relay that answers every step just in time would hold the message,
-      // and this worker, for good: past the cap the lease runs out, and
-      // another worker takes the message over (it may then go out twice).
+      // A relay that answers every step just in time would hold the message
+      // for good: past the cap the lease runs out, and another worker can
+      // take the message over (it may then go out twice). This worker stays
+      // in the exchange until the relay lets go.
       if (Date.now() - started >= MAIL_EXCHANGE_MAX_MS) {
         clearInterval(renewal);
         this.logger.warn(
@@ -278,7 +280,9 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   // Every outcome is counted here, whatever led to it (a refused send, a
   // render that failed, a worker that kept dying): the alerts read them.
-  // `seconds` is the SMTP exchange, when there was one.
+  // `seconds` is the SMTP exchange, when there was one. An outcome the row no
+  // longer takes (another worker took the message over, or an undo dropped
+  // it: expireQueued, which counts it) is counted by whoever recorded it.
   private async retryLater(
     claimed: ClaimedMessage,
     label: string,
@@ -289,25 +293,34 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
       await this.fail(claimed, label, failure.category, seconds);
       return;
     }
-    recordMailDelivery(claimed.kind, 'retry', seconds);
     const delayMs = retryDelayMs(claimed.attempts);
-    await this.store.reschedule(claimed, delayMs, failure.category);
+    if (!(await this.store.reschedule(claimed, delayMs, failure.category))) {
+      this.logger.warn(`Could not send ${label}: ${failure.category}; ${CHANGED_MEANWHILE}`);
+      return;
+    }
+    recordMailDelivery(claimed.kind, 'retry', seconds);
     this.logger.warn(
       `Could not send ${label}: ${failure.category}; retrying in ${String(Math.round(delayMs / 1000))} s`,
     );
   }
 
   private async fail(claimed: ClaimedMessage, label: string, category: string, seconds?: number) {
+    if (!(await this.store.markFailed(claimed, category))) {
+      this.logger.warn(`Gave up on ${label}: ${category}; ${CHANGED_MEANWHILE}`);
+      return;
+    }
     recordMailDelivery(claimed.kind, 'failed', seconds);
-    await this.store.markFailed(claimed, category);
     this.logger.error(
       `Gave up on ${label}: ${category}. Inspect and retry: pnpm --filter api mail status`,
     );
   }
 
   private async expire(claimed: ClaimedMessage, label: string, reason: string) {
+    if (!(await this.store.markExpired(claimed, reason))) {
+      this.logger.warn(`Dropped ${label}: ${reason}; ${CHANGED_MEANWHILE}`);
+      return;
+    }
     recordMailDelivery(claimed.kind, 'expired');
-    await this.store.markExpired(claimed, reason);
     this.logger.warn(`Dropped ${label}: ${reason}`);
   }
 

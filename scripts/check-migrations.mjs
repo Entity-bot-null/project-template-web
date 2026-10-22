@@ -42,10 +42,12 @@ export const TIGHTENING_FROM = '20261022000000';
 const ENUM_VALUE = 'adds an enum value without IF NOT EXISTS';
 
 /**
- * One SQL statement: its first line number, the comments before it, and its
- * code with comments removed, strings emptied, quoted identifiers replaced by
- * "_", whitespace collapsed and letters in upper case (what the rules read).
- * @typedef {{ line: number; comments: string; code: string; text: string }} Statement
+ * One SQL statement: its first line number, the comments before it, its code
+ * with comments removed, strings emptied, quoted identifiers replaced by "_",
+ * whitespace collapsed and letters in upper case (what the rules read), its
+ * bare form (the same, but identifiers and letters as written: where the
+ * rules read names), and its text as written.
+ * @typedef {{ line: number; comments: string; code: string; bare: string; text: string }} Statement
  */
 
 /**
@@ -60,6 +62,7 @@ export function splitStatements(sql) {
   const statements = [];
   let comments = '';
   let code = '';
+  let bare = '';
   let start = -1;
   let first = 0;
   let line = 1;
@@ -71,11 +74,13 @@ export function splitStatements(sql) {
         line: first,
         comments,
         code: code.replace(/\s+/g, ' ').trim().toUpperCase(),
+        bare: bare.replace(/\s+/g, ' ').trim(),
         text: sql.slice(start, end).trim(),
       });
     }
     comments = '';
     code = '';
+    bare = '';
     start = -1;
   };
   /** Advances to `end` (exclusive), counting lines. */
@@ -90,6 +95,11 @@ export function splitStatements(sql) {
       const end = sql.indexOf('\n', i);
       const stop = end === -1 ? sql.length : end;
       if (start < 0) comments += `${sql.slice(i, stop)}\n`;
+      else {
+        // Inside a statement a comment separates like whitespace.
+        code += ' ';
+        bare += ' ';
+      }
       skipTo(stop);
       continue;
     }
@@ -107,11 +117,16 @@ export function splitStatements(sql) {
         } else j += 1;
       }
       if (start < 0) comments += `${sql.slice(i, j)}\n`;
+      else {
+        code += ' ';
+        bare += ' ';
+      }
       skipTo(j);
       continue;
     }
     if (/\s/.test(c)) {
       code += ' ';
+      bare += ' ';
       skipTo(i + 1);
       continue;
     }
@@ -135,6 +150,7 @@ export function splitStatements(sql) {
         else j += 1;
       }
       code += "''";
+      bare += "''";
       skipTo(j + 1);
       continue;
     }
@@ -142,6 +158,7 @@ export function splitStatements(sql) {
       let j = i + 1;
       while (j < sql.length && !(sql[j] === '"' && sql[j + 1] !== '"')) j += sql[j] === '"' ? 2 : 1;
       code += '"_"';
+      bare += sql.slice(i, j + 1);
       skipTo(j + 1);
       continue;
     }
@@ -149,10 +166,12 @@ export function splitStatements(sql) {
     if (tag) {
       const end = sql.indexOf(tag[0], i + tag[0].length);
       code += '$$';
+      bare += '$$';
       skipTo(end === -1 ? sql.length : end + tag[0].length);
       continue;
     }
     code += c;
+    bare += c;
     skipTo(i + 1);
   }
   finish(sql.length);
@@ -227,7 +246,7 @@ const QUALIFIED = String.raw`${IDENT}(?:\s*\.\s*${IDENT})*`;
  * The table a statement names right after `prefix`, as PostgreSQL resolves
  * it: unquoted names folded to lower case, quoted ones as written, the schema
  * left out ("users", public.users and USERS are users).
- * @param {string} text the statement as written
+ * @param {string} text a Statement's bare form
  * @param {RegExp} prefix what comes before the name
  */
 function tableIn(text, prefix) {
@@ -253,7 +272,8 @@ function lastPart(qualified) {
 }
 
 /**
- * `text` split at the commas outside parentheses, quotes and strings.
+ * `text` split at the commas outside parentheses, quotes and strings. Reads a
+ * bare form: no comments, strings emptied (no escapes left to follow).
  * @param {string} text
  */
 function splitTopLevel(text) {
@@ -300,20 +320,24 @@ function columnsOf(text) {
 /**
  * The tightening steps of a statement (TIGHTENING_FROM): `created` holds the
  * tables this migration created before it, `added` the columns it added to
- * existing ones; nothing writes either yet.
+ * existing ones, empty (recordAddedColumns); nothing writes either yet.
  * @param {Statement} statement
  * @param {Set<string>} created
  * @param {Map<string, Set<string>>} added
  * @returns {string[]}
  */
-function tighteningKinds({ code, text }, created, added) {
+function tighteningKinds({ code, bare }, created, added) {
   if (/^CREATE UNIQUE INDEX\b/.test(code)) {
     const index = new RegExp(
       String.raw`^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:${IDENT}\s+)?ON\s+(?:ONLY\s+)?(${QUALIFIED})\s*(?:USING\s+\w+\s*)?([\s\S]*)$`,
       'i',
-    ).exec(text);
+    ).exec(bare);
     const table = index === null ? undefined : lastPart(index[1] ?? '');
-    const columns = index === null ? undefined : columnsOf(index[2] ?? '');
+    // NULLS NOT DISTINCT: the NULLs of new columns collide.
+    const columns =
+      index === null || /\bNULLS\s+NOT\s+DISTINCT\b/i.test(index[2] ?? '')
+        ? undefined
+        : columnsOf(index[2] ?? '');
     return onlyNew(table, columns, created, added)
       ? []
       : ['adds a unique index to an existing table'];
@@ -321,7 +345,7 @@ function tighteningKinds({ code, text }, created, added) {
   // Prisma names a unique index <table>_<columns>_key: the previous release may
   // rely on it (an upsert's conflict target). Other indexes only cost speed.
   if (/^DROP INDEX\b/.test(code)) {
-    const names = text
+    const names = bare
       .replace(/^\s*DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?/i, '')
       .replace(/\s*(?:CASCADE|RESTRICT)?\s*;?\s*$/i, '');
     return splitTopLevel(names).some((name) => lastPart(name).endsWith('_key'))
@@ -332,7 +356,7 @@ function tighteningKinds({ code, text }, created, added) {
   if (/^ALTER TYPE\b.*\bADD VALUE\b/.test(code) && !/\bADD VALUE IF NOT EXISTS\b/.test(code)) {
     return [ENUM_VALUE];
   }
-  const altered = alterTableOf(text);
+  const altered = alterTableOf(bare);
   if (altered === undefined) return [];
   const drop = new RegExp(String.raw`^DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(${IDENT})`, 'i');
   const add = new RegExp(
@@ -341,6 +365,15 @@ function tighteningKinds({ code, text }, created, added) {
   );
   return altered.actions.flatMap((action) => {
     if (/^SET\s+SCHEMA\b/i.test(action)) return ['moves a table to another schema'];
+    // A constraint written in the column's definition: safe on a column that
+    // holds nothing yet, except a primary key (it makes the column required).
+    const column = ADD_COLUMN.exec(action);
+    if (column !== null && !CONSTRAINT_WORD.test(column[1] ?? '')) {
+      const inline = /\b(UNIQUE|PRIMARY\s+KEY|REFERENCES|CHECK)\b/i.exec(column[2] ?? '');
+      if (inline === null || created.has(altered.table)) return [];
+      const empty = !FILLED.test(column[2] ?? '') && !/^PRIMARY/i.test(inline[1] ?? '');
+      return empty ? [] : ['adds a constraint to an existing table'];
+    }
     const dropped = drop.exec(action);
     if (dropped !== null) {
       const name = identifier(dropped[1] ?? '');
@@ -350,10 +383,9 @@ function tighteningKinds({ code, text }, created, added) {
     const constraint = add.exec(action);
     if (constraint === null) return [];
     // A CHECK or an EXCLUDE reads an expression: what it covers is not told.
+    // A primary key makes its columns required: new ones too, which hold NULL.
     const kind = (constraint[1] ?? '').toUpperCase();
-    const columns = /^(?:UNIQUE|PRIMARY|FOREIGN)/.test(kind)
-      ? columnsOf(constraint[2] ?? '')
-      : undefined;
+    const columns = /^(?:UNIQUE|FOREIGN)/.test(kind) ? columnsOf(constraint[2] ?? '') : undefined;
     return onlyNew(altered.table, columns, created, added)
       ? []
       : ['adds a constraint to an existing table'];
@@ -395,27 +427,54 @@ function onlyNew(table, columns, created, added) {
   );
 }
 
+// An ADD COLUMN action: the column's name and the rest of its definition.
+const ADD_COLUMN = new RegExp(
+  String.raw`^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})(?:\s+([\s\S]*))?$`,
+  'i',
+);
+// What starts a table constraint rather than a column, after ADD.
+const CONSTRAINT_WORD = /^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY|FOREIGN|EXCLUDE)$/i;
+// A definition that puts a value in every existing row: a default (other
+// than NULL), a generated or identity value, a serial type; and NOT NULL,
+// which no existing row could satisfy otherwise.
+const FILLED =
+  /\b(?:NOT\s+NULL|DEFAULT(?!\s+NULL\b)|GENERATED|IDENTITY|(?:SMALL|BIG)?SERIAL[248]?)\b/i;
+
 /**
- * Records the columns an ALTER TABLE adds, by table.
- * @param {string} text
+ * Records the columns an ALTER TABLE adds that hold nothing yet (nullable,
+ * nothing fills them), by table, unless the migration writes that table
+ * (`written`: an UPDATE or an INSERT fills them too, before or after).
+ * @param {string} bare a Statement's bare form
  * @param {Map<string, Set<string>>} added
+ * @param {Set<string>} written
  */
-function recordAddedColumns(text, added) {
-  const altered = alterTableOf(text);
-  if (altered === undefined) return;
-  const column = new RegExp(
-    String.raw`^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})`,
-    'i',
-  );
+function recordAddedColumns(bare, added, written) {
+  const altered = alterTableOf(bare);
+  if (altered === undefined || written.has(altered.table)) return;
   for (const action of altered.actions) {
-    const name = column.exec(action)?.[1];
-    if (name === undefined || /^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY|FOREIGN|EXCLUDE)$/i.test(name)) {
+    const column = ADD_COLUMN.exec(action);
+    const name = column?.[1];
+    if (name === undefined || CONSTRAINT_WORD.test(name) || FILLED.test(column?.[2] ?? '')) {
       continue;
     }
     const columns = added.get(altered.table) ?? new Set();
     columns.add(identifier(name));
     added.set(altered.table, columns);
   }
+}
+
+/**
+ * The table a statement writes rows of (UPDATE, INSERT, MERGE, COPY FROM), if any.
+ * @param {string} bare a Statement's bare form
+ */
+function writtenTable(bare) {
+  const match = new RegExp(
+    String.raw`^\s*(?:UPDATE\s+(?:ONLY\s+)?|INSERT\s+INTO\s+|MERGE\s+INTO\s+(?:ONLY\s+)?|COPY\s+)(${QUALIFIED})`,
+    'i',
+  ).exec(bare);
+  if (match === null) return undefined;
+  if (/^\s*COPY\b/i.test(bare) && !/\bFROM\b/i.test(bare)) return undefined;
+  return lastPart(match[1] ?? '');
 }
 
 /**
@@ -429,19 +488,24 @@ function recordAddedColumns(text, added) {
 export function contractSteps(sql, { tightening = true } = {}) {
   /** Tables this migration creates: new, so nothing writes them yet. */
   const created = new Set();
-  /** Columns this migration adds to existing tables, by table: new too. */
+  /** Columns this migration adds to existing tables, empty, by table: new too. */
   const added = new Map();
-  return splitStatements(sql).flatMap((statement) => {
+  const statements = splitStatements(sql);
+  /** Tables whose rows this migration writes: their new columns are filled. */
+  const written = new Set(
+    statements.map(({ bare }) => writtenTable(bare)).filter((table) => table !== undefined),
+  );
+  return statements.flatMap((statement) => {
     const reason = /^\s*--\s*contract:[ \t]*(\S.*?)\s*$/im.exec(statement.comments)?.[1];
     const text = statement.text.split('\n')[0] ?? '';
     if (/^CREATE (?:UNLOGGED )?TABLE\b/.test(statement.code)) {
       const table = tableIn(
-        statement.text,
+        statement.bare,
         /^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i,
       );
       if (table !== undefined) created.add(table);
     }
-    recordAddedColumns(statement.text, added);
+    recordAddedColumns(statement.bare, added, written);
     const kinds = [
       ...contractKinds(statement.code),
       ...(tightening ? tighteningKinds(statement, created, added) : []),

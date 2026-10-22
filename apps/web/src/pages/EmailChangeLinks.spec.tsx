@@ -8,6 +8,7 @@ import {
   deferred,
   failure,
   session,
+  SESSION_ID,
   setSessionHint,
   stubFetch,
 } from '../test/http';
@@ -31,6 +32,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetForTests();
+  // Set by the tests of a tab still booting: gone even when one fails.
+  clearSessionHint();
 });
 
 describe('ConfirmEmailChangePage', () => {
@@ -62,7 +65,7 @@ describe('ConfirmEmailChangePage', () => {
 
   it('signs this browser out when it was signed in: every session of the account ended', async () => {
     const { calls } = stubFetch({ [CONFIRM]: done, [LOGOUT]: done });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     renderRoute(LINK);
     await useAddress();
     await screen.findByRole('heading', { name: 'Email address changed' });
@@ -102,7 +105,6 @@ describe('ConfirmEmailChangePage', () => {
     refreshed.resolve(session('token-1'));
     await expect(booting).resolves.toBe(false);
     expect(getState().status).toBe('anonymous');
-    clearSessionHint();
   });
 
   it('keeps the button for another try when the server fails, and explains a cut link', async () => {
@@ -133,7 +135,7 @@ describe('RevertEmailChangePage', () => {
 
   it('puts the address back with a new password, then signs this browser out', async () => {
     const { calls } = stubFetch({ [REVERT]: done, [LOGOUT]: done });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const router = renderRoute(LINK);
     await expect.poll(() => router.state.location.hash).toBe('');
     await undo(GOOD);
@@ -161,7 +163,6 @@ describe('RevertEmailChangePage', () => {
     refreshed.resolve(session('token-1'));
     await expect(booting).resolves.toBe(false);
     expect(getState().status).toBe('anonymous');
-    clearSessionHint();
   });
 
   it('checks the password first, and asks for another when the API refuses it, keeping the link', async () => {

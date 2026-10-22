@@ -53,6 +53,10 @@
                         "expiresIn": {
                           "type": "integer"
                         },
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "user": {
                           "type": "object",
                           "properties": {
@@ -87,6 +91,7 @@
                       "required": [
                         "accessToken",
                         "expiresIn",
+                        "sessionId",
                         "user"
                       ],
                       "additionalProperties": false
@@ -172,6 +177,10 @@
                         "expiresIn": {
                           "type": "integer"
                         },
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "user": {
                           "type": "object",
                           "properties": {
@@ -206,6 +215,7 @@
                       "required": [
                         "accessToken",
                         "expiresIn",
+                        "sessionId",
                         "user"
                       ],
                       "additionalProperties": false
@@ -257,11 +267,43 @@
     },
     "/api/auth/logout": {
       "post": {
+        "description": "Without sessionIds, ends the refresh cookie's session, whichever it is. With them, ends it only when it is one of those sessions (AuthSession.sessionId), and clears the cookies only then; a live session started meanwhile is left alone, with its session hint set again.",
         "operationId": "AuthController_logout",
         "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionIds": {
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "204": {
             "description": "Signed out"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "403": {
             "description": "Not allowed",
@@ -484,6 +526,10 @@
                         "expiresIn": {
                           "type": "integer"
                         },
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "user": {
                           "type": "object",
                           "properties": {
@@ -518,6 +564,7 @@
                       "required": [
                         "accessToken",
                         "expiresIn",
+                        "sessionId",
                         "user"
                       ],
                       "additionalProperties": false
@@ -806,6 +853,10 @@
                         "expiresIn": {
                           "type": "integer"
                         },
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "user": {
                           "type": "object",
                           "properties": {
@@ -840,6 +891,7 @@
                       "required": [
                         "accessToken",
                         "expiresIn",
+                        "sessionId",
                         "user"
                       ],
                       "additionalProperties": false
@@ -1674,6 +1726,10 @@
                         "expiresIn": {
                           "type": "integer"
                         },
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "user": {
                           "type": "object",
                           "properties": {
@@ -1708,6 +1764,7 @@
                       "required": [
                         "accessToken",
                         "expiresIn",
+                        "sessionId",
                         "user"
                       ],
                       "additionalProperties": false
