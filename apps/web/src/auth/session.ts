@@ -27,6 +27,10 @@ let booted = false;
 // Bumped by every sign-in and sign-out: a refresh already running when one
 // happens must not overwrite its outcome when it lands.
 let epoch = 0;
+// Bumped by every session started, in this tab or (told) in another: a
+// rotation that lands after a sign-out leaves the hint alone when a sign-in
+// followed it, since the hint is that sign-in's.
+let sessionsStarted = 0;
 const listeners = new Set<() => void>();
 
 function emit(next: AuthState): void {
@@ -88,6 +92,7 @@ export function refresh(): Promise<boolean> {
 // at boot, which has to settle somewhere.
 async function doRefresh(): Promise<boolean> {
   const started = epoch;
+  const startedSessions = sessionsStarted;
   let result = await refreshOnce();
   if (!result.ok && result.failure.status === 401 && epoch === started) {
     result = await refreshOnce();
@@ -109,9 +114,12 @@ async function doRefresh(): Promise<boolean> {
   }
   // A sign-in or a sign-out happened meanwhile: its outcome stands. After a
   // sign-out, a rotation that landed anyway has set the session hint again,
-  // for a session the logout ends: dropped, so no page load tries it.
+  // for a session the logout ends: dropped, so no page load tries it, unless
+  // a sign-in followed the sign-out (the hint is then the new session's).
   if (epoch !== started) {
-    if (result.ok && state.status === 'anonymous') expireSessionHint();
+    if (result.ok && state.status === 'anonymous' && sessionsStarted === startedSessions) {
+      expireSessionHint();
+    }
     return state.status === 'authenticated';
   }
   if (result.ok && isSession(result.data)) {
@@ -330,6 +338,7 @@ async function sendStartingSession(
     return result;
   }
   epoch += 1;
+  sessionsStarted += 1;
   setSession(result.data);
   tellOtherTabs('signed-in');
   return result;
@@ -374,6 +383,7 @@ export async function changePassword(
     return result;
   }
   epoch += 1;
+  sessionsStarted += 1;
   setSession(result.data);
   return result;
 }
@@ -412,16 +422,20 @@ export async function retrySignOut(): Promise<boolean> {
 // The logout leaves at once, with keepalive so closing the page does not
 // cancel it. It never waits for a rotation in flight (any token of the family,
 // rotated or not, ends the whole family), only for another tab's sign-in on
-// its way (SIGN_IN_LOCK), which ends this session itself if the page closes
-// meanwhile.
-function endServerSession(): Promise<boolean> {
+// its way (SIGN_IN_LOCK): a sign-in that succeeds ends the session it
+// replaces, so a page closed meanwhile loses nothing then; one that fails
+// leaves it to this logout, or to a retry. `needed`, read once the lock is
+// held, can call it off.
+function endServerSession(needed: () => boolean = () => true): Promise<boolean> {
   logoutInFlight ??= withLock(SIGN_IN_LOCK, () =>
-    call(
-      api.POST('/api/auth/logout', {
-        keepalive: true,
-        signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
-      }),
-    ),
+    needed()
+      ? call(
+          api.POST('/api/auth/logout', {
+            keepalive: true,
+            signal: AbortSignal.timeout(SESSION_REQUEST_TIMEOUT_MS),
+          }),
+        )
+      : Promise.resolve({ ok: true as const, data: null }),
   )
     .then(({ ok }) => {
       if (state.status === 'anonymous') {
@@ -437,12 +451,17 @@ function endServerSession(): Promise<boolean> {
 
 // An answer that started a session, and set its cookie, after a sign-out it
 // raced: that session ends on the server too, once a logout still on its way
-// (it may have carried the previous cookie) has answered. The hint goes first,
-// for a page closed meanwhile.
+// (it may have carried the previous cookie) has answered, unless a newer
+// session's cookie replaced its own meanwhile. The hint goes first, for a page
+// closed meanwhile.
 async function endSessionStartedAfterSignOut(): Promise<void> {
   expireSessionHint();
   if (logoutInFlight) await logoutInFlight;
-  await endServerSession();
+  // Checked once the lock is held: a sign-in answered meanwhile (this tab's,
+  // or another's: it held the same lock) set the hint again, with a cookie
+  // that replaced the discarded session's in the jar. That one is out of
+  // reach, and the newer session must stand.
+  await endServerSession(() => !hasSessionHint());
 }
 
 // Tabs share the cookies but not this memory. A sign-out signs the other tabs
@@ -462,8 +481,9 @@ tabs?.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
     epoch += 1;
     accessToken = null;
     if (state.status !== 'anonymous') emit(SIGNED_OUT);
-  } else if (data === 'signed-in' && state.status !== 'authenticated') {
-    void refresh();
+  } else if (data === 'signed-in') {
+    sessionsStarted += 1;
+    if (state.status !== 'authenticated') void refresh();
   }
 });
 

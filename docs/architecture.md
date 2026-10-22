@@ -153,8 +153,11 @@ Without `REDIS_URL` everything above still runs in process. Decision record:
   5 s. A Redis that is connected but stalled costs three requests the timeout, not every request.
 - **Health:** readiness writes a key of its own under the prefix (`<prefix>health`, 10 s TTL)
   through `EVAL`, as the adapters write (`redis: ok | unavailable | disabled`): a PING would answer
-  even where the ACL refuses every key of the API. A hard dependency only with
-  `REDIS_REQUIRED=true`.
+  even where the ACL refuses every key of the API. A Redis that answers but refuses writes (`OOM`
+  when full, `MISCONF` when it cannot persist, `READONLY` on a replica, `NOPERM`) is `unavailable`
+  too: the adapters cannot work with it. A hard dependency only with `REDIS_REQUIRED=true`, and then
+  readiness answers 503 in those states as well, so a deployment or a rollback (both wait for
+  readiness) waits until Redis accepts writes again.
 - **Keys:** `REDIS_KEY_PREFIX` + feature + key, e.g. `app:cache:profiles:3:user-7`,
   `app:ratelimit:{default:<hash>}:hits`, `app:lock:jobs:report`. One prefix per application and
   environment when they share a Redis. Every key the template writes has a TTL (cache generations
@@ -162,7 +165,8 @@ Without `REDIS_URL` everything above still runs in process. Decision record:
 - **ACL for production** (`deploy/vps/compose.yaml` writes this one): a user limited to
   `~<prefix>*` and the commands the adapters run:
   `+get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zrange +zremrangebyscore`
-  (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake).
+  (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake). Readiness itself needs
+  `+eval` and `+set` on `<prefix>health`.
 - **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development
   (`pnpm services:up`) and the reference server (`deploy/vps/compose.yaml`) run `redis:8-alpine`,
   pinned by digest; production settings: [docs/security.md#redis](security.md#redis).

@@ -241,6 +241,26 @@ describe('AcceptInvitationPage', () => {
     expect(getAccessToken()).toBe('token-new');
   });
 
+  it('says the account is ready when another tab signed out while it was being created', async () => {
+    const answer = deferred<Response>();
+    stubFetch({
+      [ACCEPT]: () => answer.promise,
+      'POST /api/auth/logout': () => new Response(null, { status: 204 }),
+    });
+    renderRoute(LINK);
+    await accept('Katherine Johnson', GOOD);
+    const otherTab = new BroadcastChannel('auth');
+    otherTab.postMessage('signed-out');
+    otherTab.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answer.resolve(session('token-new', member));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Your account is ready' }),
+    ).toBeInTheDocument();
+    expect(getAccessToken()).toBeNull();
+  });
+
   it('checks both fields before calling the API', async () => {
     const { fetchMock } = stubFetch({});
     renderRoute(LINK);

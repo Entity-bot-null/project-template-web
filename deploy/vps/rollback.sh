@@ -7,8 +7,8 @@
 # waits until the API is ready, and stops at once while a deployment or
 # another rollback is running.
 #
-# When the last deployment redeployed the release that was already running,
-# nothing ran before it but that same release: it refuses (exit 2) rather than
+# When the last successful deployment redeployed the release that was already
+# running, nothing ran before it but that same release: it refuses (exit 2) rather than
 # start the older release recorded before it. --previous starts that one
 # anyway.
 #
@@ -22,18 +22,19 @@ if [ ! -f release.previous.env ]; then
   exit 1
 fi
 
-if [ -f release.redeployed ] && [ "${1:-}" != "--previous" ]; then
-  running=$(grep '^APP_RELEASE=' release.env | cut -d= -f2)
-  previous=$(grep '^APP_RELEASE=' release.previous.env | cut -d= -f2)
-  echo "rollback: the last deployment redeployed release $running, which was already running: there is no earlier deployment of it to go back to. ./rollback.sh --previous starts release $previous, the one before it." >&2
-  exit 2
-fi
-
 # The lock of deploy.sh: never two of them at once on this server.
 exec 9> .deploy.lock
 if ! flock -n 9; then
   echo "rollback: another deployment or rollback is running on this server; run this again once it has finished" >&2
   exit 1
+fi
+
+# Read under the lock: a deployment running meanwhile may change it.
+if [ -f release.redeployed ] && [ "${1:-}" != "--previous" ]; then
+  running=$(grep '^APP_RELEASE=' release.env | cut -d= -f2)
+  previous=$(grep '^APP_RELEASE=' release.previous.env | cut -d= -f2)
+  echo "rollback: the last successful deployment redeployed release $running, which was already running: there is no earlier deployment of it to go back to. ./rollback.sh --previous starts release $previous, the one before it." >&2
+  exit 2
 fi
 
 compose() {

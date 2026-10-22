@@ -27,3 +27,11 @@ export function withDatabaseSuffix(url: string, suffix: string): string {
 export function testDatabaseUrl(): string {
   return withDatabaseSuffix(baseDatabaseUrl(), '_test');
 }
+
+/**
+ * Where the global setup replays every migration from nothing, as
+ * `prisma migrate dev` does on its shadow database: `<db>_shadow`.
+ */
+export function shadowDatabaseUrl(): string {
+  return withDatabaseSuffix(baseDatabaseUrl(), '_shadow');
+}

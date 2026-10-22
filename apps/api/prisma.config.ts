@@ -12,5 +12,8 @@ export default defineConfig({
   },
   datasource: {
     url: process.env.DATABASE_URL,
+    // Only the integration setup sets it (test/global-setup.ts): `migrate dev`
+    // makes a temporary shadow database of its own otherwise.
+    shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });

@@ -160,7 +160,10 @@ jobs:
         if: steps.recorded.outputs.run-id == ''
         env:
           TOOL_IMAGE_MIRROR: mirror.gcr.io
-        run: echo "image=$(node scripts/tool-image.mjs --mirrored buildkit)" >> "$GITHUB_OUTPUT"
+        # On its own line: a failure inside $(...) passed to echo would go unseen.
+        run: |
+          image=$(node scripts/tool-image.mjs --mirrored buildkit)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.recorded.outputs.run-id == ''
         with:

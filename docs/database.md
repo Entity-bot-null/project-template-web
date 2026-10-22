@@ -101,8 +101,11 @@ before these rules, and a committed migration is never edited), also: a unique i
 constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`) added to a table an earlier
 migration created (the previous release may write what it refuses, and existing rows can make it
 fail), a dropped unique index, a table moved to another schema, a `DELETE` without `WHERE`, and an
-enum value added without `IF NOT EXISTS` (see below: write `ADD VALUE IF NOT EXISTS` in the
-generated SQL before committing it). A Prisma change that removes an enum value writes several of
+enum value added without `IF NOT EXISTS` (see below). Prisma writes `ADD VALUE` without it, and
+`pnpm db:migrate` applies what it creates: create such a migration with
+`pnpm db:migrate --name <name> --create-only`, write `ADD VALUE IF NOT EXISTS` in its SQL, then run
+`pnpm db:migrate` to apply it (editing a migration already applied to your database makes
+`migrate dev` ask to reset it). A Prisma change that removes an enum value writes several of
 them (retype the column, rename the types, drop the old one), each with its reason. Expand steps
 (new tables and what they get in the same migration, nullable columns, columns with a default,
 indexes, looser constraints) need nothing. The check reads plain statements, not SQL inside a `DO`
@@ -146,7 +149,11 @@ which has to be found in the database's log. Statements that cannot run in a tra
 
 `<db>_test` (integration suite) and `<db>_e2e` (end-to-end suite) on the same server as
 `DATABASE_URL`, created and migrated automatically, emptied by the suites. The development database
-is never touched by tests.
+is never touched by tests. Before the integration suite, its setup also replays every migration on
+an empty `<db>_shadow`, as `prisma migrate dev` does on its shadow database, and compares the
+result with `schema.prisma` (`prisma migrate diff --exit-code`): a migration that only runs where
+a deployment created something first (`_prisma_migrations`, a role), or a schema change without its
+migration, fails there instead of on a developer's machine.
 
 ## Seeds
 

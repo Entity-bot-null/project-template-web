@@ -151,7 +151,9 @@ database system is in recovery mode` (restart or failover). The provider's statu
   `status: "degraded"`, `checks.redis: "unavailable"` (200); `Rate limiting falls back to
 per-instance counters`; `Cache unavailable, serving from the source`;
   `app_degraded_operations_total` rising. With `REDIS_REQUIRED=true`: readiness 503
-  `Redis unreachable`.
+  `Redis unreachable`, also while Redis answers but refuses writes (`OOM`, `MISCONF`, `READONLY`,
+  `NOPERM`: readiness writes a key under the prefix), so `deploy.sh` and `rollback.sh` report the API
+  not ready until Redis accepts writes again: fix Redis first.
 - **Impact:** degraded, not down: rate limits count per instance (more permissive by the number of
   instances), every cache read goes to the database (more database load), locks and idempotency
   claims fail closed (503 `Service temporarily unavailable, retry later`, logged

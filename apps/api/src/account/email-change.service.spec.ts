@@ -116,6 +116,10 @@ async function setup({
       calls.push(`queue ${input.kind}`);
       return Promise.resolve('queued');
     }),
+    expireQueued: vi.fn((_tx: unknown, input: { kind: string }) => {
+      calls.push(`drop queued ${input.kind}`);
+      return Promise.resolve(0);
+    }),
     notifyQueued: vi.fn(),
   };
   const service = new EmailChangeService(
@@ -313,6 +317,7 @@ describe('EmailChangeService.revert', () => {
       'update account',
       'end sessions',
       'drop other links',
+      'drop queued email_changed',
       'queue password_changed',
     ]);
     const [[{ data }]] = tx.user.update.mock.calls as unknown as [
@@ -330,6 +335,14 @@ describe('EmailChangeService.revert', () => {
         usedAt: null,
         NOT: { purpose: 'email_revert', securityVersion: { lt: 4 } },
       },
+    });
+    // Notices of this change or later ones still in the outbox go unsent.
+    expect(mail.expireQueued).toHaveBeenCalledWith(tx, {
+      kind: 'email_changed',
+      userId: 'u1',
+      key: 'securityVersion',
+      from: 4,
+      reason: 'superseded',
     });
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'password_changed',

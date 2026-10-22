@@ -475,7 +475,9 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(result.status, 2);
     assert.match(
       result.stderr,
-      new RegExp(`redeployed release ${B[3]}.*--previous starts release ${A[3]}`),
+      new RegExp(
+        `last successful deployment redeployed release ${B[3]}.*--previous starts release ${A[3]}`,
+      ),
     );
     assert.deepEqual(calls().slice(before), []);
     assert.equal(running(), B[0]);
@@ -528,5 +530,18 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(running(), A[0]);
     assert.equal(pointer('release.env'), A[3]);
     assert.equal(pointer('release.previous.env'), B[3]);
+  });
+
+  test('says a deployment is running, rather than read a redeployment it may be changing', async () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const deployment = start('deploy.sh', A, { FAKE_SECONDS: '1' });
+    await logged(`pull ${A[0]}`, before);
+    const rollback = run('rollback.sh');
+    assert.equal(rollback.status, 1);
+    assert.match(rollback.stderr, /another deployment or rollback is running/);
+    assert.equal((await deployment).status, 0);
   });
 });

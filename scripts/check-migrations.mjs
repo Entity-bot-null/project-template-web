@@ -11,11 +11,12 @@
 // Contract steps: dropping a table, column, type or view; renaming a table,
 // column or type (or an enum value); changing a column's type; making a column
 // required, adding a required column without a default, or removing a
-// default; emptying a table. From the migrations after TIGHTENING_FROM on,
+// default; emptying a table. From the migration named TIGHTENING_FROM on,
 // also: a unique index or a constraint (CHECK, UNIQUE, PRIMARY KEY, FOREIGN
-// KEY, EXCLUDE) added to a table an earlier migration created (the previous
-// release may write what it refuses, and existing rows may break it), a
-// dropped unique index, a table moved to another schema, a DELETE without WHERE, and
+// KEY, EXCLUDE) added to a table an earlier migration created, unless it only
+// covers columns this migration added (the previous release may write what it
+// refuses, and existing rows may break it), a dropped unique index, unique
+// constraint or primary key, a table moved to another schema, a DELETE without WHERE, and
 // an enum value added without IF NOT EXISTS (PostgreSQL cannot drop it, so a
 // migration that failed after adding it could not run again:
 // docs/database.md#when-a-migration-fails). The migrations before it shipped
@@ -217,6 +218,11 @@ function contractKinds(code) {
   });
 }
 
+// An identifier, quoted or not, and a name made of them (schema.table), in a
+// statement as written.
+const IDENT = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)`;
+const QUALIFIED = String.raw`${IDENT}(?:\s*\.\s*${IDENT})*`;
+
 /**
  * The table a statement names right after `prefix`, as PostgreSQL resolves
  * it: unquoted names folded to lower case, quoted ones as written, the schema
@@ -225,47 +231,191 @@ function contractKinds(code) {
  * @param {RegExp} prefix what comes before the name
  */
 function tableIn(text, prefix) {
-  const rest = text.replace(prefix, '');
-  const name = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)`;
-  const match = new RegExp(`^${name}(?:\\s*\\.\\s*${name})*`).exec(rest);
-  if (match === null) return undefined;
-  const last = match[0].split(/\s*\.\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/).at(-1) ?? '';
-  return last.startsWith('"') ? last.slice(1, -1).replaceAll('""', '"') : last.toLowerCase();
+  const match = new RegExp(`^${QUALIFIED}`).exec(text.replace(prefix, ''));
+  return match === null ? undefined : lastPart(match[0]);
+}
+
+/**
+ * An identifier as PostgreSQL resolves it: unquoted folded to lower case.
+ * @param {string} raw
+ */
+function identifier(raw) {
+  const name = raw.trim();
+  return name.startsWith('"') ? name.slice(1, -1).replaceAll('""', '"') : name.toLowerCase();
+}
+
+/**
+ * The last part of a qualified name (public.users is users).
+ * @param {string} qualified
+ */
+function lastPart(qualified) {
+  return identifier(qualified.split(/\s*\.\s*(?=(?:[^"]*"[^"]*")*[^"]*$)/).at(-1) ?? '');
+}
+
+/**
+ * `text` split at the commas outside parentheses, quotes and strings.
+ * @param {string} text
+ */
+function splitTopLevel(text) {
+  /** @type {string[]} */
+  const parts = [];
+  let depth = 0;
+  let quote = '';
+  let current = '';
+  for (const c of text) {
+    if (quote !== '') {
+      if (c === quote) quote = '';
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === '(') depth += 1;
+    else if (c === ')') depth -= 1;
+    else if (c === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += c;
+  }
+  parts.push(current.trim().replace(/;$/, '').trim());
+  return parts.filter((part) => part !== '');
+}
+
+/**
+ * The plain column names of the parenthesized list `text` starts with;
+ * undefined when an item is an expression (it cannot be told what it reads).
+ * @param {string} text
+ */
+function columnsOf(text) {
+  const list = /^\s*\(([\s\S]*?)\)/.exec(text)?.[1];
+  if (list === undefined) return undefined;
+  const item = new RegExp(`^(${IDENT})(?:\\s+(?:ASC|DESC|NULLS\\s+(?:FIRST|LAST)))*$`, 'i');
+  const names = [];
+  for (const part of splitTopLevel(list)) {
+    const match = item.exec(part);
+    if (match === null) return undefined;
+    names.push(identifier(match[1] ?? ''));
+  }
+  return names;
 }
 
 /**
  * The tightening steps of a statement (TIGHTENING_FROM): `created` holds the
- * tables this migration created before it, which nothing writes yet.
+ * tables this migration created before it, `added` the columns it added to
+ * existing ones; nothing writes either yet.
  * @param {Statement} statement
  * @param {Set<string>} created
+ * @param {Map<string, Set<string>>} added
  * @returns {string[]}
  */
-function tighteningKinds({ code, text }, created) {
+function tighteningKinds({ code, text }, created, added) {
   if (/^CREATE UNIQUE INDEX\b/.test(code)) {
-    const table = tableIn(text, /^[\s\S]*?\bON\s+(?:ONLY\s+)?/i);
-    return table !== undefined && created.has(table)
+    const index = new RegExp(
+      String.raw`^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:${IDENT}\s+)?ON\s+(?:ONLY\s+)?(${QUALIFIED})\s*(?:USING\s+\w+\s*)?([\s\S]*)$`,
+      'i',
+    ).exec(text);
+    const table = index === null ? undefined : lastPart(index[1] ?? '');
+    const columns = index === null ? undefined : columnsOf(index[2] ?? '');
+    return onlyNew(table, columns, created, added)
       ? []
       : ['adds a unique index to an existing table'];
   }
   // Prisma names a unique index <table>_<columns>_key: the previous release may
   // rely on it (an upsert's conflict target). Other indexes only cost speed.
-  if (/^DROP INDEX\b/.test(code) && /_(?:p?key)"?\s*(?:CASCADE|RESTRICT)?\s*;?\s*$/i.test(text)) {
-    return ['drops a unique index'];
+  if (/^DROP INDEX\b/.test(code)) {
+    const names = text
+      .replace(/^\s*DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?/i, '')
+      .replace(/\s*(?:CASCADE|RESTRICT)?\s*;?\s*$/i, '');
+    return splitTopLevel(names).some((name) => lastPart(name).endsWith('_key'))
+      ? ['drops a unique index']
+      : [];
   }
   if (/^DELETE FROM\b/.test(code) && !/\bWHERE\b/.test(code)) return ['empties a table'];
   if (/^ALTER TYPE\b.*\bADD VALUE\b/.test(code) && !/\bADD VALUE IF NOT EXISTS\b/.test(code)) {
     return [ENUM_VALUE];
   }
-  if (!/^ALTER TABLE\b/.test(code)) return [];
-  const table = tableIn(text, /^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?/i);
-  const isNew = table !== undefined && created.has(table);
-  const constraint = new RegExp(
-    `^ADD (?:CONSTRAINT ${NAME} )?(?:CHECK|UNIQUE|PRIMARY KEY|FOREIGN KEY|EXCLUDE)\\b`,
+  const altered = alterTableOf(text);
+  if (altered === undefined) return [];
+  const drop = new RegExp(String.raw`^DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(${IDENT})`, 'i');
+  const add = new RegExp(
+    String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?(CHECK|UNIQUE|PRIMARY\s+KEY|FOREIGN\s+KEY|EXCLUDE)\b([\s\S]*)$`,
+    'i',
   );
-  return alterTableActions(code).flatMap((action) => {
-    if (/^SET SCHEMA\b/.test(action)) return ['moves a table to another schema'];
-    return constraint.test(action) && !isNew ? ['adds a constraint to an existing table'] : [];
+  return altered.actions.flatMap((action) => {
+    if (/^SET\s+SCHEMA\b/i.test(action)) return ['moves a table to another schema'];
+    const dropped = drop.exec(action);
+    if (dropped !== null) {
+      const name = identifier(dropped[1] ?? '');
+      if (name.endsWith('_pkey')) return ['drops a primary key'];
+      return name.endsWith('_key') ? ['drops a unique constraint'] : [];
+    }
+    const constraint = add.exec(action);
+    if (constraint === null) return [];
+    // A CHECK or an EXCLUDE reads an expression: what it covers is not told.
+    const kind = (constraint[1] ?? '').toUpperCase();
+    const columns = /^(?:UNIQUE|PRIMARY|FOREIGN)/.test(kind)
+      ? columnsOf(constraint[2] ?? '')
+      : undefined;
+    return onlyNew(altered.table, columns, created, added)
+      ? []
+      : ['adds a constraint to an existing table'];
   });
+}
+
+/**
+ * The table and the actions (as written) of an ALTER TABLE; undefined for
+ * any other statement.
+ * @param {string} text
+ */
+function alterTableOf(text) {
+  const match = new RegExp(
+    String.raw`^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${QUALIFIED})\s*([\s\S]*)$`,
+    'i',
+  ).exec(text);
+  if (match === null) return undefined;
+  return { table: lastPart(match[1] ?? ''), actions: splitTopLevel(match[2] ?? '') };
+}
+
+/**
+ * Whether a unique index or a constraint only covers what nothing wrote
+ * before this migration: a table it created, or columns it added (a new
+ * nullable relation's index and foreign key, for instance).
+ * @param {string | undefined} table
+ * @param {string[] | undefined} columns
+ * @param {Set<string>} created
+ * @param {Map<string, Set<string>>} added
+ */
+function onlyNew(table, columns, created, added) {
+  if (table === undefined) return false;
+  if (created.has(table)) return true;
+  const fresh = added.get(table);
+  return (
+    columns !== undefined &&
+    columns.length > 0 &&
+    fresh !== undefined &&
+    columns.every((column) => fresh.has(column))
+  );
+}
+
+/**
+ * Records the columns an ALTER TABLE adds, by table.
+ * @param {string} text
+ * @param {Map<string, Set<string>>} added
+ */
+function recordAddedColumns(text, added) {
+  const altered = alterTableOf(text);
+  if (altered === undefined) return;
+  const column = new RegExp(
+    String.raw`^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})`,
+    'i',
+  );
+  for (const action of altered.actions) {
+    const name = column.exec(action)?.[1];
+    if (name === undefined || /^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY|FOREIGN|EXCLUDE)$/i.test(name)) {
+      continue;
+    }
+    const columns = added.get(altered.table) ?? new Set();
+    columns.add(identifier(name));
+    added.set(altered.table, columns);
+  }
 }
 
 /**
@@ -279,6 +429,8 @@ function tighteningKinds({ code, text }, created) {
 export function contractSteps(sql, { tightening = true } = {}) {
   /** Tables this migration creates: new, so nothing writes them yet. */
   const created = new Set();
+  /** Columns this migration adds to existing tables, by table: new too. */
+  const added = new Map();
   return splitStatements(sql).flatMap((statement) => {
     const reason = /^\s*--\s*contract:[ \t]*(\S.*?)\s*$/im.exec(statement.comments)?.[1];
     const text = statement.text.split('\n')[0] ?? '';
@@ -289,9 +441,10 @@ export function contractSteps(sql, { tightening = true } = {}) {
       );
       if (table !== undefined) created.add(table);
     }
+    recordAddedColumns(statement.text, added);
     const kinds = [
       ...contractKinds(statement.code),
-      ...(tightening ? tighteningKinds(statement, created) : []),
+      ...(tightening ? tighteningKinds(statement, created, added) : []),
     ];
     return kinds.map((kind) => ({
       kind,
@@ -321,7 +474,9 @@ function checkFiles(files) {
           `${label}:${String(step.line)}: ${step.kind}: ${step.text} PostgreSQL cannot drop an enum ` +
             'value, and runs no Prisma migration in a transaction: if a later statement fails, the ' +
             'migration cannot run again (docs/database.md#when-a-migration-fails). Write ADD VALUE ' +
-            'IF NOT EXISTS (edit the generated SQL before committing it).',
+            'IF NOT EXISTS: create the migration with `pnpm db:migrate --name <name> --create-only`, ' +
+            'edit it, then `pnpm db:migrate` (edited after it was applied to your development ' +
+            'database, `migrate dev` offers to reset that database).',
         );
       } else if (step.reason === undefined) {
         problems.push(

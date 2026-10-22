@@ -58,7 +58,27 @@ describe('reportableError', () => {
   });
 
   it('reports any other error as it is', () => {
-    const error = new Error('boom');
+    const error = new Error('boom', { cause: new Error('below') });
     expect(reportableError(error)).toBe(error);
+  });
+
+  it('makes a Prisma error safe wherever it is in the cause chain, without touching the original', () => {
+    const wrapped = new Error('Could not save the profile', {
+      cause: new Error('during the update', { cause: validation() }),
+    });
+    const reported = reportableError(wrapped) as Error & { cause: Error & { cause: Error } };
+    expect(reported).not.toBe(wrapped);
+    expect(reported.message).toBe('Could not save the profile');
+    expect(reported.cause.message).toBe('during the update');
+    expect(reported.cause.cause.name).toBe('PrismaClientValidationError');
+    const everything = JSON.stringify([
+      reported.message,
+      reported.cause.message,
+      reported.cause.cause.message,
+      reported.cause.cause.stack,
+    ]);
+    expect(everything).not.toContain('ada@example.test');
+    // The caller's error keeps its chain.
+    expect(((wrapped.cause as Error).cause as Error).message).toContain('ada@example.test');
   });
 });

@@ -72,7 +72,9 @@ pnpm --filter api test:watch / pnpm --filter web test:watch / pnpm --filter land
   object-level authorization matrix of a route on one record: [authorization.md](authorization.md#tests)).
 - **Integration state:** each suite builds its own app (`createTestApp`), and resets the database
   (`resetDatabase`) where it writes. Suites run one file at a time on `<db>_test`, created and
-  migrated by the global setup. Never point them at a database you care about.
+  migrated by the global setup, which first replays every migration on an empty `<db>_shadow` and
+  compares it with `schema.prisma` (docs/database.md#test-databases). Never point them at a
+  database you care about.
 - **E2E state:** `<db>_e2e`, migrated, emptied and seeded with the development accounts on every
   run. A spec that changes an account creates its own (`e2e/support/accounts.ts`, through the built
   `user:create` CLI, a new address per attempt), so the seeded accounts other specs sign in with
@@ -130,10 +132,11 @@ their own stricter numbers with glob keys, for example
 built web assets with `apps/web/performance-budget.json`, and the landing's with
 `apps/landing/performance-budget.json`: its JavaScript budget is 0 kB (the pages are HTML and CSS;
 a script added to one fails the check until its budget is raised on purpose) and its CSS budget
-6 kB. Astro never writes a script into a page (`assetsInlineLimit: 0`), and the same check reads
-every built page of the landing for what the web server's Content-Security-Policy refuses: an
-inline script or event handler, a `<style>` element or a style attribute, a `javascript:` URL, a
-file from another origin (the preview server of the E2E tests sends no CSP, so only this check
+6 kB. Astro writes no processed script into a page (`assetsInlineLimit: 0`: it becomes a file the
+budget counts; an `is:inline` one stays inline), and the same check reads every built page of the
+landing, as a browser parses it, for what the web server's Content-Security-Policy refuses: an
+inline script or event handler, a `<style>` element or a style attribute, a `javascript:` URL, an
+object or an embed, a base or a form pointing elsewhere, a file from another origin (the preview server of the E2E tests sends no CSP, so only this check
 sees them before production). The web app's budget is its measured
 build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
 Vitals chunks 5 kB, the lazy account and admin pages 13 kB, all JavaScript 157 kB, CSS 5 kB). The initial

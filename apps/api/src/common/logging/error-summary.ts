@@ -29,15 +29,39 @@ export function loggableStack(error: unknown): string {
 
 /**
  * The error to report to the error tracker, a third party: a Prisma error is
- * replaced by one with its class, its code and its frames, and no message.
- * Any other error is reported as it is (and scrubbed again before it leaves).
+ * replaced by one with its class, its code and its frames, and no message,
+ * wherever it is in the cause chain. Any other error is reported as it is
+ * (and scrubbed again before it leaves).
  */
 export function reportableError(error: unknown): unknown {
-  if (!(error instanceof Error) || !isPrismaError(error)) return error;
-  const safe = new Error(knownCode(error) ?? 'message withheld: it can quote query arguments');
-  safe.name = error.name;
-  safe.stack = loggableStack(error);
-  return safe;
+  return safeChain(error, 0);
+}
+
+/** How deep a cause chain is made safe (Sentry's own default limit is 5). */
+const MAX_CAUSES = 5;
+
+// Sentry's linkedErrorsIntegration reports an error's causes too: a Prisma
+// error anywhere down the chain is replaced, and an error above it copied with
+// its safe causes (never changed in place: the caller may still use it).
+function safeChain(error: unknown, depth: number): unknown {
+  if (!(error instanceof Error) || depth > MAX_CAUSES) return error;
+  const cause: unknown = error.cause;
+  const safeCause = cause === undefined ? undefined : safeChain(cause, depth + 1);
+  const options = safeCause === undefined ? undefined : { cause: safeCause };
+  if (isPrismaError(error)) {
+    const safe = new Error(
+      knownCode(error) ?? 'message withheld: it can quote query arguments',
+      options,
+    );
+    safe.name = error.name;
+    safe.stack = loggableStack(error);
+    return safe;
+  }
+  if (safeCause === cause) return error;
+  const copy = new Error(error.message, options);
+  copy.name = error.name;
+  if (error.stack !== undefined) copy.stack = error.stack;
+  return copy;
 }
 
 function isPrismaError(error: Error): boolean {

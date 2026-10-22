@@ -22,6 +22,9 @@ export const SMTP_SOCKET_TIMEOUT_MS = 30_000;
 // no message waits in a claimed batch.
 export const MAIL_LEASE_MS = 120_000;
 export const MAIL_LEASE_RENEW_MS = MAIL_LEASE_MS / 3;
+// The longest a worker keeps renewing for one exchange: then the lease runs
+// out and another worker may take the message over.
+export const MAIL_EXCHANGE_MAX_MS = 10 * 60_000;
 
 // Retries: exponential from 30 seconds, at most an hour apart, with jitter.
 export const MAIL_RETRY_BASE_MS = 30_000;

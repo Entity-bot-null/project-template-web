@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { mintAccountToken } from '../../../auth/account-tokens.js';
+import { lockUser } from '../../../auth/sessions.service.js';
 import { EMAIL_REVERT_TTL_MS } from '../../../auth/auth.constants.js';
 import { renderMail } from './layout.js';
 import { maskEmail } from './mask-email.js';
@@ -46,10 +47,26 @@ export const emailChangedTemplate: MailTemplate = {
     // A notice without it was queued by the previous release, during a
     // deployment: ranked by the account as it is now, as that release did.
     const changed = payload.success ? payload.data.securityVersion : undefined;
+    const securityVersion = changed === undefined ? user.securityVersion : Number(changed);
+    // Under the account's lock, like the undo itself: when an undo link of this
+    // change or of an earlier one was used meanwhile, this change is undone
+    // already and its link would take the account back. The undo drops such
+    // notices still in the outbox; this covers one being sent at that moment.
+    await lockUser(tx, user.id);
+    const undone = await tx.accountToken.findFirst({
+      where: {
+        userId: user.id,
+        purpose: 'email_revert',
+        usedAt: { not: null },
+        securityVersion: { lte: securityVersion },
+      },
+      select: { id: true },
+    });
+    if (undone !== null) return null;
     const token = await mintAccountToken(tx, {
       userId: user.id,
       purpose: 'email_revert',
-      securityVersion: changed === undefined ? user.securityVersion : Number(changed),
+      securityVersion,
       email: user.email,
       targetEmail: message.recipient,
       ttlMs: EMAIL_REVERT_TTL_MS,

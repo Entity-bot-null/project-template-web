@@ -33,75 +33,172 @@ const APPS = [
   },
 ];
 
-/** `<link rel>` values that make the browser load the URL. */
+/** `<link rel>` values that make the browser load the URL, and those that load an image. */
 const LOADED_LINKS =
   /^(?:stylesheet|icon|apple-touch-icon|mask-icon|manifest|preload|modulepreload|prefetch)$/i;
-
-/** The attributes the check reads: a value quoted either way, or not at all. */
-const ATTRIBUTES = {
-  href: /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
-  rel: /\srel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
-  src: /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
-  srcset: /\ssrcset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
-  style: /\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
-  type: /\stype\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i,
-};
+const IMAGE_LINKS = /^(?:icon|apple-touch-icon|mask-icon)$/i;
 
 /**
- * An attribute's value in a start tag; undefined when absent.
- * @param {string} tag
- * @param {keyof typeof ATTRIBUTES} name
+ * The few character references a URL in our pages may use.
+ * @param {string} value
  */
-function attributeOf(tag, name) {
-  const match = ATTRIBUTES[name].exec(tag);
-  return match === null ? undefined : (match[1] ?? match[2] ?? match[3] ?? '');
+function decoded(value) {
+  return value
+    .replace(/&#x([0-9a-f]+);?/gi, (/** @type {string} */ _, /** @type {string} */ hex) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/&#([0-9]+);?/g, (/** @type {string} */ _, /** @type {string} */ dec) =>
+      String.fromCodePoint(Number(dec)),
+    )
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+/**
+ * The tags of an HTML document, read as a browser reads them: a quoted
+ * attribute value may hold `>`, comments are skipped, and the text of a
+ * script or style element is not markup. End tags come as `/name`.
+ * @param {string} html
+ * @returns {{ name: string; attributes: Map<string, string> }[]}
+ */
+export function tagsOf(html) {
+  const lower = html.toLowerCase();
+  /** @type {{ name: string; attributes: Map<string, string> }[]} */
+  const tags = [];
+  let i = 0;
+  while (i < html.length) {
+    const open = html.indexOf('<', i);
+    if (open === -1) break;
+    if (html.startsWith('<!--', open)) {
+      const end = html.indexOf('-->', open + 4);
+      i = end === -1 ? html.length : end + 3;
+      continue;
+    }
+    const start = /^<(\/?)([a-zA-Z][\w:-]*)/.exec(html.slice(open, open + 80));
+    if (start === null) {
+      i = open + 1;
+      continue;
+    }
+    const name = `${start[1] ?? ''}${(start[2] ?? '').toLowerCase()}`;
+    /** @type {Map<string, string>} */
+    const attributes = new Map();
+    let j = open + start[0].length;
+    while (j < html.length) {
+      while (j < html.length && /[\s/]/.test(html[j] ?? '')) j += 1;
+      if (j >= html.length || html[j] === '>') {
+        j += 1;
+        break;
+      }
+      const attribute = /^[^\s/>=]+/.exec(html.slice(j, j + 256))?.[0] ?? html[j] ?? '';
+      j += attribute.length;
+      while (/\s/.test(html[j] ?? '')) j += 1;
+      let value = '';
+      if (html[j] === '=') {
+        j += 1;
+        while (/\s/.test(html[j] ?? '')) j += 1;
+        const quote = html[j];
+        if (quote === '"' || quote === "'") {
+          const end = html.indexOf(quote, j + 1);
+          value = html.slice(j + 1, end === -1 ? html.length : end);
+          j = end === -1 ? html.length : end + 1;
+        } else {
+          value = /^[^\s>]*/.exec(html.slice(j))?.[0] ?? '';
+          j += value.length;
+        }
+      }
+      const key = attribute.toLowerCase();
+      if (!attributes.has(key)) attributes.set(key, decoded(value));
+    }
+    tags.push({ name, attributes });
+    // A script's or a style's text runs to its end tag, whatever it holds.
+    if (name === 'script' || name === 'style') {
+      const end = lower.indexOf(`</${name}`, j);
+      j = end === -1 ? html.length : end;
+    }
+    i = j;
+  }
+  return tags;
 }
 
 /**
  * What a page carries that the web server's Content-Security-Policy
  * (apps/web/nginx/security-headers.conf: default-src 'self', no
- * 'unsafe-inline', images from data: URLs aside) refuses: an inline script or
- * event handler, a `<style>` element or a style attribute, a javascript: URL,
- * a file from another origin. The preview server sends no CSP, so such a page
- * would break in production only. A JSON-LD block is data, not a script.
+ * 'unsafe-inline', object-src 'none', base-uri and form-action 'self',
+ * images from data: URLs aside) refuses: an inline script or event handler, a
+ * `<style>` element or a style attribute, a javascript: URL, an object or an
+ * embed, a base or a form pointing elsewhere, a file from another origin. The
+ * preview server sends no CSP, so such a page would break in production only.
+ * A JSON-LD block is data, not a script.
  * @param {string} html
  * @returns {string[]}
  */
 export function cspProblems(html) {
   /** @type {string[]} */
   const problems = [];
-  for (const [tag] of html.matchAll(/<[a-z][\w-]*\b[^>]*>/gi)) {
-    const name = /^<([\w-]+)/.exec(tag)?.[1]?.toLowerCase() ?? '';
-    const type = attributeOf(tag, 'type') ?? '';
+  /** The element a <source> belongs to: its files are images in a picture. */
+  let media = '';
+  const absolute = (/** @type {string} */ url) => /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url);
+  for (const { name, attributes } of tagsOf(html)) {
+    if (name === 'picture' || name === 'video' || name === 'audio') media = name;
+    if (name === '/picture' || name === '/video' || name === '/audio') media = '';
+    if (name.startsWith('/')) continue;
+    const attribute = (/** @type {string} */ key) => attributes.get(key)?.trim();
     if (
       name === 'script' &&
-      attributeOf(tag, 'src') === undefined &&
-      !/^application\/ld\+json$/i.test(type)
+      attribute('src') === undefined &&
+      !/^application\/ld\+json$/i.test(attribute('type') ?? '')
     ) {
       problems.push('an inline script');
     }
     if (name === 'style') problems.push('a <style> element');
-    if (attributeOf(tag, 'style') !== undefined) problems.push(`a style attribute on <${name}>`);
-    if (/\son[a-z]+\s*=/i.test(tag)) problems.push(`an inline event handler on <${name}>`);
-    if (/^\s*javascript:/i.test(attributeOf(tag, 'href') ?? '')) problems.push('a javascript: URL');
-    const rels = (attributeOf(tag, 'rel') ?? '').split(/\s+/);
-    const loaded =
-      name === 'link'
-        ? rels.some((rel) => LOADED_LINKS.test(rel))
-          ? [attributeOf(tag, 'href')]
-          : []
-        : [
-            attributeOf(tag, 'src'),
-            ...(attributeOf(tag, 'srcset') ?? '')
-              .split(',')
-              .map((candidate) => candidate.trim().split(/\s+/)[0]),
-          ];
-    const image = name === 'img' || name === 'source';
-    for (const url of loaded) {
-      if (url === undefined || url === '') continue;
+    if (attributes.has('style')) problems.push(`a style attribute on <${name}>`);
+    if ([...attributes.keys()].some((key) => /^on/.test(key))) {
+      problems.push(`an inline event handler on <${name}>`);
+    }
+    for (const key of ['href', 'xlink:href', 'src', 'action', 'formaction', 'poster', 'data']) {
+      if (/^javascript:/i.test(attribute(key) ?? '')) problems.push('a javascript: URL');
+    }
+    if (name === 'object' || name === 'embed' || name === 'applet') {
+      problems.push(`an <${name}> (object-src 'none')`);
+    }
+    const base = attribute('href');
+    if (name === 'base' && base !== undefined && absolute(base)) {
+      problems.push(`a <base> pointing elsewhere: ${base}`);
+    }
+    for (const key of ['action', 'formaction']) {
+      const target = attribute(key);
+      if (target !== undefined && absolute(target) && !/^javascript:/i.test(target)) {
+        problems.push(`a form sent to another origin: ${target}`);
+      }
+    }
+    /** @type {{ url: string | undefined; image: boolean }[]} */
+    const loaded = [];
+    const rels = (attribute('rel') ?? '').split(/\s+/);
+    if (name === 'link' && rels.some((rel) => LOADED_LINKS.test(rel))) {
+      const image =
+        rels.some((rel) => IMAGE_LINKS.test(rel)) || attribute('as')?.toLowerCase() === 'image';
+      loaded.push({ url: attribute('href'), image });
+    } else if (name === 'use' || name === 'image' || name === 'feimage') {
+      const image = name !== 'use';
+      loaded.push({ url: attribute('href'), image }, { url: attribute('xlink:href'), image });
+    } else if (name !== 'a' && name !== 'area' && name !== 'base' && name !== 'form') {
+      const image =
+        name === 'img' ||
+        (name === 'input' && attribute('type')?.toLowerCase() === 'image') ||
+        (name === 'source' && media === 'picture');
+      loaded.push({ url: attribute('src'), image });
+      for (const candidate of (attribute('srcset') ?? '').split(',')) {
+        loaded.push({ url: candidate.trim().split(/\s+/)[0], image });
+      }
+      if (name === 'video') loaded.push({ url: attribute('poster'), image: true });
+    }
+    for (const { url, image } of loaded) {
+      if (url === undefined || url === '' || /^javascript:/i.test(url)) continue;
       if (image && /^data:/i.test(url)) continue;
-      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(url))
-        problems.push(`a file from another origin: ${url}`);
+      if (absolute(url)) problems.push(`a file from another origin: ${url}`);
     }
   }
   return problems;

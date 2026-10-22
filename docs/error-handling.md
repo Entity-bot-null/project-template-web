@@ -57,9 +57,10 @@ Rules:
 - **Loading and retry:** `useLoader(fetcher)` gives `loading | loaded | failed` and a `retry()`;
   `LoadFailed` renders the message and a retry button.
 - **Session errors:** a 401 to a request that carried a token triggers one refresh and one replay;
-  a second 401 signs the user out (`src/auth/middleware.ts`). A refresh that fails on the server
-  side or on the network, or gets no answer within 10 seconds (it holds the cross-tab lock
-  meanwhile), keeps the session for the next attempt. A sign-out the server could not
+  a second 401 signs the user out, unless a newer session replaced the one replayed meanwhile
+  (`src/auth/middleware.ts`). A refresh that fails on the server side or on the network, or gets no
+  answer within 10 seconds (it holds a cross-tab lock meanwhile), keeps the session for the next
+  attempt. A sign-out the server could not
   confirm is shown on the sign-in page with a retry.
 - **Render errors:** the root route's `errorElement` (`RouteErrorPage`) catches anything thrown
   while rendering, logs it with `console.error` (the hook for an error tracker, docs/observability.md)

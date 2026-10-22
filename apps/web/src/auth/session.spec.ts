@@ -628,6 +628,56 @@ describe('signIn and signOut', () => {
     expect(getState()).toEqual(SIGNED_OUT);
   });
 
+  it('keeps a sign-in that left after a sign-out, though the sign-out reached it while it waited for a lock', async () => {
+    const locks = exclusiveLocks();
+    const otherTab = deferred<undefined>();
+    void locks.request('auth-refresh', () => otherTab.promise);
+    const { calls } = stubFetch({ [SIGN_IN]: () => session('token-1'), [LOGOUT]: signedOut });
+    const broadcast = new BroadcastChannel('auth');
+    const signedIn = signIn(member.email, 'right');
+    // Another tab signs out while this sign-in waits for the lock: its logout
+    // goes first, and this sign-in, sent after it, stands.
+    broadcast.postMessage('signed-out');
+    broadcast.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    otherTab.resolve(undefined);
+    await expect(signedIn).resolves.toMatchObject({ ok: true });
+    expect(getAccessToken()).toBe('token-1');
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
+    expect(calls.map(routeOf)).toEqual([SIGN_IN]);
+  });
+
+  it('keeps a sign-in made after the sign-out when an older password change answers meanwhile', async () => {
+    exclusiveLocks();
+    const change = deferred<Response>();
+    const second = deferred<Response>();
+    const { calls } = stubFetch({
+      'POST /api/account/password': () => change.promise,
+      [SIGN_IN]: () => second.promise,
+      [LOGOUT]: signedOut,
+    });
+    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    const changed = changePassword('old password', 'violet harbour lantern 7');
+    await expect.poll(() => calls.length).toBe(1);
+    await signOut();
+    // Signed back in: on its way, holding both locks.
+    const signedIn = signIn(member.email, 'right');
+    await expect.poll(() => calls.map(routeOf)).toContain(SIGN_IN);
+    change.resolve(session('token-change'));
+    await changed;
+    // The sign-in's answer sets its cookie and the hint, after the change's.
+    setSessionHint();
+    second.resolve(session('token-D'));
+    await signedIn;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(getAccessToken()).toBe('token-D');
+    expect(getState()).toEqual({ status: 'authenticated', user: member });
+    // No logout after it: it would carry the new session's cookie.
+    const routes = calls.map(routeOf);
+    expect(routes.slice(routes.lastIndexOf(SIGN_IN) + 1)).toEqual([]);
+  });
+
   it('gives up on a sign-in or a logout that does not answer in time, freeing the locks', async () => {
     exclusiveLocks();
     const signInDeadline = new AbortController();
@@ -724,6 +774,21 @@ describe('other tabs', () => {
     expect(getAccessToken()).toBeNull();
     expect(getState().status).toBe('anonymous');
     await expect.poll(() => calls.map(routeOf)).toEqual([SIGN_IN, LOGOUT]);
+  });
+
+  it('leave the session hint alone when a sign-in followed the sign-out a late rotation raced', async () => {
+    clearSession();
+    const gate = deferred<Response>();
+    stubFetch({ [REFRESH]: () => gate.promise });
+    const refreshed = refresh();
+    otherTab.postMessage('signed-out');
+    otherTab.postMessage('signed-in');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The rotation (of the new session) sets the hint as it lands.
+    setSessionHint();
+    gate.resolve(session('token-of-the-new-session'));
+    await refreshed;
+    expect(document.cookie).toContain('has_session');
   });
 
   it('share a sign-in with an anonymous tab', async () => {

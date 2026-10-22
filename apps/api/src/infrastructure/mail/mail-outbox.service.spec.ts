@@ -64,6 +64,40 @@ describe('MailOutboxService', () => {
   const limited = new MailOutboxService(options, registry(true));
   const unlimited = new MailOutboxService(options, registry(false));
 
+  it("drops, unsent, an account's waiting messages of a kind from a payload number on", async () => {
+    const { tx, client } = txWith();
+    tx.$executeRaw.mockResolvedValueOnce(2);
+    await expect(
+      unlimited.expireQueued(client, {
+        kind: 'email_changed',
+        userId: 'u1',
+        key: 'securityVersion',
+        from: 4,
+        reason: 'superseded',
+      }),
+    ).resolves.toBe(2);
+    const [sql, ...values] = tx.$executeRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    const statement = sql.join('?');
+    // The address goes with it, as for any dropped message (the CHECK constraint).
+    expect(statement).toContain(
+      `SET "status" = 'expired', "recipient" = NULL, "locked_until" = NULL`,
+    );
+    expect(statement).toContain(`"status" IN ('pending', 'sending', 'failed')`);
+    // A message without the number (queued by the previous release) goes too.
+    expect(statement).toContain('ELSE true END');
+    expect(values).toEqual([
+      'superseded',
+      'u1',
+      'email_changed',
+      'securityVersion',
+      'securityVersion',
+      4,
+    ]);
+  });
+
   it('queues nothing when email is off: no row, no token to deliver later', async () => {
     const off = new MailOutboxService({ ...options, smtpUrl: undefined }, registry(true));
     const { tx, client } = txWith();

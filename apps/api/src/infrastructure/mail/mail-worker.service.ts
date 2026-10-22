@@ -18,6 +18,7 @@ import { MailOutboxService } from './mail-outbox.service.js';
 import {
   MAIL_BACKLOG_DEGRADED_SEC,
   MAIL_FAILURE_DEGRADED_MS,
+  MAIL_EXCHANGE_MAX_MS,
   MAIL_LEASE_RENEW_MS,
   MAIL_OPTIONS,
   MAIL_POLL_INTERVAL_MS,
@@ -240,7 +241,18 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
   // step): the lease is renewed while it lasts, so no other worker takes the
   // message over and sends it too.
   private async sendLeased(claimed: ClaimedMessage, mail: OutgoingMail, label: string) {
+    const started = Date.now();
     const renewal = setInterval(() => {
+      // A relay that answers every step just in time would hold the message,
+      // and this worker, for good: past the cap the lease runs out, and
+      // another worker takes the message over (it may then go out twice).
+      if (Date.now() - started >= MAIL_EXCHANGE_MAX_MS) {
+        clearInterval(renewal);
+        this.logger.warn(
+          `${label}: the SMTP exchange has lasted ${String(MAIL_EXCHANGE_MAX_MS / 60_000)} minutes; its lease is no longer renewed`,
+        );
+        return;
+      }
       void this.store.renewLease(claimed).catch((error: unknown) => {
         this.logger.warn(`Could not renew the lease of ${label}: ${message(error)}`);
       });

@@ -163,6 +163,61 @@ SET lock_timeout = '5s';`;
     ]);
   });
 
+  test('leaves alone what only covers columns the same migration added (a new optional relation)', () => {
+    const relation = (
+      /** @type {boolean} */ unique,
+    ) => `ALTER TABLE "users" ADD COLUMN "team_id" UUID;
+${unique ? 'CREATE UNIQUE INDEX "users_team_id_key"' : 'CREATE INDEX "users_team_id_idx"'} ON "users"("team_id");
+ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;`;
+    assert.deepEqual(kinds(relation(true)), []);
+    assert.deepEqual(kinds(relation(false)), []);
+    assert.deepEqual(
+      kinds('ALTER TABLE users ADD COLUMN code TEXT, ADD CONSTRAINT users_code_key UNIQUE (code);'),
+      [],
+    );
+    // An existing column among them, or an expression: tightening.
+    assert.deepEqual(
+      kinds(
+        'ALTER TABLE "users" ADD COLUMN "team_id" UUID;\nCREATE UNIQUE INDEX "u" ON "users"("team_id", "email");',
+      ),
+      ['adds a unique index to an existing table'],
+    );
+    assert.deepEqual(
+      kinds(
+        'ALTER TABLE "users" ADD COLUMN "nick" TEXT;\nCREATE UNIQUE INDEX "u" ON "users"(lower("nick"));',
+      ),
+      ['adds a unique index to an existing table'],
+    );
+    // A CHECK reads an expression: what it covers is not told.
+    assert.deepEqual(
+      kinds(
+        'ALTER TABLE "users" ADD COLUMN "age" INTEGER, ADD CONSTRAINT "users_age_check" CHECK ("age" >= 0);',
+      ),
+      ['adds a constraint to an existing table'],
+    );
+  });
+
+  test('finds dropped unique constraints and primary keys, and every name of a DROP INDEX', () => {
+    assert.deepEqual(kinds('ALTER TABLE "users" DROP CONSTRAINT "users_email_key";'), [
+      'drops a unique constraint',
+    ]);
+    assert.deepEqual(kinds('ALTER TABLE "users" DROP CONSTRAINT IF EXISTS "users_pkey";'), [
+      'drops a primary key',
+    ]);
+    assert.deepEqual(kinds('ALTER TABLE "users" DROP CONSTRAINT "users_team_id_fkey";'), []);
+    assert.deepEqual(kinds('DROP INDEX IF EXISTS "users_email_key", "users_name_idx";'), [
+      'drops a unique index',
+    ]);
+    assert.deepEqual(kinds('DROP INDEX "users_name_idx" CASCADE;'), []);
+  });
+
+  test('reads names as written: a quoted index name holding " on " names no table', () => {
+    assert.deepEqual(
+      kinds('CREATE TABLE "t" ("id" INTEGER);\nCREATE UNIQUE INDEX "idx on x" ON "t"("id");'),
+      [],
+    );
+  });
+
   test('applies those rules only from TIGHTENING_FROM on: earlier migrations shipped before them', () => {
     const sql = 'ALTER TABLE "users" ADD CONSTRAINT "users_check" CHECK (true);';
     assert.deepEqual(

@@ -753,7 +753,10 @@ The web app's deployment settings are set on the web container and served as `/a
 1. Add the value to `enum Role` in `apps/api/prisma/schema.prisma` and to `ROLES` in
    `apps/api/src/common/types/request-user.ts`, in the same order, least to most privileged (a
    unit spec fails when they differ).
-2. `pnpm db:migrate --name add_<role>_role`.
+2. The migration, written before it is applied: `pnpm db:migrate --name add_<role>_role --create-only`,
+   then in its `migration.sql` turn `ADD VALUE '<role>'` into `ADD VALUE IF NOT EXISTS '<role>'`
+   (`scripts/check-migrations.mjs` asks for it: PostgreSQL cannot drop an enum value, so a migration
+   that failed after adding it could not run again), then `pnpm db:migrate` to apply it.
 3. Use it: `@Auth('admin', '<role>')` on the routes it may call, ownership rules in the services,
    `<RequireRole role={['admin', '<role>']} />` for its screens.
 4. `pnpm contract` (the role appears in the contract; the web `Role` type follows).
@@ -913,8 +916,10 @@ must happen exactly once, make the write itself idempotent in the database
 Email goes through the outbox ([architecture.md](architecture.md#email)): you queue a message in
 the transaction of the change it reports, never send it from the request.
 
-1. **A kind.** Add it to `MailKind` in `apps/api/prisma/schema.prisma` and run
-   `pnpm db:migrate --name add_<kind>_mail_kind` (`ALTER TYPE ... ADD VALUE`: an expand step).
+1. **A kind.** Add it to `MailKind` in `apps/api/prisma/schema.prisma`, create the migration
+   without applying it, `pnpm db:migrate --name add_<kind>_mail_kind --create-only`, turn its
+   `ADD VALUE '<kind>'` into `ADD VALUE IF NOT EXISTS '<kind>'` (an expand step that can run again
+   after a failure: [database.md](database.md#when-a-migration-fails)), then `pnpm db:migrate`.
 2. **A template** in `apps/api/src/infrastructure/mail/templates/`, registered in `registry.ts`:
 
    ```ts

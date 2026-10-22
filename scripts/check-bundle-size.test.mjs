@@ -163,4 +163,53 @@ describe('cspProblems', () => {
       'a file from another origin: data:text/javascript,alert(1)',
     ]);
   });
+
+  test('reads tags as a browser does: quotes, comments and script text', () => {
+    // A `>` inside a quoted value (Tailwind's [&>svg]) does not end the tag.
+    assert.deepEqual(cspProblems('<div class="[&>svg]:size-4" style="color:red">x</div>'), [
+      'a style attribute on <div>',
+    ]);
+    assert.deepEqual(cspProblems('<img/src="https://cdn.example.net/a.png">'), [
+      'a file from another origin: https://cdn.example.net/a.png',
+    ]);
+    // Text that only looks like markup or attributes.
+    assert.deepEqual(
+      cspProblems(`<!-- <script>x</script> -->
+        <meta name="description" content="Choose a style = yours, get online=fast">
+        <p title="x onclick=go()">x</p>
+        <script type="application/ld+json ">{"name":"<b style=x>"}</script>`),
+      [],
+    );
+  });
+
+  test('finds forms, objects, bases and SVG files the policy refuses', () => {
+    assert.deepEqual(
+      cspProblems(`<form action="https://news.example.net/subscribe"><button formaction="//x.example.net/">Go</button></form>
+        <object data="/doc.pdf"></object><embed src="/movie.swf">
+        <base href="https://cdn.example.net/">
+        <svg><use href="//cdn.example.net/s.svg#a"></use><image xlink:href="https://cdn.example.net/i.png"></image></svg>
+        <video poster="https://cdn.example.net/p.png"><source src="data:video/mp4;base64,AAAA"></video>`),
+      [
+        'a form sent to another origin: https://news.example.net/subscribe',
+        'a form sent to another origin: //x.example.net/',
+        "an <object> (object-src 'none')",
+        "an <embed> (object-src 'none')",
+        'a <base> pointing elsewhere: https://cdn.example.net/',
+        'a file from another origin: //cdn.example.net/s.svg#a',
+        'a file from another origin: https://cdn.example.net/i.png',
+        'a file from another origin: https://cdn.example.net/p.png',
+        'a file from another origin: data:video/mp4;base64,AAAA',
+      ],
+    );
+  });
+
+  test('allows images from data: URLs, as the policy does', () => {
+    assert.deepEqual(
+      cspProblems(`<link rel="icon" href="data:image/svg+xml,%3Csvg%3E">
+        <link rel="preload" as="image" href="data:image/png;base64,AAAA">
+        <input type="image" src="data:image/png;base64,AAAA" alt="Go">
+        <picture><source srcset="data:image/webp;base64,AAAA"><img src="data:image/png;base64,AAAA" alt=""></picture>`),
+      [],
+    );
+  });
 });

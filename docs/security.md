@@ -225,8 +225,10 @@ password) in someone else's hands cannot take the account for good:
   link of the account is dropped **except the undo links of earlier changes**, so the earliest owner
   wins. They are ranked by the change they undo (the account's `security_version` right after it),
   not by when their notice went out: a notice that waited in the outbox still outranks the links of
-  later changes. Whoever took the account and undoes their own later
-  change cannot void the owner's link; the owner's link voids theirs (both orders are tested). The
+  later changes, and the notices of later changes still waiting in the outbox are dropped unsent
+  (one being sent at that moment carries no link: its template sees the undo used). Whoever took
+  the account and undoes their own later change cannot void the owner's link; the owner's link
+  voids theirs, whichever notice went out first (every order is tested). The
   undo link is **not bound to the account's later state** and is never replaced by a newer one:
   changing the address again or the password does not void it either. A refused password keeps the
   link usable; an address taken meanwhile answers 409.
@@ -238,7 +240,8 @@ password) in someone else's hands cannot take the account for good:
 ### Web client
 
 - **401 handling** (`web/src/auth/middleware.ts`): a 401 to a request that carried a token
-  triggers one refresh (shared by every concurrent caller) and one replay; a second 401 signs out.
+  triggers one refresh (shared by every concurrent caller) and one replay; a second 401 signs out,
+  unless a newer session (a password change answered meanwhile) replaced the one replayed.
   A request that went out without a token is left alone; when another request already refreshed,
   the replay uses that token instead of rotating again; and a request is never replayed for
   another user than the one who sent it.
@@ -263,14 +266,17 @@ password) in someone else's hands cannot take the account for good:
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next
   visit would restore; the logout request leaves at once, with `keepalive` so closing the page
   does not cancel it, without waiting for a refresh in flight (any token of the family ends the
-  whole family): only another tab's sign-in on its way goes first, and that one ends this session
-  itself. A rotation that lands after the sign-out cannot bring the hint back: it is dropped again.
+  whole family): only another tab's sign-in on its way goes first; if it succeeds it ends this
+  session itself, and if it fails this logout follows (or the sign-in page's retry). A rotation
+  that lands after the sign-out cannot bring the hint back: it is dropped again, unless a sign-in
+  followed the sign-out (the hint is then the new session's).
   If the server cannot be reached, the sign-in page says so and offers a retry.
 - **Ordering:** a sign-in waits for a logout or a refresh still on its way, which would otherwise
   clear or replace the cookie it sets; a refresh that lands after a sign-in or a sign-out never
-  overwrites it; a sign-in or a password change answered after a sign-out (this tab's, or another
-  tab's reaching it meanwhile) does not sign the tab back in, and the session it started is ended
-  on the server too.
+  overwrites it; a sign-in or a password change still on its way when a sign-out reaches the tab
+  (this tab's, or another tab's; a sign-in still waiting for a lock is not on its way yet, and stands
+  once sent) does not sign the tab back in, and the session it started is ended on the server too,
+  unless a newer session's answer replaced its cookie meanwhile (the readable hint says so).
 - After a sign-out the next user starts at home, not on the page the previous one left.
 
 ## Secret rotation
@@ -852,8 +858,8 @@ Accepted on purpose, each with its way out:
   prefix to a third party).
 - **A password change in one tab while another tab renews its session** at that very instant can
   leave the older cookie in the browser: that session ended on the server, so the browser asks to
-  sign in again (with the new password). The change does not take the cross-tab lock, which an
-  expired access token's renewal would wait on forever (`web/src/auth/session.ts`).
+  sign in again (with the new password). The change takes neither cross-tab lock: an expired access
+  token's renewal, which takes the refresh one, would wait on it forever (`web/src/auth/session.ts`).
 - **A refresh response lost on the network** (the server rotated the token, the connection
   dropped before the answer arrived) looks like theft once 30 seconds have passed: the family
   ends and the user signs in again. That is the price of reuse detection (RFC 9700 accepts it);

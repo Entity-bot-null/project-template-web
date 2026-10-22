@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { disabledErrorTracker, setErrorTracker } from '../../observability/error-tracker.js';
 import type { MailOutboxService } from './mail-outbox.service.js';
 import { MailWorker } from './mail-worker.service.js';
-import { MAIL_LEASE_MS } from './mail.constants.js';
+import { MAIL_EXCHANGE_MAX_MS, MAIL_LEASE_MS } from './mail.constants.js';
 import type { MailStore, OutboxStats } from './mail.store.js';
 import type { MailTransport } from './mail.transport.js';
 import type { ClaimedMessage, MailOptions, OutgoingMail } from './mail.types.js';
@@ -354,6 +354,34 @@ describe('MailWorker', () => {
       expect(context.store.markSent).toHaveBeenCalledWith(queued);
       vi.advanceTimersByTime(MAIL_LEASE_MS);
       expect(context.store.renewLease).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops renewing past the exchange cap, so another worker can take a hung message over', async () => {
+    let finish: () => void = () => undefined;
+    const exchange = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const queued = message();
+    const context = tracked(setup({ send: () => exchange }));
+    await started(context);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      context.queue.push(queued);
+      const run = context.worker.runOnce();
+      await vi.waitFor(() => {
+        expect(context.transport.send).toHaveBeenCalled();
+      });
+      vi.advanceTimersByTime(MAIL_EXCHANGE_MAX_MS + MAIL_LEASE_MS);
+      const renewals = context.store.renewLease.mock.calls.length;
+      expect(renewals).toBeLessThanOrEqual(MAIL_EXCHANGE_MAX_MS / (MAIL_LEASE_MS / 3));
+      expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('no longer renewed'));
+      vi.advanceTimersByTime(10 * MAIL_LEASE_MS);
+      expect(context.store.renewLease).toHaveBeenCalledTimes(renewals);
+      finish();
+      await run;
     } finally {
       vi.useRealTimers();
     }

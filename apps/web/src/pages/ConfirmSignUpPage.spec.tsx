@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearSession, getAccessToken, getState, resetForTests } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, session, stubFetch } from '../test/http';
+import { deferred, failure, session, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const CONFIRM = 'POST /api/auth/sign-ups/confirm';
@@ -48,6 +48,27 @@ describe('ConfirmSignUpPage', () => {
     await expect(calls[0]?.json()).resolves.toEqual({ token: TOKEN, password: PASSWORD });
     expect(getAccessToken()).toBe('token-new');
     expect(getState()).toEqual({ status: 'authenticated', user: member });
+  });
+
+  it('says the account is ready when another tab signed out while it was being created', async () => {
+    const answer = deferred<Response>();
+    stubFetch({
+      [CONFIRM]: () => answer.promise,
+      'POST /api/auth/logout': () => new Response(null, { status: 204 }),
+    });
+    renderRoute(LINK);
+    await confirm(PASSWORD);
+    const otherTab = new BroadcastChannel('auth');
+    otherTab.postMessage('signed-out');
+    otherTab.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answer.resolve(session('token-new', member));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Your account is ready' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument();
+    expect(getAccessToken()).toBeNull();
   });
 
   it('asks for a password before sending anything', async () => {

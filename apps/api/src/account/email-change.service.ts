@@ -192,6 +192,17 @@ export class EmailChangeService {
             NOT: { purpose: 'email_revert', securityVersion: { lt: used.securityVersion } },
           },
         });
+        // Notices of this change or later ones that still wait in the outbox
+        // would mint undo links after this one is used: dropped unsent. One
+        // being sent right now is refused by its template, which sees this
+        // link used (email-changed.template.ts).
+        await this.mail.expireQueued(tx, {
+          kind: 'email_changed',
+          userId: current.id,
+          key: 'securityVersion',
+          from: used.securityVersion,
+          reason: 'superseded',
+        });
         const payload: PasswordChangedPayload = {
           changedAt: new Date(now).toISOString(),
           via: 'reset',

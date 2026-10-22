@@ -284,7 +284,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ap
 Generate each password with `openssl rand -hex 24`. The migrator owns the schema and is used only by
 the migration job; the API connects as `app_runtime`, which can read and write data but cannot
 change the schema, nor the migration history: a migration takes its rights on `_prisma_migrations`
-back at the first deployment.
+back at the first deployment. Running these statements again after a deployment (a new database, a
+restore) gives those rights back: follow them with
+`REVOKE ALL ON TABLE _prisma_migrations FROM app_runtime;`.
 
 ## 6. The files on the server
 

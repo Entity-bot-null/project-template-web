@@ -114,6 +114,30 @@ export class MailOutboxService {
   }
 
   /**
+   * Drops, unsent, the messages of a kind about an account that still wait in
+   * the outbox (pending, being sent, failed), whose payload number `key` is at
+   * least `from` or missing: what a later change made moot. Inside the
+   * caller's transaction, like enqueue. A message being sent right now cannot
+   * be stopped: its template has to refuse it at render time.
+   */
+  async expireQueued(
+    tx: Prisma.TransactionClient,
+    input: { kind: MailKind; userId: string; key: string; from: number; reason: string },
+  ): Promise<number> {
+    const { kind, userId, key, from, reason } = input;
+    return tx.$executeRaw`
+      UPDATE "mail_messages"
+      SET "status" = 'expired', "recipient" = NULL, "locked_until" = NULL,
+          "last_error" = ${reason}, "updated_at" = now()
+      WHERE "user_id" = ${userId}::uuid
+        AND "kind" = ${kind}::"MailKind"
+        AND "status" IN ('pending', 'sending', 'failed')
+        AND CASE WHEN "payload"->>${key} ~ '^[0-9]{1,18}$'
+                 THEN ("payload"->>${key})::bigint >= ${from}
+                 ELSE true END`;
+  }
+
+  /**
    * Call after the transaction that queued a message has committed: this
    * instance's worker looks at once instead of at its next poll. Best effort:
    * the poll finds the message anyway.

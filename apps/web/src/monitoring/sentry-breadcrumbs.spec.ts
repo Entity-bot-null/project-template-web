@@ -39,6 +39,15 @@ it('sends no invitee address when an admin clicks a row action', async () => {
     'GET /api/admin/invitations': () => ok({ items: [pending], total: 1 }),
     'POST /api/admin/invitations': () => held.promise,
   });
+  renderRoute('/admin/invitations');
+  // The page first, then the SDK: its DOM instrumentation only has to be on
+  // before the click, and the page's lazy chunk and list load under the
+  // whole suite's load, hence the explicit wait.
+  const resend = await screen.findByRole(
+    'button',
+    { name: `Send again to ${pending.email}` },
+    { timeout: 10_000 },
+  );
   // A loopback DSN on a closed port: nothing leaves the machine.
   const report = initSentry({
     dsn: 'http://public@127.0.0.1:9/1',
@@ -51,8 +60,6 @@ it('sends no invitee address when an admin clicks a row action', async () => {
     envelopes.push(JSON.stringify(envelope));
   });
 
-  renderRoute('/admin/invitations');
-  const resend = await screen.findByRole('button', { name: `Send again to ${pending.email}` });
   await userEvent.setup().click(resend);
   // Any later unexpected error on the page carries the breadcrumbs with it.
   report(new Error('Something broke later'), { source: 'window' });
@@ -61,4 +68,4 @@ it('sends no invitee address when an admin clicks a row action', async () => {
   const sent = envelopes.join('\n');
   expect(sent).toContain('"category":"ui.click"');
   expect(sent).not.toContain(pending.email);
-});
+}, 20_000);
