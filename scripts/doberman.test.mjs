@@ -495,6 +495,11 @@ describe('cleanup', () => {
     const result = json(run);
     assert.deepEqual(result.removed, ['src/repro.doberman.spec.ts']);
     assert.equal(existsSync(join(dir, 'src/repro.doberman.spec.ts')), false);
+    // A copy stays in the run directory, for a fix to keep as its regression test.
+    assert.equal(
+      readFileSync(join(context.runDir, 'reproductions', 'src/repro.doberman.spec.ts'), 'utf8'),
+      '// DOBERMAN-TEMPORARY: R1\n',
+    );
     assert.equal(existsSync(join(dir, 'src/earlier.doberman.spec.ts')), true);
     assert.equal(existsSync(join(dir, 'src/unmarked.doberman.spec.ts')), true);
     assert.equal(result.clean, false);
@@ -861,6 +866,617 @@ describe('verdict', () => {
         l.startsWith('CLEANUP INCOMPLETE'),
       ),
     );
+  });
+});
+
+describe('loop', () => {
+  /**
+   * A repository on a feature branch with one committed change, so a round
+   * has something to review.
+   */
+  function makeBranch() {
+    const dir = makeRepo();
+    git(dir, ['checkout', '--quiet', '-b', 'feat/loop']);
+    write(dir, 'src/app.ts', 'export const value = 1;\n');
+    git(dir, ['add', '--all']);
+    git(dir, ['commit', '--quiet', '--no-verify', '--message', 'feat: app']);
+    return dir;
+  }
+
+  /**
+   * Starts a loop and returns round 1's context.
+   * @param {string} dir
+   * @param {string[]} [args]
+   */
+  function loopStart(dir, args = []) {
+    const run = engine(dir, ['loop', 'start', ...args]);
+    assert.equal(run.status, 0, run.stderr);
+    return json(run);
+  }
+
+  /**
+   * Finishes a round: its result, the cleanup and a valid verdict.
+   * @param {string} dir
+   * @param {any} context
+   * @param {{ findings?: object[]; reproductions?: object[]; resolved?: object[] }} [result]
+   */
+  function decide(dir, context, { findings = [], reproductions = [], resolved } = {}) {
+    writeResult(context, { findings, reproductions });
+    if (resolved !== undefined) {
+      const path = join(context.runDir, 'result.json');
+      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), resolved }));
+    }
+    return json(cleanAndDecide(dir, context));
+  }
+
+  /**
+   * @param {any} context
+   * @param {{ fixed?: object[]; deferred?: object[] }} fixes
+   */
+  function writeFixes(context, fixes) {
+    writeFileSync(join(context.runDir, 'fixes.json'), JSON.stringify(fixes));
+  }
+
+  test('start: round 1 in a private loop directory; a wrong mode or round limit stops before anything is written', () => {
+    const dir = makeBranch();
+    const before = runCount();
+    for (const args of [
+      ['--mode', 'diff'],
+      ['--mode', 'security'],
+      ['--max-rounds', '0'],
+      ['--max-rounds', '6'],
+      ['--max-rounds', 'two'],
+      ['--base', 'does-not-exist'],
+    ]) {
+      const run = engine(dir, ['loop', 'start', ...args]);
+      assert.equal(run.status, 2, args.join(' '));
+    }
+    assert.match(engine(dir, ['loop', 'start', '--mode', 'tests']).stderr, /a loop runs in --mode/);
+    assert.match(engine(dir, ['loop', 'start', '--max-rounds', '9']).stderr, /from 1 to 5/);
+    assert.match(engine(dir, ['loop', 'frobnicate']).stderr, /unknown loop step/);
+    assert.match(engine(dir, ['loop', 'next']).stderr, /--loop <dir> is required/);
+    assert.equal(runCount(), before);
+
+    const context = loopStart(dir);
+    assert.equal(context.loop.round, 1);
+    assert.equal(context.loop.maxRounds, 5);
+    assert.equal(dirname(context.runDir), context.loop.dir);
+    assert.equal(context.git.base.ref, 'main');
+    const state = JSON.parse(readFileSync(join(context.loop.dir, 'loop.json'), 'utf8'));
+    assert.deepEqual(
+      state.rounds.map((/** @type {{ round: number }} */ round) => round.round),
+      [1],
+    );
+    assert.ok(existsSync(join(context.loop.dir, 'snapshot.json')));
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(context.loop.dir).mode & 0o777, 0o700);
+      assert.equal(statSync(context.runDir).mode & 0o777, 0o700);
+    }
+    assert.equal(loopStart(dir, ['--max-rounds', '3', '--mode', 'full']).loop.maxRounds, 3);
+  });
+
+  test('next: refuses a round without a valid verdict, and fixes.json that leaves a finding unaccounted', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    const loopDir = round1.loop.dir;
+    const next = () => engine(dir, ['loop', 'next', '--loop', loopDir]);
+    assert.match(next().stderr, /round 1 has no valid verdict/);
+
+    decide(dir, round1, {
+      findings: [
+        finding('F1', 'SHOULD FIX'),
+        finding('F2', 'BLOCKING', { verification: 'REPRODUCED', reproductionId: 'R1' }),
+        finding('F3', 'LOW'),
+      ],
+      reproductions: [{ id: 'R1', status: 'REPRODUCED', evidence: 'expected 1, got 2' }],
+    });
+    let output = json(next());
+    assert.equal(output.valid, false);
+    assert.match(output.errors.join('\n'), /fixes\.json is missing/);
+
+    // F2 neither fixed nor deferred; F1 fixed in a file that did not change.
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/app.ts'] }] });
+    output = json(next());
+    let errors = output.errors.join('\n');
+    assert.match(errors, /src\/app\.ts has not changed since round 1 started/);
+    assert.match(errors, /BLOCKING F2 is neither fixed nor deferred/);
+
+    // F2 reproduced: its fix keeps the reproduction as a permanent test.
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, {
+      fixed: [
+        { finding: 'F1', files: ['./src/app.ts'] },
+        { finding: 'F2', files: ['src/app.ts'] },
+        { finding: 'F9', files: ['src/app.ts'] },
+      ],
+      deferred: [{ finding: 'F1', reason: '' }],
+    });
+    errors = json(next()).errors.join('\n');
+    assert.match(errors, /fixed F2: a reproduced bug keeps its reproduction/);
+    assert.match(errors, /"F9" is not a finding of round 1/);
+    assert.match(errors, /lists F1 more than once/);
+
+    write(dir, 'src/app.doberman.spec.ts', '// DOBERMAN-TEMPORARY: R1\n');
+    writeFixes(round1, {
+      fixed: [
+        { finding: 'F1', files: ['src/app.ts'] },
+        { finding: 'F2', files: ['src/app.ts'], regressionTest: 'src/app.doberman.spec.ts' },
+      ],
+    });
+    errors = json(next()).errors.join('\n');
+    assert.match(errors, /regressionTest src\/app\.doberman\.spec\.ts must be a test file/);
+    assert.match(errors, /a reproduction file is still there/);
+    rmSync(join(dir, 'src/app.doberman.spec.ts'));
+    assert.equal(json(engine(dir, ['loop', 'status', '--loop', loopDir])).rounds.length, 1);
+  });
+
+  test('next: the next round reviews the fixes, with their patch, against the same base', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    decide(dir, round1, {
+      findings: [
+        finding('F1', 'BLOCKING', { verification: 'REPRODUCED', reproductionId: 'R1' }),
+        finding('F2', 'SHOULD FIX', { title: 'needs a dependency' }),
+        finding('F3', 'LOW', { title: 'a stale comment' }),
+      ],
+      reproductions: [{ id: 'R1', status: 'REPRODUCED', evidence: 'expected 1, got 2' }],
+    });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    write(dir, 'src/app.spec.ts', 'test("value", () => {});\n');
+    writeFixes(round1, {
+      fixed: [{ finding: 'F1', files: ['src/app.ts'], regressionTest: 'src/app.spec.ts' }],
+      deferred: [{ finding: 'F2', reason: 'needs your decision: adds a dependency' }],
+    });
+    // The base moves meanwhile: the loop keeps comparing against the first one.
+    git(dir, ['branch', '--force', 'main', 'HEAD']);
+    const run = engine(dir, ['loop', 'next', '--loop', round1.loop.dir]);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const round2 = json(run);
+    assert.equal(round2.loop.round, 2);
+    assert.equal(round2.loop.previousRunDir, round1.runDir);
+    assert.deepEqual(round2.loop.fixes, ['src/app.spec.ts', 'src/app.ts']);
+    assert.deepEqual(round2.loop.fixed, ['F1']);
+    assert.deepEqual(round2.loop.deferred, [
+      { finding: 'F2', reason: 'needs your decision: adds a dependency' },
+    ]);
+    assert.equal(round2.git.base.sha, round1.git.base.sha);
+    const patch = readFileSync(round2.loop.patch, 'utf8');
+    assert.match(patch, /--- a\/src\/app\.ts\n\+\+\+ b\/src\/app\.ts\n@@/);
+    assert.match(patch, /-export const value = 1;\n\+export const value = 2;/);
+    assert.match(patch, /--- \/dev\/null\n\+\+\+ b\/src\/app\.spec\.ts/);
+    // A round is never started twice.
+    assert.match(
+      engine(dir, ['loop', 'next', '--loop', round1.loop.dir]).stderr,
+      /round 2 has no valid verdict/,
+    );
+  });
+
+  test('a later round carries what the round before left unfixed, or says why it no longer applies', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    decide(dir, round1, {
+      findings: [
+        finding('F1', 'SHOULD FIX'),
+        finding('F2', 'SHOULD FIX'),
+        finding('F3', 'LOW'),
+        finding('F4', 'NIT', { verification: 'UNVERIFIED' }),
+      ],
+    });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, {
+      fixed: [{ finding: 'F1', files: ['src/app.ts'] }],
+      deferred: [{ finding: 'F2', reason: 'needs your decision: a product choice' }],
+    });
+    const round2 = json(engine(dir, ['loop', 'next', '--loop', round1.loop.dir]));
+
+    let output = decide(dir, round2, {
+      findings: [finding('F1', 'SHOULD FIX', { carriedFrom: '1:F1' })],
+    });
+    assert.equal(output.valid, false);
+    let errors = output.errors.join('\n');
+    // A fixed finding is not carried: a fix that did not hold is a new finding.
+    assert.match(
+      errors,
+      /1:F1 was fixed by round 1; a fix that did not hold is a new finding with "reopens"/,
+    );
+    for (const key of ['1:F2', '1:F3', '1:F4']) assert.match(errors, new RegExp(`${key} \\(`));
+
+    output = decide(dir, round2, {
+      findings: [
+        finding('F1', 'SHOULD FIX', { carriedFrom: '1:F2' }),
+        finding('F2', 'LOW', { carriedFrom: '1:F3' }),
+      ],
+      resolved: [{ carriedFrom: '1:F4', evidence: '' }],
+    });
+    assert.match(output.errors.join('\n'), /resolved 1:F4: no evidence/);
+
+    output = decide(dir, round2, {
+      findings: [
+        finding('F1', 'SHOULD FIX', { carriedFrom: '1:F2' }),
+        finding('F2', 'LOW', { carriedFrom: '1:F3' }),
+      ],
+      resolved: [{ carriedFrom: '1:F4', evidence: 'the fix of F1 removed that code' }],
+    });
+    assert.equal(output.valid, true, output.errors.join('\n'));
+    assert.equal(output.verdict, 'CHANGES REQUIRED');
+  });
+
+  test('finish: needs a verdict; refuses unreviewed changes and an early stop that is not deferred', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir, ['--max-rounds', '2']);
+    const loopDir = round1.loop.dir;
+    const finish = () => engine(dir, ['loop', 'finish', '--loop', loopDir, '--remove-artifacts']);
+    assert.match(finish().stderr, /round 1 has no valid verdict/);
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX'), finding('F2', 'LOW')] });
+
+    // Rounds left and a SHOULD FIX open: only when it needs the user's decision.
+    let output = json(finish());
+    assert.equal(output.valid, false);
+    assert.match(output.errors.join('\n'), /fixes\.json is missing/);
+    writeFixes(round1, { fixed: [], deferred: [{ finding: 'F1', reason: '' }] });
+    assert.match(json(finish()).errors.join('\n'), /deferred F1: no reason/);
+
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, { fixed: [], deferred: [{ finding: 'F1', reason: 'needs your decision' }] });
+    output = json(finish());
+    assert.match(
+      output.errors.join('\n'),
+      /changed after round 1 started, so never reviewed: src\/app\.ts/,
+    );
+    assert.match(output.errors.join('\n'), /run `loop next`/);
+
+    write(dir, 'src/app.ts', 'export const value = 1;\n');
+    const run = finish();
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const summary = json(run);
+    assert.equal(summary.reason, 'needs-decision');
+    assert.equal(summary.final.verdict, 'CHANGES REQUIRED');
+    assert.deepEqual(
+      summary.open.map((/** @type {{ id: string; needsDecision: string | null }} */ item) => [
+        item.id,
+        item.needsDecision,
+      ]),
+      [
+        ['F1', 'needs your decision'],
+        ['F2', null],
+      ],
+    );
+    assert.deepEqual(summary.changes, []);
+    assert.ok(existsSync(join(loopDir, 'summary.json')));
+    assert.match(finish().stderr, /finished already \(needs-decision\)/);
+    assert.match(
+      engine(dir, ['loop', 'next', '--loop', loopDir]).stderr,
+      /this loop is finished \(needs-decision\)/,
+    );
+  });
+
+  test('the loop stops at its round limit, and says why it stopped and what is still open', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir, ['--max-rounds', '2']);
+    const loopDir = round1.loop.dir;
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX'), finding('F2', 'SHOULD FIX')] });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, {
+      fixed: [{ finding: 'F1', files: ['src/app.ts'] }],
+      deferred: [{ finding: 'F2', reason: 'needs your decision: a contract change' }],
+    });
+    const round2 = json(engine(dir, ['loop', 'next', '--loop', loopDir]));
+    decide(dir, round2, {
+      findings: [
+        finding('F1', 'SHOULD FIX', { carriedFrom: '1:F2' }),
+        finding('F2', 'SHOULD FIX', { title: 'the fix of F1 broke a caller' }),
+      ],
+    });
+    let status = json(engine(dir, ['loop', 'status', '--loop', loopDir]));
+    assert.match(status.next, /loop finish/);
+    assert.match(engine(dir, ['loop', 'next', '--loop', loopDir]).stderr, /has run its 2 round/);
+
+    // A fix after the last round would go unreviewed.
+    write(dir, 'src/app.ts', 'export const value = 3;\n');
+    const refused = json(engine(dir, ['loop', 'finish', '--loop', loopDir]));
+    assert.match(refused.errors.join('\n'), /The loop has no round left: undo them/);
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+
+    const summary = json(engine(dir, ['loop', 'finish', '--loop', loopDir]));
+    assert.equal(summary.reason, 'round-limit');
+    assert.deepEqual(
+      summary.rounds.map((/** @type {{ verdict: string; fixed: string[] }} */ round) => [
+        round.verdict,
+        round.fixed,
+      ]),
+      [
+        ['CHANGES REQUIRED', ['F1']],
+        ['CHANGES REQUIRED', []],
+      ],
+    );
+    assert.deepEqual(
+      summary.open.map(
+        (/** @type {{ carriedFrom: string | null; needsDecision: string | null }} */ item) => [
+          item.carriedFrom,
+          item.needsDecision,
+        ],
+      ),
+      [
+        ['1:F2', 'needs your decision: a contract change'],
+        [null, null],
+      ],
+    );
+    assert.deepEqual(summary.changes, ['M src/app.ts']);
+    assert.deepEqual(summary.violations, []);
+    status = json(engine(dir, ['loop', 'status', '--loop', loopDir]));
+    assert.match(status.next, /finished \(round-limit\)/);
+  });
+
+  test('ready ends the loop; a round that fixed nothing, a commit or a staged change never starts another', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    const loopDir = round1.loop.dir;
+    decide(dir, round1, { findings: [finding('F1', 'LOW')] });
+    writeFixes(round1, { fixed: [] });
+    assert.match(
+      json(engine(dir, ['loop', 'next', '--loop', loopDir])).errors.join('\n'),
+      /round 1 fixed nothing/,
+    );
+
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    git(dir, ['add', 'src/app.ts']);
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/app.ts'] }] });
+    assert.match(
+      json(engine(dir, ['loop', 'next', '--loop', loopDir])).errors.join('\n'),
+      /the git index \(staged changes\) changed since round 1 started: the loop never commits, stages/,
+    );
+    git(dir, ['commit', '--quiet', '--no-verify', '--message', 'fix: value']);
+    assert.match(
+      json(engine(dir, ['loop', 'next', '--loop', loopDir])).errors.join('\n'),
+      /HEAD moved: .* since round 1 started/,
+    );
+    git(dir, ['reset', '--quiet', '--soft', 'HEAD~1']);
+    git(dir, ['reset', '--quiet']);
+    const run = engine(dir, ['loop', 'next', '--loop', loopDir]);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const round2 = json(run);
+    const { verdict } = decide(dir, round2);
+    assert.ok(['READY TO MERGE', 'READY WITH ENVIRONMENT LIMITATIONS'].includes(verdict), verdict);
+    const summary = json(engine(dir, ['loop', 'finish', '--loop', loopDir, '--remove-artifacts']));
+    assert.equal(summary.reason, 'ready');
+    assert.deepEqual(summary.changes, ['M src/app.ts']);
+    assert.equal(summary.roundsRun, 2);
+  });
+
+  test('a round is held to the result its verdict checked: no finding drops out of the loop by editing it', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    const loopDir = round1.loop.dir;
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX'), finding('F2', 'BLOCKING')] });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/app.ts'] }] });
+    // F2 dropped from result.json after the verdict: the loop reads what the verdict checked.
+    const path = join(round1.runDir, 'result.json');
+    const edited = JSON.parse(readFileSync(path, 'utf8'));
+    edited.findings = edited.findings.filter((/** @type {{ id: string }} */ f) => f.id !== 'F2');
+    writeFileSync(path, JSON.stringify(edited));
+    assert.match(
+      json(engine(dir, ['loop', 'next', '--loop', loopDir])).errors.join('\n'),
+      /BLOCKING F2 is neither fixed nor deferred/,
+    );
+    // A verdict given again keeps what the earlier one found, but for a finding withdrawn with evidence.
+    let output = json(engine(dir, ['verdict', '--run', round1.runDir]));
+    assert.match(output.errors.join('\n'), /finding F2 of this round's earlier verdict is gone/);
+    // A round's first verdict has nothing to withdraw.
+    const other = makeBranch();
+    const fresh = loopStart(other);
+    writeResult(fresh);
+    const freshPath = join(fresh.runDir, 'result.json');
+    writeFileSync(
+      freshPath,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(freshPath, 'utf8')),
+        withdrawn: [{ id: 'F9', evidence: 'x' }],
+      }),
+    );
+    assert.match(
+      json(cleanAndDecide(other, fresh)).errors.join('\n'),
+      /withdrawn "F9": not a finding this round's earlier verdict checked \(it has none yet\)/,
+    );
+    writeFileSync(path, JSON.stringify({ ...edited, withdrawn: [{ id: 'F2', evidence: '' }] }));
+    output = json(engine(dir, ['verdict', '--run', round1.runDir]));
+    assert.match(output.errors.join('\n'), /withdrawn F2: no evidence/);
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...edited,
+        withdrawn: [{ id: 'F2', evidence: 'the guard it named exists at src/x.ts:9' }],
+      }),
+    );
+    output = json(engine(dir, ['verdict', '--run', round1.runDir]));
+    assert.equal(output.valid, true, output.errors.join('\n'));
+    assert.equal(output.verdict, 'CHANGES REQUIRED');
+    // A later verdict keeps it withdrawn.
+    writeFileSync(path, JSON.stringify(edited));
+    assert.match(
+      json(engine(dir, ['verdict', '--run', round1.runDir])).errors.join('\n'),
+      /finding F2 of this round's earlier verdict is gone/,
+    );
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...edited,
+        withdrawn: [{ id: 'F2', evidence: 'the guard it named exists at src/x.ts:9' }],
+      }),
+    );
+    assert.equal(json(engine(dir, ['verdict', '--run', round1.runDir])).valid, true);
+    const round2 = json(engine(dir, ['loop', 'next', '--loop', loopDir]));
+    assert.equal(round2.loop.round, 2);
+    // Round 1 is closed now: its verdict stands, and an edit of its result.json changes nothing.
+    const closed = engine(dir, ['verdict', '--run', round1.runDir]);
+    assert.equal(closed.status, 2);
+    assert.match(closed.stderr, /round 1 of this loop is closed \(the loop is at round 2\)/);
+    writeFileSync(path, '{ "findings": [] }');
+    assert.equal(decide(dir, round2).valid, true);
+    const summary = json(engine(dir, ['loop', 'finish', '--loop', loopDir]));
+    assert.deepEqual(summary.rounds[0].withdrawn, [
+      { id: 'F2', evidence: 'the guard it named exists at src/x.ts:9' },
+    ]);
+    // The engine's own record of what a verdict checked cannot be rewritten by hand.
+    writeFileSync(join(round2.runDir, 'result.verified.json'), '{}');
+    assert.match(
+      engine(dir, ['loop', 'status', '--loop', loopDir]).stdout,
+      /"phase": "verdict invalid"/,
+    );
+  });
+
+  test('a finding needs an id; an UNVERIFIED one is carried, never fixed; a regression test is a test file', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    const { id: _id, ...anonymous } = finding('F1', 'LOW');
+    const output = decide(dir, round1, { findings: [anonymous] });
+    assert.match(output.errors.join('\n'), /"id" is missing/);
+    decide(dir, round1, {
+      findings: [
+        finding('F1', 'BLOCKING', { verification: 'REPRODUCED', reproductionId: 'R1' }),
+        finding('F2', 'LOW', { verification: 'UNVERIFIED' }),
+      ],
+      reproductions: [{ id: 'R1', status: 'REPRODUCED', evidence: 'expected 1, got 2' }],
+    });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    write(dir, 'src/guard/check.ts', 'export {};\n');
+    writeFixes(round1, {
+      fixed: [
+        { finding: 'F1', files: ['src/app.ts', 'src/guard/'], regressionTest: 'src/app.ts' },
+        { finding: 'F2', files: ['src/app.ts'] },
+      ],
+    });
+    const errors = json(engine(dir, ['loop', 'next', '--loop', round1.loop.dir])).errors.join('\n');
+    assert.match(errors, /regressionTest src\/app\.ts must be a test file/);
+    assert.match(errors, /fixed F2: an UNVERIFIED finding is carried, never fixed/);
+    // A new directory, as `git status --short` names it, is a changed path; one
+    // that holds tracked files is no file a fix names.
+    assert.doesNotMatch(errors, /src\/guard\/ has not changed/);
+    writeFixes(round1, {
+      fixed: [{ finding: 'F1', files: ['src/', 'src'], regressionTest: 'src/app.spec.ts' }],
+    });
+    const folders = json(engine(dir, ['loop', 'next', '--loop', round1.loop.dir])).errors.join(
+      '\n',
+    );
+    assert.match(folders, /fixed F1: src\/ has not changed/);
+    assert.match(folders, /fixed F1: src has not changed/);
+  });
+
+  test("a reproduction file from before the loop is the user's: it never blocks the loop", () => {
+    const dir = makeBranch();
+    write(dir, 'src/old.doberman.spec.ts', '// DOBERMAN-TEMPORARY: from an interrupted run\n');
+    const round1 = loopStart(dir);
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX')] });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/app.ts'] }] });
+    const round2 = json(engine(dir, ['loop', 'next', '--loop', round1.loop.dir]));
+    assert.equal(round2.loop.round, 2);
+    decide(dir, round2);
+    const run = engine(dir, ['loop', 'finish', '--loop', round1.loop.dir]);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.equal(existsSync(join(dir, 'src/old.doberman.spec.ts')), true);
+  });
+
+  test('a round that cannot start makes no loop, and a half-made round is made again', () => {
+    const quiet = makeRepo();
+    const before = runCount();
+    const refused = engine(quiet, ['loop', 'start']);
+    assert.equal(refused.status, 2);
+    assert.match(refused.stderr, /no loop started: nothing to review/);
+    assert.equal(runCount(), before);
+
+    const dir = makeBranch();
+    const round1 = loopStart(dir, ['--max-rounds', '3']);
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX')] });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/app.ts'] }] });
+    // Cut off while round 2 was being created: its directory, unlisted.
+    mkdirSync(join(round1.loop.dir, 'round-2', 'logs'), { recursive: true });
+    const run = engine(dir, ['loop', 'next', '--loop', round1.loop.dir]);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.equal(json(run).loop.round, 2);
+  });
+
+  test("the patch shows each fix whatever the user's diff settings, from the state the round started in", () => {
+    const dir = makeBranch();
+    write(dir, '.gitattributes', '*.ts -diff\n');
+    write(dir, 'src/lib.ts', 'export const lib = 0;\n');
+    git(dir, ['add', '--all']);
+    git(dir, ['commit', '--quiet', '--no-verify', '--message', 'chore: lib']);
+    // Uncommitted when the loop starts: the round's copy is the old side.
+    write(dir, 'src/lib.ts', 'export const lib = 1;\n');
+    const round1 = loopStart(dir);
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX')] });
+    write(dir, 'src/lib.ts', 'export const lib = 2;\n');
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/lib.ts'] }] });
+    const run = engine(dir, ['loop', 'next', '--loop', round1.loop.dir], {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'diff.external',
+      GIT_CONFIG_VALUE_0: 'false',
+    });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const patch = readFileSync(json(run).loop.patch, 'utf8');
+    assert.match(patch, /--- a\/src\/lib\.ts\n\+\+\+ b\/src\/lib\.ts\n@@/);
+    assert.match(patch, /-export const lib = 1;\n\+export const lib = 2;/);
+  });
+
+  test('a fix that did not hold is reopened by a new finding, never carried', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX')] });
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    writeFixes(round1, { fixed: [{ finding: 'F1', files: ['src/app.ts'] }] });
+    const round2 = json(engine(dir, ['loop', 'next', '--loop', round1.loop.dir]));
+    let output = decide(dir, round2, {
+      findings: [finding('F1', 'SHOULD FIX', { reopens: '1:F9' })],
+    });
+    assert.match(output.errors.join('\n'), /reopens "1:F9": not a finding round 1 fixed/);
+    output = decide(dir, round2, { findings: [finding('F1', 'SHOULD FIX', { reopens: '1:F1' })] });
+    assert.equal(output.valid, true, output.errors.join('\n'));
+  });
+
+  test('a stash or a branch switch since the round started stops the next round; one round only finishes at once', () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir, ['--max-rounds', '1']);
+    decide(dir, round1, { findings: [finding('F1', 'SHOULD FIX')] });
+    assert.match(
+      engine(dir, ['loop', 'next', '--loop', round1.loop.dir]).stderr,
+      /has run its 1 round/,
+    );
+    write(dir, 'src/app.ts', 'export const value = 2;\n');
+    git(dir, ['stash', '--quiet']);
+    let errors = json(engine(dir, ['loop', 'finish', '--loop', round1.loop.dir])).errors.join('\n');
+    assert.match(errors, /stash entries: 0 → 1 since round 1 started/);
+    git(dir, ['stash', 'drop', '--quiet']);
+    git(dir, ['checkout', '--quiet', '-b', 'elsewhere']);
+    errors = json(engine(dir, ['loop', 'finish', '--loop', round1.loop.dir])).errors.join('\n');
+    assert.match(errors, /branch changed: feat\/loop → elsewhere since round 1 started/);
+    git(dir, ['checkout', '--quiet', 'feat/loop']);
+    const summary = json(engine(dir, ['loop', 'finish', '--loop', round1.loop.dir]));
+    assert.equal(summary.reason, 'round-limit');
+    assert.equal(summary.roundsRun, 1);
+  });
+
+  test("status says what comes next: the round in progress, then the round's outcome", () => {
+    const dir = makeBranch();
+    const round1 = loopStart(dir);
+    const status = () => json(engine(dir, ['loop', 'status', '--loop', round1.loop.dir]));
+    assert.match(status().next, /^finish round 1: its gates/);
+    decide(dir, round1);
+    assert.match(status().next, /round 1 ended READY.*`loop finish`/);
+  });
+
+  test('a reproduction whose copy cannot be kept is still deleted, and the cleanup says so', () => {
+    const dir = makeRepo();
+    const context = start(dir);
+    write(dir, 'src/repro.doberman.spec.ts', '// DOBERMAN-TEMPORARY: R1\n');
+    mkdirSync(join(context.runDir, 'reproductions', 'src', 'repro.doberman.spec.ts'), {
+      recursive: true,
+    });
+    const result = json(engine(dir, ['clean', '--run', context.runDir]));
+    assert.deepEqual(result.removed, ['src/repro.doberman.spec.ts']);
+    assert.equal(result.clean, true);
+    assert.match(result.warnings.join('\n'), /src\/repro\.doberman\.spec\.ts: no copy kept/);
   });
 });
 

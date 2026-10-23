@@ -16,9 +16,10 @@
 //       coverage gate writes.
 //   clean --run <dir> [--remove-artifacts]
 //       Deletes this run's reproduction files (named *.doberman.* and marked
-//       DOBERMAN-TEMPORARY) and sandbox, optionally the gate artifacts that
-//       did not exist before the run, then compares the workspace with the
-//       snapshot. Exits 1 when something differs.
+//       DOBERMAN-TEMPORARY; a copy of each stays in <run>/reproductions) and
+//       sandbox, optionally the gate artifacts that did not exist before the
+//       run, then compares the workspace with the snapshot. Exits 1 when
+//       something differs.
 //   verdict --run <dir>
 //       Validates <run>/result.json against the evidence rules (every PASS
 //       and FAIL against its gate log, the cleanup done) and computes the
@@ -26,6 +27,18 @@
 //   status --run <dir>
 //       Where a run is: gates finished or never finished, result written,
 //       workspace cleaned, verdict computed. An interrupted run says so.
+//   loop start [--base <ref>] [--mode default|full] [--max-rounds <1-5>]
+//       An audit in rounds that fixes what each round finds (SKILL.md, --loop):
+//       creates the loop directory, records the workspace as the loop found
+//       it, pins the base and starts round 1 (a run directory inside it).
+//   loop next --loop <dir>
+//       Checks the last round's fixes (fixes.json against its findings and
+//       the workspace) and starts the next round, which reviews them.
+//   loop status --loop <dir>
+//       The rounds so far, their verdicts, and what comes next.
+//   loop finish --loop <dir> [--remove-artifacts]
+//       Closes the loop: why it stopped, every round, what is still open and
+//       the files the loop changed (summary.json).
 //   help
 //
 // Options a command does not accept stop it before it touches anything.
@@ -154,11 +167,41 @@ import { parseEnv } from 'node:util';
  *   artifacts: Record<string, boolean>;
  * }} Snapshot
  * @typedef {{
+ *   dir: string;
+ *   round: number;
+ *   maxRounds: number;
+ *   previousRunDir: string | null;
+ *   fixes: string[];
+ *   patch: string | null;
+ *   fixed: string[];
+ *   deferred: Deferral[];
+ * }} LoopContext
+ * @typedef {{ finding: string; reason: string }} Deferral
+ * @typedef {{
+ *   round: number;
+ *   runDir: string;
+ *   startedAt: string;
+ *   fixes?: { changed: string[]; fixed: string[]; deferred: Deferral[] };
+ * }} LoopRound
+ * @typedef {{
+ *   version: number;
+ *   loopDir: string;
+ *   root: string;
+ *   mode: string;
+ *   maxRounds: number;
+ *   base: Base | null;
+ *   startedAt: string;
+ *   rounds: LoopRound[];
+ *   finished?: { at: string; reason: string };
+ * }} LoopState
+ * @typedef {{
  *   runDir: string;
  *   root: string;
+ *   mode: string;
  *   detection: Detection;
  *   git: Omit<Scope, 'files'> & { files: FileChange[] };
  *   gates: (Gate & { plan: Plan })[];
+ *   loop?: LoopContext | undefined;
  * }} Context
  * @typedef {{ id?: string; name?: string; status?: string; evidence?: string; reason?: string }} ResultGate
  * @typedef {{
@@ -199,6 +242,15 @@ const FINDING_FIELDS = [
   'recommendation',
 ];
 const EXIT_MARKER = /^DOBERMAN_EXIT=(\d+)/gm;
+/** The most rounds a loop runs: each one is a complete audit. */
+const MAX_LOOP_ROUNDS = 5;
+/** The modes a loop runs in: the others skip mandatory gates, which prove a fix. */
+const LOOP_MODES = ['default', 'full'];
+const READY_VERDICTS = ['READY TO MERGE', 'READY WITH ENVIRONMENT LIMITATIONS'];
+/** A file the loop copies, to diff its fixes against: larger ones are listed, not copied. */
+const MAX_COPIED_BYTES = 2 * 1024 * 1024;
+/** The bytes of result.json a valid verdict checked, kept beside it. */
+const VERIFIED_RESULT = 'result.verified.json';
 const USAGE = `usage: node scripts/doberman.mjs <command> [options]
 
   start [--base <ref>] [--mode default|diff|full|security|tests]
@@ -207,6 +259,10 @@ const USAGE = `usage: node scripts/doberman.mjs <command> [options]
   clean --run <dir> [--remove-artifacts]
   verdict --run <dir>
   status --run <dir>
+  loop start [--base <ref>] [--mode default|full] [--max-rounds <1-${MAX_LOOP_ROUNDS}>]
+  loop next --loop <dir>
+  loop status --loop <dir>
+  loop finish --loop <dir> [--remove-artifacts]
   help
 
 Gate logs go to <run>/logs/<gate id>.log (":" becomes "-") and end with the
@@ -773,9 +829,11 @@ function diffCheck(args) {
 /**
  * @param {string} root
  * @param {Options} opts
+ * @param {Base | null} [pinnedBase] a loop's base, resolved by its first round:
+ *   every round compares against the same commit, wherever the ref moved since
  * @returns {Scope}
  */
-function scope(root, opts) {
+function scope(root, opts, pinnedBase) {
   const head = resolveRef('HEAD');
   const branchResult = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
     allowFailure: true,
@@ -812,7 +870,7 @@ function scope(root, opts) {
     };
   }
 
-  const base = chooseBase(opts.base, branch);
+  const base = pinnedBase === undefined ? chooseBase(opts.base, branch) : pinnedBase;
   const onBaseBranch = base !== null && (base.sha === head || base.ref === branch);
   const mergeBase =
     base === null ? null : git(['merge-base', base.sha, 'HEAD'], { allowFailure: true });
@@ -919,6 +977,15 @@ function snapshot(root) {
  * @param {Snapshot} after
  */
 function compareSnapshots(before, after) {
+  return [...stateDifferences(before, after), ...entryDifferences(before, after)];
+}
+
+/**
+ * What moved in the repository itself: HEAD, the branch, the index, the stash.
+ * @param {Snapshot} before
+ * @param {Snapshot} after
+ */
+function stateDifferences(before, after) {
   /** @type {string[]} */
   const differences = [];
   if (before.head !== after.head) {
@@ -931,15 +998,37 @@ function compareSnapshots(before, after) {
   if (before.stashes !== after.stashes) {
     differences.push(`stash entries: ${before.stashes} → ${after.stashes}`);
   }
-  const paths = new Set([...Object.keys(before.entries), ...Object.keys(after.entries)]);
-  for (const path of [...paths].sort()) {
+  return differences;
+}
+
+/**
+ * What changed in the files, one line each.
+ * @param {Snapshot} before
+ * @param {Snapshot} after
+ */
+function entryDifferences(before, after) {
+  return changedPaths(before, after).map((path) => {
     const was = before.entries[path];
     const is = after.entries[path];
-    if (was === undefined) differences.push(`new: ${path} (${is?.code.trim() ?? '?'})`);
-    else if (is === undefined) differences.push(`no longer changed or gone: ${path}`);
-    else if (was.code !== is.code || was.hash !== is.hash) differences.push(`modified: ${path}`);
-  }
-  return differences;
+    if (was === undefined) return `new: ${path} (${is?.code.trim() ?? '?'})`;
+    if (is === undefined) return `no longer changed or gone: ${path}`;
+    return `modified: ${path}`;
+  });
+}
+
+/**
+ * The paths whose state differs between two snapshots: new, changed, or no
+ * longer changed (put back as committed, or deleted).
+ * @param {Snapshot} before
+ * @param {Snapshot} after
+ */
+function changedPaths(before, after) {
+  const paths = new Set([...Object.keys(before.entries), ...Object.keys(after.entries)]);
+  return [...paths].sort().filter((path) => {
+    const was = before.entries[path];
+    const is = after.entries[path];
+    return was === undefined || is === undefined || was.code !== is.code || was.hash !== is.hash;
+  });
 }
 
 // ---------------------------------------------------------------- gates
@@ -1347,19 +1436,52 @@ function touchedAreas(files) {
 
 // ---------------------------------------------------------------- commands
 
-/** @param {Options} opts */
-async function start(opts) {
+/** The repository's root, which every command runs from. */
+function repositoryRoot() {
   const top = git(['rev-parse', '--show-toplevel'], { allowFailure: true });
   if (!top.ok) fail('not inside a git repository.');
   const root = resolve(top.out.trim());
   if (!samePath(process.cwd(), root)) fail(`run from the repository root: ${root}`);
+  return root;
+}
+
+/** @param {Options} opts */
+async function start(opts) {
+  printContext(await createRun(opts));
+}
+
+/**
+ * A new run: the workspace snapshot first, then detection, scope, gate plan
+ * and environment probes, saved in a new private run directory. A loop's
+ * round (`placement`) gets its directory inside the loop's, compares against
+ * the loop's base, and records where it stands in the loop.
+ * @param {Options} opts
+ * @param {{ parent: string; name: string; pinnedBase?: Base | null; snapshot?: Snapshot; loop: LoopContext }} [placement]
+ */
+async function createRun(opts, placement) {
+  const root = repositoryRoot();
   const mode = typeof opts.mode === 'string' ? opts.mode : 'default';
   if (!MODES.includes(mode)) fail(`--mode must be one of ${MODES.join(', ')}.`);
 
-  const before = snapshot(root);
+  const before = placement?.snapshot ?? snapshot(root);
+  /** @type {string | undefined} */
+  let runDir;
+  if (placement !== undefined) {
+    // A round's directory is made inside its loop's private one, never
+    // twice, with its copy of the files changed when it started taken at
+    // once: the state the snapshot describes, which the next round's patch
+    // of this round's fixes is diffed against.
+    runDir = join(placement.parent, placement.name);
+    try {
+      mkdirSync(runDir, { mode: 0o700 });
+    } catch {
+      fail(`${runDir} exists already: a round is never started twice.`);
+    }
+    copyChangedFiles(root, before, join(runDir, 'workspace'));
+  }
   const detection = detect(root);
   const operation = inProgressOperation(root);
-  const prScope = scope(root, opts);
+  const prScope = scope(root, opts, placement?.pinnedBase);
   const effectiveMode = prScope.unborn && mode === 'default' ? 'full' : mode;
   const probes = await probeEnvironment(root);
   const gates =
@@ -1369,8 +1491,10 @@ async function start(opts) {
 
   // A new private directory every time (mkdtemp: created by this call, mode
   // 0700): never one that already exists or someone else prepared.
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const runDir = mkdtempSync(join(privateRunsRoot(), `${basename(root)}-${stamp}-`));
+  if (runDir === undefined) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    runDir = mkdtempSync(join(privateRunsRoot(), `${basename(root)}-${stamp}-`));
+  }
   mkdirSync(join(runDir, 'logs'));
 
   const totals = prScope.files.reduce(
@@ -1440,11 +1564,19 @@ async function start(opts) {
     },
     artifacts: TEMPLATE.artifacts ?? [],
     reproduction: TEMPLATE.reproduction,
+    ...(placement === undefined ? {} : { loop: placement.loop }),
   };
   writeFileSync(join(runDir, 'snapshot.json'), JSON.stringify(before, null, 2));
   writeFileSync(join(runDir, 'context.json'), JSON.stringify(context, null, 2));
+  return context;
+}
 
-  // The full file list stays in context.json: large changes would flood the output.
+/**
+ * Prints a run's context. The full file list stays in context.json: large
+ * changes would flood the output.
+ * @param {{ git: { files: FileChange[] } }} context
+ */
+function printContext(context) {
   print({
     ...context,
     git: {
@@ -1513,7 +1645,20 @@ function addedLines(root, diffBase, file) {
     const count = lineCount(join(root, file.path));
     return Array.from({ length: count }, (_, index) => index + 1);
   }
-  const diff = git(['diff', '-U0', '--no-color', diffBase, '--', file.path], { cwd: root }).out;
+  const diff = git(
+    [
+      'diff',
+      '-U0',
+      '--no-color',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--text',
+      diffBase,
+      '--',
+      file.path,
+    ],
+    { cwd: root },
+  ).out;
   /** @type {number[]} */
   const lines = [];
   for (const match of diff.matchAll(/^@@ -\S+ \+(\d+)(?:,(\d+))? @@/gm)) {
@@ -1642,6 +1787,8 @@ function clean(opts) {
   const leftovers = [];
   /** @type {string[]} */
   const failures = [];
+  /** @type {string[]} */
+  const warnings = [];
 
   // A failed deletion (a file another process holds open on Windows) is
   // reported and leaves the run not clean; it never aborts the cleanup.
@@ -1670,8 +1817,22 @@ function clean(opts) {
       leftovers.push(
         `${path}: named like a doberman file but without the ${MARKER} marker; not deleted`,
       );
-    } else if (remove(join(root, path), path)) {
-      removed.push(path);
+    } else {
+      // A copy stays in the run directory: a fix (--fix, --loop) turns the
+      // reproduction into its permanent regression test. A copy that fails
+      // is said, and the cleanup goes on.
+      const copy = join(runDir, 'reproductions', path);
+      try {
+        if (isInside(copy, join(runDir, 'reproductions'))) {
+          mkdirSync(dirname(copy), { recursive: true, mode: 0o700 });
+          writeFileSync(copy, readFileSync(join(root, path)));
+        }
+      } catch (error) {
+        warnings.push(
+          `${path}: no copy kept in the run directory (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+      if (remove(join(root, path), path)) removed.push(path);
     }
   }
 
@@ -1704,6 +1865,7 @@ function clean(opts) {
     finishedAt: new Date().toISOString(),
     removed,
     failures,
+    warnings,
     artifacts,
     leftovers,
     differences,
@@ -1781,9 +1943,32 @@ function arrayOf(value) {
 function verdict(opts) {
   const runDir = runDirFrom(opts);
   const context = readContext(runDir);
+  // A round the loop has moved past is closed: its verdict, and the findings
+  // the next round was checked against, stay as they were.
+  if (context.loop !== undefined) {
+    /** @type {LoopState | null} */
+    const state = readJson(join(context.loop.dir, 'loop.json'));
+    const latest = Math.max(0, ...arrayOf(state?.rounds).map((item) => Number(item?.round)));
+    if (state?.finished !== undefined || latest > context.loop.round) {
+      fail(
+        `round ${context.loop.round} of this loop is closed (${state?.finished ? 'the loop is finished' : `the loop is at round ${latest}`}): its verdict stands as it was.`,
+      );
+    }
+  }
+  // Read once: what is checked, scanned for secrets and digested is the same.
+  /** @type {Buffer | null} */
+  let raw = null;
   /** @type {{ gates?: unknown; findings?: unknown; reproductions?: unknown; environmentLimitations?: unknown } | null} */
-  const result = readJson(join(runDir, 'result.json'));
-  if (result === null) fail(`${join(runDir, 'result.json')} is missing or not valid JSON.`);
+  let result = null;
+  try {
+    raw = readFileSync(join(runDir, 'result.json'));
+    result = JSON.parse(raw.toString('utf8'));
+  } catch {
+    // Missing or not JSON: refused just below.
+  }
+  if (raw === null || result === null || typeof result !== 'object') {
+    fail(`${join(runDir, 'result.json')} is missing or not valid JSON.`);
+  }
   /** @type {string[]} */
   const errors = [];
   /** @type {string[]} */
@@ -1792,7 +1977,7 @@ function verdict(opts) {
   if (context.detection.projectType === 'UNKNOWN') {
     errors.push('project type UNKNOWN: this doberman gives no verdict outside its template.');
   }
-  for (const secret of secretsIn(readFileSync(join(runDir, 'result.json'), 'utf8'), context.root)) {
+  for (const secret of secretsIn(raw.toString('utf8'), context.root)) {
     errors.push(`result.json contains ${secret}: redact it (name the variable, never its value)`);
   }
 
@@ -1890,6 +2075,9 @@ function verdict(opts) {
 
   for (const finding of findings) {
     const label = finding.id ?? finding.location ?? '(finding)';
+    if (typeof finding.id !== 'string' || finding.id.trim() === '') {
+      errors.push(`finding ${label}: "id" is missing (a unique id such as F1)`);
+    }
     if (!isOneOf(SEVERITIES, finding.severity)) {
       errors.push(
         `finding ${label}: severity "${finding.severity ?? 'missing'}" is not one of ${SEVERITIES.join(', ')}`,
@@ -1917,6 +2105,17 @@ function verdict(opts) {
     if (finding.gate !== undefined && !gateById.has(finding.gate)) {
       errors.push(`finding ${label}: gate "${finding.gate}" is not in result.gates`);
     }
+  }
+
+  // A later round of a loop reports what the round before it left unfixed;
+  // a verdict given again keeps what the earlier one found.
+  if (context.loop !== undefined) {
+    /** @type {{ carriedFrom?: unknown; evidence?: unknown }[]} */
+    const resolved = arrayOf(/** @type {{ resolved?: unknown }} */ (result).resolved);
+    errors.push(...carryErrors(context.loop, findings, resolved));
+    /** @type {{ id?: unknown; evidence?: unknown }[]} */
+    const withdrawn = arrayOf(/** @type {{ withdrawn?: unknown }} */ (result).withdrawn);
+    errors.push(...withdrawalErrors(verifiedResult(runDir), findings, withdrawn));
   }
 
   for (const gate of gates.filter((item) => item.status === 'FAIL')) {
@@ -1986,6 +2185,8 @@ function verdict(opts) {
     counts,
     environmentLimitations: limitations,
     note: 'No findings means this review and these gates found nothing; it does not prove the change is free of defects or vulnerabilities.',
+    // What was validated: a loop refuses a result.json changed after its verdict.
+    resultSha256: sha256(raw),
     machineReadable: {
       projectType: context.detection.projectType.toLowerCase(),
       baseBranch: context.git.base?.ref ?? null,
@@ -1999,8 +2200,885 @@ function verdict(opts) {
     },
   };
   writeFileSync(join(runDir, 'verdict.json'), JSON.stringify(output, null, 2));
+  // What a valid verdict checked, byte for byte: a loop reads this copy only.
+  if (errors.length === 0) writeFileSync(join(runDir, VERIFIED_RESULT), raw);
   print(output);
   if (errors.length > 0) process.exitCode = 1;
+}
+
+// ---------------------------------------------------------------- loop
+
+/**
+ * `--max-rounds`: a whole number from 1 to MAX_LOOP_ROUNDS; that limit when
+ * not given.
+ * @param {string | boolean | undefined} value
+ */
+function maxRoundsFrom(value) {
+  if (value === undefined) return MAX_LOOP_ROUNDS;
+  const rounds = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (!(rounds >= 1 && rounds <= MAX_LOOP_ROUNDS)) {
+    fail(`--max-rounds must be a whole number from 1 to ${MAX_LOOP_ROUNDS}.`);
+  }
+  return rounds;
+}
+
+/** @param {Options} opts */
+function loopDirFrom(opts) {
+  const dir = opts.loop;
+  if (typeof dir !== 'string')
+    fail('--loop <dir> is required (printed by `loop start` as loop.dir).');
+  const absolute = resolve(dir);
+  if (!isInside(absolute, runsRoot()) || !existsSync(join(absolute, 'loop.json'))) {
+    fail(`${dir} is not a doberman loop directory.`);
+  }
+  return absolute;
+}
+
+/**
+ * The loop's state.
+ * @param {string} loopDir
+ */
+function readLoop(loopDir) {
+  /** @type {LoopState | null} */
+  const state = readJson(join(loopDir, 'loop.json'));
+  if (state === null || !Array.isArray(state.rounds) || state.rounds.length === 0) {
+    fail(`${join(loopDir, 'loop.json')} is missing or not a loop's state.`);
+  }
+  return state;
+}
+
+/**
+ * The loop's state, for a command that acts on the repository: from the
+ * repository the loop belongs to only, at its root.
+ * @param {string} loopDir
+ * @returns {{ state: LoopState; root: string }}
+ */
+function openLoop(loopDir) {
+  const state = readLoop(loopDir);
+  const root = repositoryRoot();
+  if (!samePath(root, state.root)) {
+    fail(`this loop belongs to ${state.root}: run the command from that repository's root.`);
+  }
+  return { state, root };
+}
+
+/** @param {LoopState} state */
+function saveLoop(state) {
+  writeFileSync(join(state.loopDir, 'loop.json'), JSON.stringify(state, null, 2));
+}
+
+/**
+ * A round's verdict output, when it is valid and its result.json is still
+ * the one it validated.
+ * @param {Pick<LoopRound, 'round' | 'runDir'>} round
+ * @returns {{ verdict: string; counts: Record<string, number>; environmentLimitations: string[] } | null}
+ */
+function roundVerdict(round) {
+  /** @type {{ valid?: boolean; verdict?: string; counts?: Record<string, number>; environmentLimitations?: string[]; resultSha256?: string } | null} */
+  const decided = readJson(join(round.runDir, 'verdict.json'));
+  if (decided?.valid !== true || typeof decided.verdict !== 'string') return null;
+  if (decided.resultSha256 !== verifiedDigest(round.runDir)) return null;
+  return {
+    verdict: decided.verdict,
+    counts: decided.counts ?? {},
+    environmentLimitations: decided.environmentLimitations ?? [],
+  };
+}
+
+/**
+ * The digest of the result a run's valid verdict checked (result.verified.json,
+ * the very bytes), or null without one.
+ * @param {string} runDir
+ */
+function verifiedDigest(runDir) {
+  const path = join(runDir, VERIFIED_RESULT);
+  return existsSync(path) ? sha256(readFileSync(path)) : null;
+}
+
+/**
+ * The result a run's valid verdict checked: what a loop builds on, whatever
+ * happened to result.json since.
+ * @param {string} runDir
+ * @returns {{ findings?: unknown; resolved?: unknown; withdrawn?: unknown } | null}
+ */
+function verifiedResult(runDir) {
+  return readJson(join(runDir, VERIFIED_RESULT));
+}
+
+/**
+ * Why a round has no verdict the loop can build on, or null when it has one.
+ * @param {Pick<LoopRound, 'round' | 'runDir'>} round
+ */
+function verdictProblem(round) {
+  if (roundVerdict(round) !== null) return null;
+  /** @type {{ valid?: boolean } | null} */
+  const decided = readJson(join(round.runDir, 'verdict.json'));
+  if (decided?.valid === true) {
+    return `round ${round.round}'s ${VERIFIED_RESULT}, the engine's record of what its verdict checked, is missing or changed: it cannot be rebuilt by hand; while the round is the current one, run \`verdict --run ${round.runDir}\` again`;
+  }
+  return `round ${round.round} has no valid verdict: finish it (its gates, \`clean\`, result.json, \`verdict\`) first`;
+}
+
+/**
+ * A path as git prints it, from one written in fixes.json.
+ * @param {string} path
+ */
+function repoPath(path) {
+  return path.trim().replaceAll('\\', '/').replace(/^\.\//, '');
+}
+
+/**
+ * The untracked files named like a reproduction, marked or not, but those
+ * that were there before the loop (`baseline`): not its own, and kept, as
+ * `clean` keeps them.
+ * @param {string} root
+ * @param {Snapshot} baseline
+ */
+function temporaryFiles(root, baseline) {
+  return gitList(['ls-files', '-z', '--others', '--exclude-standard'], { cwd: root }).filter(
+    (path) => basename(path).includes('.doberman.') && baseline.entries[path] === undefined,
+  );
+}
+
+/** A test file, by the names the templates give them (*.spec.*, *.test.*). */
+const TEST_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
+
+/**
+ * Copies the files a snapshot lists as changed (regular files up to
+ * MAX_COPIED_BYTES, read without following a link) to `dest`, under their
+ * paths: the state a round started from, which the next round's patch is
+ * diffed against.
+ * @param {string} root
+ * @param {Snapshot} from
+ * @param {string} dest
+ */
+function copyChangedFiles(root, from, dest) {
+  for (const path of Object.keys(from.entries)) {
+    const target = join(dest, path);
+    if (!isInside(target, dest)) continue;
+    let fd;
+    try {
+      fd = openSync(join(root, path), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    } catch {
+      continue; // deleted, or a link
+    }
+    try {
+      const stats = fstatSync(fd);
+      if (!stats.isFile() || stats.size > MAX_COPIED_BYTES) continue;
+      // Only the state the snapshot describes: a file changed since it was
+      // taken gets no copy, and the next patch says it was not diffed.
+      const bytes = readFileSync(fd);
+      if (sha256(bytes) !== from.entries[path]?.hash) continue;
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, bytes);
+    } finally {
+      closeSync(fd);
+    }
+  }
+}
+
+/**
+ * The patch of a round's fixes (<run>/fixes.patch): each file changed since
+ * the round started, from its state then (the round's copy, or HEAD's when it
+ * was unchanged) to now. Binary and large files are named, not diffed. Only
+ * plain files are compared (`git diff --no-index`): nothing in the repository
+ * changes.
+ * @param {string} root
+ * @param {LoopRound} round
+ * @param {Snapshot} before the round's snapshot
+ * @param {string[]} changed
+ */
+function writeFixesPatch(root, round, before, changed) {
+  const sides = join(round.runDir, 'patch-sides');
+  rmSync(sides, { recursive: true, force: true });
+  mkdirSync(sides, { mode: 0o700 });
+  const empty = join(sides, 'empty');
+  writeFileSync(empty, '');
+  /** @type {string[]} */
+  const parts = [];
+  changed.forEach((path, index) => {
+    const was = before.entries[path];
+    let old = empty;
+    if (was !== undefined) {
+      const copy = join(round.runDir, 'workspace', path);
+      if (existsSync(copy)) old = copy;
+      else if (was.hash !== 'missing') {
+        parts.push(
+          `# ${path}: changed; not diffed (larger than 2 MB, not a regular file, or changed while the round started)\n`,
+        );
+        return;
+      }
+    } else {
+      // Unchanged when the round started: as HEAD has it, or new since.
+      const shown = spawnSync('git', ['show', `HEAD:${path}`], {
+        cwd: root,
+        maxBuffer: 256 * 1024 * 1024,
+      });
+      if (shown.status === 0) {
+        old = join(sides, `${String(index)}.old`);
+        writeFileSync(old, shown.stdout);
+      }
+    }
+    const current = join(root, path);
+    const now = isLink(current) || !existsSync(current) ? empty : current;
+    if ((old !== empty && isBinary(old)) || (now !== empty && isBinary(now))) {
+      parts.push(`# ${path}: binary file changed\n`);
+      return;
+    }
+    // git's own diff, as text: never an external diff tool, a textconv filter
+    // or a `-diff` attribute that would hide the change (real binaries were
+    // named above).
+    const diff = git(
+      [
+        'diff',
+        '--no-index',
+        '--no-color',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--text',
+        '--',
+        old,
+        now,
+      ],
+      { allowFailure: true },
+    );
+    // 0: the same, 1: different; anything else is git failing to compare them.
+    if (diff.status !== 0 && diff.status !== 1) {
+      parts.push(`# ${path}: could not be diffed (${diff.err.trim() || 'git diff failed'})\n`);
+      return;
+    }
+    const hunks = diff.out.slice(Math.max(diff.out.indexOf('\n@@'), 0)).replace(/^\n/, '');
+    if (!hunks.startsWith('@@')) {
+      parts.push(
+        diff.status === 0
+          ? `# ${path}: no change in its content\n`
+          : `# ${path}: changed; its content could not be shown\n`,
+      );
+      return;
+    }
+    const from = old === empty ? '/dev/null' : `a/${path}`;
+    const to = now === empty ? '/dev/null' : `b/${path}`;
+    parts.push(`--- ${from}\n+++ ${to}\n${hunks}`);
+  });
+  rmSync(sides, { recursive: true, force: true });
+  const patch = join(round.runDir, 'fixes.patch');
+  writeFileSync(patch, parts.join(''));
+  return patch;
+}
+
+/**
+ * What a round's fixes.json says, against the round's findings and the files
+ * changed since the round started: every verified BLOCKING and SHOULD FIX
+ * fixed or deferred with its reason, each once; a fix's files among the
+ * changed ones; a reproduced bug's reproduction kept as a permanent test this
+ * round added or changed.
+ * @param {string} root
+ * @param {LoopRound} round
+ * @param {Snapshot} before the round's snapshot
+ * @param {Snapshot} now
+ */
+function checkFixes(root, round, before, now) {
+  const changed = changedPaths(before, now);
+  /** @type {string[]} */
+  const errors = [];
+  /** @type {string[]} */
+  const fixed = [];
+  /** @type {Deferral[]} */
+  const deferred = [];
+  /** @type {Finding[]} */
+  const findings = arrayOf(verifiedResult(round.runDir)?.findings);
+  /** @type {{ fixed?: unknown; deferred?: unknown } | null} */
+  const fixes = readJson(join(round.runDir, 'fixes.json'));
+  if (fixes === null) {
+    errors.push(
+      `${join(round.runDir, 'fixes.json')} is missing or not valid JSON: write what round ${round.round} fixed and what it deferred (reference/report.md#fixesjson)`,
+    );
+    return { errors, fixed, deferred, changed };
+  }
+  const byId = new Map(findings.map((finding) => [finding.id, finding]));
+  /** @type {Set<unknown>} */
+  const listed = new Set();
+  /**
+   * @param {unknown} id
+   * @param {string} list
+   */
+  const account = (id, list) => {
+    if (typeof id !== 'string' || !byId.has(id)) {
+      errors.push(`fixes.json ${list}: "${String(id)}" is not a finding of round ${round.round}`);
+      return undefined;
+    }
+    if (listed.has(id)) errors.push(`fixes.json lists ${id} more than once`);
+    listed.add(id);
+    return id;
+  };
+  /** @type {{ finding?: unknown; files?: unknown; regressionTest?: unknown }[]} */
+  const fixEntries = arrayOf(fixes.fixed);
+  for (const entry of fixEntries) {
+    const id = account(entry?.finding, 'fixed');
+    if (id === undefined) continue;
+    if (byId.get(id)?.verification === 'UNVERIFIED') {
+      errors.push(`fixed ${id}: an UNVERIFIED finding is carried, never fixed`);
+    }
+    /** @type {unknown[]} */
+    const named = arrayOf(entry.files);
+    const files = named.filter((file) => typeof file === 'string').map(repoPath);
+    if (files.length === 0) errors.push(`fixed ${id}: "files" names no file`);
+    for (const file of files) {
+      // A file; or a directory new since the round started, written as
+      // `git status --short` prints it (src/x/): everything in it is new.
+      const inside = file.endsWith('/') ? changed.filter((path) => path.startsWith(file)) : [];
+      const newFolder =
+        inside.length > 0 &&
+        inside.every(
+          (path) => now.entries[path]?.code === '??' && before.entries[path] === undefined,
+        );
+      if (!changed.includes(file) && !newFolder) {
+        errors.push(`fixed ${id}: ${file} has not changed since round ${round.round} started`);
+      }
+    }
+    if (byId.get(id)?.verification === 'REPRODUCED') {
+      const test = typeof entry.regressionTest === 'string' ? repoPath(entry.regressionTest) : '';
+      if (test === '') {
+        errors.push(
+          `fixed ${id}: a reproduced bug keeps its reproduction as a regression test ("regressionTest")`,
+        );
+      } else if (
+        !TEST_FILE.test(test) ||
+        basename(test).includes('.doberman.') ||
+        !changed.includes(test) ||
+        !existsSync(join(root, test)) ||
+        isMarkedTemporary(join(root, test))
+      ) {
+        errors.push(
+          `fixed ${id}: regressionTest ${test} must be a test file (*.spec.* or *.test.*) this round added or changed, kept for good (no .doberman. name, no ${MARKER} marker)`,
+        );
+      }
+    }
+    fixed.push(id);
+  }
+  /** @type {{ finding?: unknown; reason?: unknown }[]} */
+  const deferEntries = arrayOf(fixes.deferred);
+  for (const entry of deferEntries) {
+    const id = account(entry?.finding, 'deferred');
+    if (id === undefined) continue;
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') {
+      errors.push(`deferred ${id}: no reason (the decision it needs)`);
+    } else {
+      deferred.push({ finding: id, reason: entry.reason.trim() });
+    }
+  }
+  for (const finding of findings) {
+    if (finding.verification === 'UNVERIFIED') continue;
+    if (finding.severity !== 'BLOCKING' && finding.severity !== 'SHOULD FIX') continue;
+    if (!listed.has(finding.id)) {
+      errors.push(
+        `${finding.severity} ${String(finding.id)} is neither fixed nor deferred in fixes.json`,
+      );
+    }
+  }
+  return { errors, fixed, deferred, changed };
+}
+
+/**
+ * What the loop never does, found in the workspace: a commit, a staged change,
+ * a branch switch or a stash since `since`; a reproduction file of its own
+ * left behind (one that was there before the loop, in `baseline`, is not).
+ * @param {string} root
+ * @param {Snapshot} baseline the workspace as the loop found it
+ * @param {Snapshot} since
+ * @param {Snapshot} now
+ * @param {string} label when `since` was taken
+ */
+function loopViolations(root, baseline, since, now, label) {
+  return [
+    ...stateDifferences(since, now).map(
+      (difference) =>
+        `${difference} since ${label}: the loop never commits, stages, switches branches or stashes; put it back as it was`,
+    ),
+    ...temporaryFiles(root, baseline).map(
+      (path) =>
+        `${path}: a reproduction file is still there (\`clean\` deletes the run's own; a fix keeps its regression test as a permanent one)`,
+    ),
+  ];
+}
+
+/**
+ * A verdict given again to a round of a loop keeps every finding the earlier
+ * verdict checked (its fields and severity may change): a fixed one stays in
+ * result.json and goes in fixes.json; one that proved false is withdrawn,
+ * with the evidence, and stays withdrawn in later verdicts of the round.
+ * @param {{ findings?: unknown; withdrawn?: unknown } | null} earlier the result the round's last valid verdict checked
+ * @param {Finding[]} findings
+ * @param {{ id?: unknown; evidence?: unknown }[]} withdrawn
+ */
+function withdrawalErrors(earlier, findings, withdrawn) {
+  /** @type {string[]} */
+  const errors = [];
+  if (earlier === null) {
+    // A round's first verdict has nothing to withdraw.
+    for (const entry of withdrawn) {
+      errors.push(
+        `withdrawn "${String(entry?.id)}": not a finding this round's earlier verdict checked (it has none yet)`,
+      );
+    }
+    return errors;
+  }
+  /** @type {Finding[]} */
+  const before = arrayOf(earlier.findings);
+  /** @type {{ id?: unknown }[]} */
+  const withdrawnBefore = arrayOf(earlier.withdrawn);
+  /** @type {Set<unknown>} */
+  const reported = new Set(findings.map((finding) => finding.id));
+  /** @type {Map<unknown, { id?: unknown; evidence?: unknown }>} */
+  const listed = new Map(withdrawn.map((entry) => [entry?.id, entry]));
+  /** @type {Set<unknown>} */
+  const owed = new Set([
+    ...before.map((finding) => finding.id).filter((id) => !reported.has(id)),
+    ...withdrawnBefore.map((entry) => entry?.id).filter((id) => !reported.has(id)),
+  ]);
+  for (const id of owed) {
+    const entry = listed.get(id);
+    if (entry === undefined) {
+      errors.push(
+        `finding ${String(id)} of this round's earlier verdict is gone: a fixed finding stays in result.json (and goes in fixes.json); one that proved false goes in "withdrawn", with the evidence`,
+      );
+    } else if (typeof entry.evidence !== 'string' || entry.evidence.trim() === '') {
+      errors.push(`withdrawn ${String(id)}: no evidence that it was not real`);
+    }
+  }
+  for (const id of listed.keys()) {
+    if (!owed.has(id)) {
+      errors.push(
+        `withdrawn "${String(id)}": not a finding this round's earlier verdict checked and this one leaves out`,
+      );
+    }
+  }
+  return errors;
+}
+
+/**
+ * A round after the first reports everything the previous round left
+ * unfixed: each such finding carried (a finding with carriedFrom
+ * "<round>:<id>", checked again against the current code), or listed in
+ * `resolved` with the evidence that it no longer applies. Nothing found
+ * earlier drops out of the loop's last report.
+ * @param {LoopContext} loop
+ * @param {Finding[]} findings
+ * @param {{ carriedFrom?: unknown; evidence?: unknown }[]} resolved
+ */
+function carryErrors(loop, findings, resolved) {
+  /** @type {string[]} */
+  const errors = [];
+  if (loop.previousRunDir === null) return errors;
+  const round = loop.round - 1;
+  // The findings the previous round's verdict checked, and nothing else.
+  const problem = verdictProblem({ round, runDir: loop.previousRunDir });
+  if (problem !== null) errors.push(problem);
+  const previous = verifiedResult(loop.previousRunDir);
+  /** @type {Finding[]} */
+  const earlier = arrayOf(previous?.findings);
+  const fixed = new Set(loop.fixed);
+  const open = new Map(
+    earlier
+      .filter((finding) => typeof finding.id === 'string' && !fixed.has(finding.id))
+      .map((finding) => [`${round}:${String(finding.id)}`, finding]),
+  );
+  /** @type {Set<string>} */
+  const claimed = new Set();
+  /**
+   * @param {unknown} key
+   * @param {string} label
+   */
+  const claim = (key, label) => {
+    if (typeof key !== 'string' || !open.has(key)) {
+      const prefix = `${String(round)}:`;
+      const wasFixed =
+        typeof key === 'string' && key.startsWith(prefix) && fixed.has(key.slice(prefix.length));
+      errors.push(
+        wasFixed
+          ? `${label}: ${key} was fixed by round ${round}; a fix that did not hold is a new finding with "reopens": "${key}"`
+          : `${label}: "${String(key)}" is not a finding round ${round} left unfixed (write "<round>:<id>")`,
+      );
+      return;
+    }
+    if (claimed.has(key)) errors.push(`${key} is carried or resolved more than once`);
+    claimed.add(key);
+  };
+  for (const finding of findings) {
+    if (finding.carriedFrom !== undefined) {
+      claim(finding.carriedFrom, `finding ${String(finding.id ?? '?')} carriedFrom`);
+    }
+    // A fix that did not hold: a finding of this round, naming the fixed one.
+    if (finding.reopens !== undefined) {
+      const fixedKey = typeof finding.reopens === 'string' && /^(\d+):(.+)$/.exec(finding.reopens);
+      if (!fixedKey || Number(fixedKey[1]) !== round || !fixed.has(fixedKey[2] ?? '')) {
+        errors.push(
+          `finding ${String(finding.id ?? '?')} reopens "${String(finding.reopens)}": not a finding round ${round} fixed (write "<round>:<id>")`,
+        );
+      }
+    }
+  }
+  for (const entry of resolved) {
+    claim(entry?.carriedFrom, 'resolved');
+    if (typeof entry?.evidence !== 'string' || entry.evidence.trim() === '') {
+      errors.push(`resolved ${String(entry?.carriedFrom)}: no evidence that it no longer applies`);
+    }
+  }
+  for (const [key, finding] of open) {
+    if (claimed.has(key)) continue;
+    const title = typeof finding.title === 'string' ? finding.title : (finding.location ?? '');
+    errors.push(
+      `${key} (${String(finding.severity ?? '?')}: ${title}) was left unfixed by round ${round}: carry it (a finding with carriedFrom "${key}") or list it in resolved with the evidence that it no longer applies`,
+    );
+  }
+  return errors;
+}
+
+/**
+ * Why a finding the last round reports is still open, when an earlier round
+ * deferred it: followed back through carriedFrom.
+ * @param {LoopState} state
+ * @param {Finding} finding
+ */
+function deferralOf(state, finding) {
+  let current = finding;
+  // Each hop goes one round back: never more hops than rounds.
+  let hops = 0;
+  while (hops < state.rounds.length) {
+    hops += 1;
+    const match =
+      typeof current.carriedFrom === 'string' && /^(\d+):(.+)$/.exec(current.carriedFrom);
+    if (!match) return null;
+    const round = state.rounds.find((item) => item.round === Number(match[1]));
+    if (round === undefined) return null;
+    const id = match[2];
+    const deferral = round.fixes?.deferred.find((item) => item.finding === id);
+    if (deferral !== undefined) return deferral.reason;
+    /** @type {Finding[]} */
+    const findings = arrayOf(verifiedResult(round.runDir)?.findings);
+    const earlier = findings.find((item) => item.id === id);
+    if (earlier === undefined) return null;
+    current = earlier;
+  }
+  return null;
+}
+
+/** @param {Options} opts */
+async function loopStart(opts) {
+  const mode = typeof opts.mode === 'string' ? opts.mode : 'default';
+  if (!LOOP_MODES.includes(mode)) {
+    fail(
+      `a loop runs in --mode ${LOOP_MODES.join(' or ')}: diff, security and tests skip mandatory gates, so no round could prove its fixes.`,
+    );
+  }
+  const maxRounds = maxRoundsFrom(opts['max-rounds']);
+  const root = repositoryRoot();
+  if (opts.base === true) fail('--base needs a ref: --base <branch or commit>.');
+  if (typeof opts.base === 'string' && resolveRef(opts.base) === null) {
+    fail(`--base ${opts.base} is not a commit in this repository.`);
+  }
+  const baseline = snapshot(root);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const loopDir = mkdtempSync(join(privateRunsRoot(), `${basename(root)}-${stamp}-loop-`));
+  writeFileSync(join(loopDir, 'snapshot.json'), JSON.stringify(baseline, null, 2));
+  const context = await createRun(
+    { ...(typeof opts.base === 'string' ? { base: opts.base } : {}), mode },
+    {
+      parent: loopDir,
+      name: 'round-1',
+      loop: {
+        dir: loopDir,
+        round: 1,
+        maxRounds,
+        previousRunDir: null,
+        fixes: [],
+        patch: null,
+        fixed: [],
+        deferred: [],
+      },
+    },
+  );
+  // A round that cannot start makes no loop: nothing would ever close it.
+  if (context.blockers.length > 0) {
+    rmSync(loopDir, { recursive: true, force: true });
+    fail(`no loop started: ${context.blockers.join('; ')}.`);
+  }
+  /** @type {LoopState} */
+  const state = {
+    version: 1,
+    loopDir,
+    root,
+    mode: context.mode,
+    maxRounds,
+    base: context.git.base,
+    startedAt: baseline.takenAt,
+    rounds: [{ round: 1, runDir: context.runDir, startedAt: new Date().toISOString() }],
+  };
+  saveLoop(state);
+  printContext(context);
+}
+
+/** @param {Options} opts */
+async function loopNext(opts) {
+  const loopDir = loopDirFrom(opts);
+  const { state, root } = openLoop(loopDir);
+  if (state.finished) {
+    fail(`this loop is finished (${state.finished.reason}): see ${join(loopDir, 'summary.json')}.`);
+  }
+  const last = /** @type {LoopRound} */ (state.rounds.at(-1));
+  const problem = verdictProblem(last);
+  if (problem !== null) fail(`${problem}, before the next round.`);
+  if (state.rounds.length >= state.maxRounds) {
+    fail(
+      `the loop has run its ${state.maxRounds} round(s): \`loop finish --loop ${loopDir}\` closes it (a fix made now would go unreviewed).`,
+    );
+  }
+  /** @type {Snapshot} */
+  const baseline = readJson(join(loopDir, 'snapshot.json'));
+  /** @type {Snapshot} */
+  const before = readJson(join(last.runDir, 'snapshot.json'));
+  const now = snapshot(root);
+  const check = checkFixes(root, last, before, now);
+  const { changed } = check;
+  const errors = [
+    ...loopViolations(root, baseline, before, now, `round ${last.round} started`),
+    ...check.errors,
+  ];
+  if (errors.length === 0 && check.fixed.length === 0) {
+    errors.push(
+      `round ${last.round} fixed nothing (fixes.json): the next round reviews the previous round's fixes, so it would have nothing to review; \`loop finish\` closes the loop`,
+    );
+  }
+  if (errors.length > 0) {
+    print({ valid: false, round: last.round, errors });
+    process.exitCode = 1;
+    return;
+  }
+  const round = last.round + 1;
+  const name = `round-${String(round)}`;
+  // A round directory loop.json does not list never started: one cut off
+  // while it was being created. It is the loop's own, and made again.
+  rmSync(join(loopDir, name), { recursive: true, force: true });
+  const patch = writeFixesPatch(root, last, before, changed);
+  const context = await createRun(
+    { mode: state.mode },
+    {
+      parent: loopDir,
+      name,
+      pinnedBase: state.base,
+      // The state the fixes were checked against is the new round's start.
+      snapshot: now,
+      loop: {
+        dir: loopDir,
+        round,
+        maxRounds: state.maxRounds,
+        previousRunDir: last.runDir,
+        fixes: changed,
+        patch,
+        fixed: check.fixed,
+        deferred: check.deferred,
+      },
+    },
+  );
+  if (context.blockers.length > 0) {
+    rmSync(context.runDir, { recursive: true, force: true });
+    fail(
+      `round ${round} cannot start: ${context.blockers.join('; ')}. The loop stays at round ${last.round}; run \`loop next\` again once that is resolved.`,
+    );
+  }
+  last.fixes = { changed, fixed: check.fixed, deferred: check.deferred };
+  state.rounds.push({ round, runDir: context.runDir, startedAt: new Date().toISOString() });
+  saveLoop(state);
+  printContext(context);
+}
+
+/** @param {Options} opts */
+function loopStatus(opts) {
+  const loopDir = loopDirFrom(opts);
+  const state = readLoop(loopDir);
+  const rounds = state.rounds.map((round) => {
+    const decided = roundVerdict(round);
+    let phase = 'in progress';
+    if (decided !== null) phase = 'decided';
+    else if (existsSync(join(round.runDir, 'verdict.json'))) phase = 'verdict invalid';
+    else if (existsSync(join(round.runDir, 'result.json'))) phase = 'result written';
+    return {
+      round: round.round,
+      runDir: round.runDir,
+      phase,
+      verdict: decided?.verdict ?? null,
+      counts: decided?.counts ?? null,
+      fixesWritten: existsSync(join(round.runDir, 'fixes.json')),
+    };
+  });
+  const last = /** @type {(typeof rounds)[number]} */ (rounds.at(-1));
+  let next;
+  if (state.finished) {
+    next = `finished (${state.finished.reason}): ${join(loopDir, 'summary.json')}`;
+  } else if (last.verdict === null) {
+    next = `finish round ${last.round}: its gates, \`clean --run ${last.runDir} --remove-artifacts\`, result.json, then \`verdict --run ${last.runDir}\` (\`status --run\` names the gates without a finished log)`;
+  } else if (state.rounds.length >= state.maxRounds) {
+    next = `\`loop finish --loop ${loopDir} --remove-artifacts\`: the loop has run its ${state.maxRounds} round(s)`;
+  } else if (READY_VERDICTS.includes(last.verdict)) {
+    next = `round ${last.round} ended ${last.verdict}: fix the LOW and NIT findings within the loop's reach, write fixes.json and run \`loop next\`; with none, \`loop finish\``;
+  } else {
+    next = `fix round ${last.round}'s findings, write fixes.json, then \`loop next\`; \`loop finish\` only when every BLOCKING and SHOULD FIX left needs the user's decision (all deferred in fixes.json, nothing fixed)`;
+  }
+  print({
+    loopDir,
+    mode: state.mode,
+    base: state.base,
+    maxRounds: state.maxRounds,
+    roundsRun: state.rounds.length,
+    finished: state.finished ?? null,
+    rounds,
+    next,
+  });
+}
+
+/** @param {Options} opts */
+function loopFinish(opts) {
+  const loopDir = loopDirFrom(opts);
+  const { state, root } = openLoop(loopDir);
+  if (state.finished) {
+    fail(
+      `this loop is finished already (${state.finished.reason}): see ${join(loopDir, 'summary.json')}.`,
+    );
+  }
+  const last = /** @type {LoopRound} */ (state.rounds.at(-1));
+  const decided = roundVerdict(last);
+  if (decided === null) {
+    fail(`${String(verdictProblem(last))}, before closing the loop.`);
+  }
+  /** @type {Snapshot} */
+  const baseline = readJson(join(loopDir, 'snapshot.json'));
+  /** @type {Snapshot} */
+  const lastStart = readJson(join(last.runDir, 'snapshot.json'));
+  const now = snapshot(root);
+  const unreviewed = changedPaths(lastStart, now);
+  const roundsLeft = state.rounds.length < state.maxRounds;
+  const errors = loopViolations(root, baseline, lastStart, now, `round ${last.round} started`);
+  // Every earlier round as its verdict checked it: the summary reads them all.
+  for (const round of state.rounds.slice(0, -1)) {
+    const problem = verdictProblem(round);
+    if (problem !== null) errors.push(problem);
+  }
+  if (unreviewed.length > 0) {
+    errors.push(
+      `changed after round ${last.round} started, so never reviewed: ${unreviewed.join(', ')}. ${roundsLeft ? 'Write fixes.json and run `loop next`: the next round reviews them' : 'The loop has no round left: undo them'} (a fix stays only once a round has reviewed it).`,
+    );
+  }
+  let reason;
+  if (READY_VERDICTS.includes(decided.verdict)) {
+    reason = 'ready';
+  } else if (!roundsLeft) {
+    reason = 'round-limit';
+  } else {
+    // Stopping with rounds left and a BLOCKING or SHOULD FIX open: only when
+    // each one needs the user's decision, deferred in fixes.json.
+    reason = 'needs-decision';
+    const check = checkFixes(root, last, lastStart, now);
+    errors.push(...check.errors);
+    if (check.fixed.length > 0) {
+      errors.push(
+        `fixes.json of round ${last.round} lists fixes: \`loop next\` reviews them in another round`,
+      );
+    }
+    last.fixes = { changed: [], fixed: [], deferred: check.deferred };
+  }
+  if (errors.length > 0) {
+    print({ valid: false, round: last.round, errors });
+    process.exitCode = 1;
+    return;
+  }
+
+  /** @type {string[]} */
+  const artifacts = [];
+  for (const path of TEMPLATE.artifacts ?? []) {
+    const absolute = resolve(root, path);
+    if (!isInside(absolute, root) || !existsSync(absolute)) continue;
+    if (baseline.artifacts[path] === true) continue;
+    if (isLink(absolute) || !isInside(realpathSync(absolute), realpathSync(root))) {
+      artifacts.push(`${path}: a link or outside the repository; not deleted`);
+    } else if (opts['remove-artifacts'] === true) {
+      try {
+        rmSync(absolute, { recursive: true, force: true, maxRetries: 3 });
+        artifacts.push(`${path}: created during the loop, removed`);
+      } catch (error) {
+        artifacts.push(
+          `${path}: created during the loop, could not be removed (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+    } else {
+      artifacts.push(
+        `${path}: created during the loop, kept (pass --remove-artifacts to remove it)`,
+      );
+    }
+  }
+
+  const after = snapshot(root);
+  /** @type {Finding[]} */
+  const open = arrayOf(verifiedResult(last.runDir)?.findings);
+  const ownDeferrals = new Map(
+    (last.fixes?.deferred ?? []).map((item) => [item.finding, item.reason]),
+  );
+  const summary = {
+    loopDir,
+    finishedAt: new Date().toISOString(),
+    reason,
+    maxRounds: state.maxRounds,
+    roundsRun: state.rounds.length,
+    rounds: state.rounds.map((round) => {
+      const outcome = roundVerdict(round);
+      const result = verifiedResult(round.runDir);
+      /** @type {Finding[]} */
+      const findings = arrayOf(result?.findings);
+      return {
+        round: round.round,
+        runDir: round.runDir,
+        verdict: outcome?.verdict ?? null,
+        counts: outcome?.counts ?? null,
+        fixed: round.fixes?.fixed ?? [],
+        deferred: round.fixes?.deferred ?? [],
+        changed: round.fixes?.changed ?? [],
+        // What this round found no longer applies, and the fixes it found did not hold.
+        resolved: arrayOf(result?.resolved),
+        withdrawn: arrayOf(result?.withdrawn),
+        reopened: findings
+          .filter((finding) => typeof finding.reopens === 'string')
+          .map((finding) => ({ id: finding.id, reopens: finding.reopens })),
+      };
+    }),
+    final: {
+      round: last.round,
+      verdict: decided.verdict,
+      counts: decided.counts,
+      environmentLimitations: decided.environmentLimitations,
+    },
+    open: open.map((finding) => ({
+      id: finding.id ?? null,
+      severity: finding.severity ?? null,
+      verification: finding.verification ?? null,
+      title: finding.title ?? null,
+      location: finding.location ?? null,
+      carriedFrom: finding.carriedFrom ?? null,
+      reopens: finding.reopens ?? null,
+      needsDecision: ownDeferrals.get(String(finding.id)) ?? deferralOf(state, finding),
+    })),
+    changes: changedPaths(baseline, after).map((path) => {
+      const code = after.entries[path]?.code.trim();
+      return code === undefined ? `back as committed: ${path}` : `${code} ${path}`;
+    }),
+    violations: stateDifferences(baseline, after),
+    artifacts,
+    gitStatus: git(['status', '--short'], { cwd: root }).out.trim().split('\n').filter(Boolean)
+      .length,
+  };
+  writeFileSync(join(loopDir, 'summary.json'), JSON.stringify(summary, null, 2));
+  state.finished = { at: summary.finishedAt, reason };
+  saveLoop(state);
+  print(summary);
+  if (summary.violations.length > 0) process.exitCode = 1;
 }
 
 // ---------------------------------------------------------------- main
@@ -2032,6 +3110,22 @@ switch (command) {
   case 'status':
     status(parseOptions(rest, RUN_ONLY));
     break;
+  case 'loop': {
+    const [step, ...options] = rest;
+    const LOOP_ONLY = { values: ['loop'], flags: [] };
+    if (step === 'start') {
+      await loopStart(parseOptions(options, { values: ['base', 'mode', 'max-rounds'], flags: [] }));
+    } else if (step === 'next') {
+      await loopNext(parseOptions(options, LOOP_ONLY));
+    } else if (step === 'status') {
+      loopStatus(parseOptions(options, LOOP_ONLY));
+    } else if (step === 'finish') {
+      loopFinish(parseOptions(options, { values: ['loop'], flags: ['remove-artifacts'] }));
+    } else {
+      fail(`unknown loop step "${step ?? ''}": start, next, status or finish.\n${USAGE}`);
+    }
+    break;
+  }
   default:
     fail(`unknown command "${command}".\n${USAGE}`);
 }
