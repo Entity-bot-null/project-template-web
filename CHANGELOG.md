@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0](https://github.com/Entity-bot-null/project-template-web/compare/v2.0.0...v2.1.0) (2026-10-24)
+
+
+### Features
+
+* **doberman:** audit in rounds that fix what each one finds (--loop) ([4cf4df1](https://github.com/Entity-bot-null/project-template-web/commit/4cf4df154779b44705115b776c3ef8832318621d))
+
+
+### Bug fixes
+
+* close the session, email change, outbox and gate gaps the v2.0.0 audit found ([5909704](https://github.com/Entity-bot-null/project-template-web/commit/5909704cd7c9f91fd66f2056ba53fd4877995fe8))
+
 ## [2.0.0](https://github.com/Entity-bot-null/project-template-web/compare/v1.2.1...v2.0.0) (2026-10-21)
 
 
