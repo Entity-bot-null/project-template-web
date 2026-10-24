@@ -1,7 +1,7 @@
 ---
 name: doberman
-description: Pull request auditor of the Golden Template Web (NestJS API, React SPA and Astro landing) and the projects created from it. Reviews the current branch against its base as a staff engineer, security reviewer, QA engineer and SRE would — intent, full diff, end-to-end flows, races and cancellation, auth, contract, state, errors, performance, test quality — reproduces suspected bugs with temporary tests, runs the template's gates, and reports evidence-backed findings with a merge verdict. Read-only unless --fix is confirmed.
-argument-hint: '[--base <ref>] [--diff | --full | --security | --tests] [--fix] [--help]'
+description: Pull request auditor of the Golden Template Web (NestJS API, React SPA and Astro landing) and the projects created from it. Reviews the current branch against its base as a staff engineer, security reviewer, QA engineer and SRE would — intent, full diff, end-to-end flows, races and cancellation, auth, contract, state, errors, performance, test quality — reproduces suspected bugs with temporary tests, runs the template's gates, and reports evidence-backed findings with a merge verdict. Read-only unless --fix is confirmed or --loop (audit in rounds, fixing what each finds) is asked for.
+argument-hint: '[--base <ref>] [--diff | --full | --security | --tests] [--fix | --loop [--max-rounds <1-5>]] [--help]'
 disable-model-invocation: true
 allowed-tools: Read, Grep, Glob, Bash(git status *), Bash(git diff *), Bash(git log *), Bash(git show *), Bash(git merge-base *), Bash(git rev-parse *), Bash(git ls-files *), Bash(node scripts/doberman.mjs *)
 ---
@@ -23,7 +23,9 @@ Arguments: `$ARGUMENTS`
    create branches, stash, or change dependencies. Never run `git reset`, `git clean`,
    `git checkout -- …`, `git restore`, `git stash` or any other command that discards work. The only
    files you create inside the repository are reproduction tests (rule 2); everything else (logs,
-   sandbox, results) goes to the run directory that `doberman.mjs start` creates outside it.
+   sandbox, results) goes to the run directory that `doberman.mjs start` creates outside it. The
+   two exceptions edit the working tree only, never anything else this rule names: `--fix` after
+   an explicit yes ([below](#--fix)), and `--loop` ([below](#--loop)).
 2. **Temporary tests only.** Name them `*.doberman.spec.ts(x)`, start them with the
    `// DOBERMAN-TEMPORARY:` marker ([reference/reproduction.md](reference/reproduction.md)); the
    clean step deletes them. Never modify an existing test, helper or production file to reproduce.
@@ -58,19 +60,24 @@ Arguments: `$ARGUMENTS`
 
 ## Arguments
 
-| Argument       | Effect                                                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------- |
-| (none)         | review of the branch's changes (commits since the merge base, plus uncommitted changes) and the planned gates |
-| `--base <ref>` | compare against `<ref>` instead of the default branch                                                         |
-| `--diff`       | review and reproductions only; gates are SKIPPED (not requested)                                              |
-| `--full`       | whole-repository audit by risk, every gate including the conditional ones the environment allows              |
-| `--security`   | focus on security review and the security gates                                                               |
-| `--tests`      | focus on test quality, coverage of the changed lines and the test gates                                       |
-| `--fix`        | after the report, offer fixes; nothing changes without explicit confirmation ([below](#--fix))                |
-| `--help`       | print this table and stop                                                                                     |
+| Argument           | Effect                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| (none)             | review of the branch's changes (commits since the merge base, plus uncommitted changes) and the planned gates     |
+| `--base <ref>`     | compare against `<ref>` instead of the default branch                                                             |
+| `--diff`           | review and reproductions only; gates are SKIPPED (not requested)                                                  |
+| `--full`           | whole-repository audit by risk, every gate including the conditional ones the environment allows                  |
+| `--security`       | focus on security review and the security gates                                                                   |
+| `--tests`          | focus on test quality, coverage of the changed lines and the test gates                                           |
+| `--fix`            | after the report, offer fixes; nothing changes without explicit confirmation ([below](#--fix))                    |
+| `--loop`           | audit in rounds, fixing what each round finds, until the change is ready or the rounds run out ([below](#--loop)) |
+| `--max-rounds <n>` | with `--loop`: at most `n` rounds, 1 to 5 (default 5)                                                             |
+| `--help`           | print this table and stop                                                                                         |
 
-`--diff`, `--full`, `--security` and `--tests` exclude each other. An unknown argument: print the
-table, say which argument was not understood, and stop.
+`--diff`, `--full`, `--security` and `--tests` exclude each other. `--loop` excludes `--fix`,
+`--diff`, `--security` and `--tests` (those three skip mandatory gates, so no round could prove its
+fixes); it combines with `--base` and `--full`. `--max-rounds` needs `--loop`. An unknown argument,
+or a combination this paragraph excludes: print the table, say which argument was not understood
+or which combination is not allowed, and stop.
 
 ## Progress
 
@@ -89,6 +96,14 @@ Running template gates... ✓ Format ✓ Lint ✗ Tests …
 Cleaning...               ✓ Workspace unchanged
 ```
 
+With `--loop`, one line per round and per fix phase as well:
+
+```
+Round 1/5: the change...  ✓ CHANGES REQUIRED (0 BLOCKING, 3 SHOULD FIX, 7 LOW, 2 NIT)
+Fixing round 1...         ✓ 11 fixed  ✓ 1 deferred (needs your decision)
+Round 2/5: the fixes...   ✓ READY WITH ENVIRONMENT LIMITATIONS (0 BLOCKING, 0 SHOULD FIX, 1 LOW)
+```
+
 ## Workflow
 
 ### 0. Start: snapshot, detection, scope
@@ -98,6 +113,8 @@ From the repository root (`git rev-parse --show-toplevel`):
 ```sh
 node scripts/doberman.mjs start [--base <ref>] [--mode diff|full|security|tests]
 ```
+
+With `--loop`, `node scripts/doberman.mjs loop start` takes its place ([below](#--loop)).
 
 It records the workspace state before anything else, then prints the context (also saved as
 `context.json` in `runDir`). Keep `runDir` and `logDir`. Read:
@@ -224,8 +241,9 @@ Judge them by what they are (auth, cancellation, error and race paths matter; a 
 node scripts/doberman.mjs clean --run <runDir> --remove-artifacts
 ```
 
-It deletes the marked reproduction files, the sandbox and the gate artifacts the run created, then
-compares the workspace with the snapshot of step 0. Before it, stop every service, process or
+It deletes the marked reproduction files (keeping a copy of each in `<runDir>/reproductions/`,
+which a fix turns into its regression test), the sandbox and the gate artifacts the run created,
+then compares the workspace with the snapshot of step 0. Before it, stop every service, process or
 container you started (the `stop` command of each `plan.services` entry you started included) and
 check none of your gates is still running.
 `clean: true` is required; if it is false, list each difference in the report with its cause. Do
@@ -251,8 +269,138 @@ Only after the full report:
 
 1. Ask which findings to fix (list them by id and title). Nothing changes without an explicit yes.
 2. Apply the smallest fix that follows the repository's rules, in the working tree. No commits.
-3. For each fixed bug, turn its reproduction into a permanent regression test: proper name
-   (`*.spec.ts(x)` or `*.int.spec.tsx`), no marker, the repository's conventions (the Definition of
-   Done asks for the test that failed before the fix).
+3. For each fixed bug, turn its reproduction (the copy in `<runDir>/reproductions/`) into a
+   permanent regression test: proper name (`*.spec.ts(x)` or `*.int.spec.tsx`), no marker, the
+   repository's conventions (the Definition of Done asks for the test that failed before the fix).
 4. Run the reproduction tests and the gates the fix touches again; report the new results.
 5. Run the clean step: the differences it lists now are your fixes; name each one.
+
+## --loop
+
+An audit in rounds: each round is a complete audit of the working tree as it is, and fixes what
+it finds, until the change is ready or the rounds run out (5 at most; `--max-rounds <n>` lowers
+it). Asking for `--loop` is the explicit yes for every fix the loop makes **in the working tree**,
+under the rules below; it never commits, stages, pushes, switches or creates branches, stashes, or
+runs a command that discards work (rule 1). The changes stay uncommitted for the user to review.
+Every other rule applies to every round.
+
+The engine keeps the loop's state in its directory (`loop.json`) and checks every step: after an
+interruption or a compacted conversation, `node scripts/doberman.mjs loop status --loop <dir>`
+says which round is where and what comes next. **Never end your turn while the loop is not
+finished**: the loop runs to its end in one go (in a non-interactive session the end of the turn
+ends it). The one exception is a blocker the user must clear (step 5): report it and stop.
+
+The loop builds on what each round's valid verdict checked (`result.verified.json`, kept by
+`verdict`), never on `result.json` as it is later: a finding cannot leave the loop by an edit. While
+a round is the current one, a corrected `result.json` gets a new `verdict`, which keeps every
+finding the earlier verdict checked: a fixed one stays (and goes in `fixes.json`); one that proved
+false goes in `withdrawn`, with the evidence. Once the next round has started, the round is closed:
+`verdict` refuses it.
+
+### 1. Start
+
+```sh
+node scripts/doberman.mjs loop start [--base <ref>] [--mode full] [--max-rounds <n>]
+```
+
+It records the workspace as the loop found it, starts round 1 in a run directory inside the loop
+directory, and pins the base: every round compares with the same commit. It prints round 1's
+context, as `start` does, with `loop` (`dir`, `round`, `maxRounds`). Keep `loop.dir`. When round 1
+cannot start (a blocker of step 0: not this template, a merge or rebase in progress, nothing to
+review), it makes no loop and says why: report it and stop.
+
+### 2. Each round
+
+Steps 0 (already done by `loop start` or `loop next`) to 7 of the workflow, with these
+differences:
+
+- **Scope.** Round 1 reviews the change, as a run without `--loop` does. A later round reviews the
+  previous round's fixes: the files in `loop.fixes`, their exact diff in `loop.patch`, and the code
+  their behavior depends on (callers, tests, the flows of reference/template.md); it checks that
+  each finding in `loop.fixed` is really gone. It does not audit the rest of the branch again: round
+  1 did, and a round that widens never converges.
+- **Gates.** Every planned gate, every round: a PASS is evidence only for the tree it ran on.
+- **Carry.** A later round reports everything the previous round left unfixed (`loop.deferred`,
+  the LOW and NIT it did not fix, the UNVERIFIED): each one as a finding with
+  `"carriedFrom": "<round>:<id>"`, checked again against the current code (its severity may
+  change with it), or in `resolved` with the evidence that it no longer applies
+  ([reference/report.md](reference/report.md#resultjson)). `verdict` refuses a round that drops
+  one, so the last round's report holds everything still open. A fix that did not hold is not
+  carried (its finding was fixed): it is a new finding of this round, with
+  `"reopens": "<round>:<id>"`.
+- **Report.** Between rounds, the progress lines only; the report is printed once, at the end.
+
+### 3. Decide
+
+From the round's verdict, in this order:
+
+1. The round is the last (`loop.round` equals `loop.maxRounds`): finish (step 6). Never fix after
+   the last round: no round would review the fix.
+2. `READY TO MERGE` or `READY WITH ENVIRONMENT LIMITATIONS`, and no LOW or NIT within the loop's
+   reach (step 4): finish.
+3. Every BLOCKING and SHOULD FIX left needs the user's decision (step 4), and no LOW or NIT is
+   within reach: write `fixes.json` with each of them deferred and nothing fixed, then finish.
+4. Otherwise: fix (step 4), then the next round (step 5).
+
+### 4. Fix
+
+In the working tree, the smallest change that follows the repository's rules, for:
+
+- every verified BLOCKING and SHOULD FIX, unless it needs the user's decision;
+- every verified LOW and NIT whose fix stays inside the files the finding is about (and their tests
+  and docs) and needs no decision: within the loop's reach;
+- nothing UNVERIFIED: it is carried.
+
+Never edit a file git ignores: the engine sees the workspace as git does, so no round would review
+that change.
+
+A fix **needs the user's decision**, and its finding is deferred with that reason instead, when it
+would: add, remove or upgrade a dependency; change the API contract incompatibly; change a
+database schema other than by an expand step, or edit a migration the base branch already has;
+loosen a security control (CSP, CORS, cookies, authentication or authorization, rate limits,
+workflow permissions) or edit a policy file (dependency policy, CODEOWNERS, rulesets); skip,
+weaken or delete a test, a gate, a lint or type rule, a coverage threshold or a budget, or raise
+one; choose between behaviors a product owner should pick; or touch anything outside the
+repository.
+
+For each fixed bug, turn its reproduction (the copy in `<runDir>/reproductions/`) into a permanent
+regression test, as `--fix` does (step 3): a test file (`*.spec.*`, `*.test.*`). Then run the regression tests and the fast gates the
+fixes touch (format, lint, typecheck, the touched packages' tests), so the next round does not
+start on a broken tree; the next round's gates are the evidence. Finally write
+`<runDir>/fixes.json` ([reference/report.md](reference/report.md#fixesjson)): every verified
+BLOCKING and SHOULD FIX of the round, fixed or deferred with its reason, and the LOW and NIT
+fixed.
+
+### 5. Next round
+
+```sh
+node scripts/doberman.mjs loop next --loop <loop.dir>
+```
+
+It starts the next round only when the round before has a valid verdict and its fixes hold up:
+`fixes.json` accounts for every verified BLOCKING and SHOULD FIX, each fix names files that
+changed, a reproduced bug has its regression test (a test file this round added or changed, kept for
+good), nothing UNVERIFIED is marked fixed, nothing was committed, staged, stashed or switched, no
+reproduction file of the loop was left behind, the round fixed something, and rounds remain. When
+it refuses, it says why: correct that, and run it again. When the new round cannot start because
+of a blocker (a merge or rebase in progress), the loop stays where it was: report the blocker and
+stop; `loop next` works again once the user has cleared it. Then the new round, from step 2.
+
+### 6. Finish
+
+```sh
+node scripts/doberman.mjs loop finish --loop <loop.dir> --remove-artifacts
+```
+
+It refuses changes made after the last round started (no round reviewed them: with rounds left,
+`loop next` reviews them; without, undo them) and a stop before the last round with a BLOCKING
+or SHOULD FIX that `fixes.json` does not defer. It writes `summary.json`: why the loop stopped
+(`ready`, `round-limit`, `needs-decision`), each round's verdict, counts, fixes and deferrals,
+the findings still open (with the decision each deferred one needs), and the files the loop
+changed.
+
+### 7. Report
+
+Print the report with exactly the structure of
+[reference/report.md](reference/report.md#the-loop-report): the last round's report, with the
+rounds, the fixes applied and what needs the user's decision. The verdict is the last round's.

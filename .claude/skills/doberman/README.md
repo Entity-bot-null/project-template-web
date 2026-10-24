@@ -4,7 +4,7 @@
 branch against its base the way a staff engineer, a security reviewer, a QA engineer and an SRE
 would: it reconstructs the intent, reads the whole diff and the flows it touches, reproduces
 suspected bugs with temporary tests, runs the template's gates, and ends with evidence-backed
-findings and a merge verdict. It is read-only unless `--fix` is confirmed.
+findings and a merge verdict. It is read-only unless `--fix` is confirmed or `--loop` is asked for.
 
 Each Golden Template has its own Doberman: the same engine and instructions, with the template's
 own knowledge in `template.json` and `reference/template.md`. Outside its template it stops
@@ -31,8 +31,16 @@ In Claude Code, from the repository root, on the branch to review:
 /doberman --tests             test quality, changed-line coverage, test gates
 /doberman --full              the whole repository, by risk, every gate available
 /doberman --fix               after the report, offers fixes (asks first)
+/doberman --loop              audits in rounds and fixes what each finds, until ready (5 rounds at most)
+/doberman --loop --max-rounds 2
 /doberman --help
 ```
+
+`--loop` runs one complete audit per round, every planned gate included, so each round takes about
+as long as `/doberman` does. It edits the working tree (fixes and their regression tests) and runs
+the gates for hours unattended: start it with a permission mode that lets it edit files and run the
+gate commands, or it stops at each prompt. It never commits, stages, pushes or switches branches;
+its changes wait in the working tree for your review.
 
 Only a person can start it (`disable-model-invocation`): no agent runs it on its own. Without
 commits yet, the whole tree is the change and the run is `--full`. Headless, from Git Bash on
@@ -56,6 +64,16 @@ Windows, keep the slash command from being rewritten into a path:
   │             removed; the workspace compared with the snapshot (clean.json)
   └─ verdict    scripts/doberman.mjs verdict: result.json validated against the evidence rules
                 and the gate logs, the verdict computed, then the report (reference/report.md)
+
+/doberman --loop
+  ├─ loop start   the workspace as the loop found it, the base pinned, round 1 started
+  ├─ round        an audit as above (round 1: the change; later rounds: the previous round's
+  │               fixes and their patch), carrying what the previous round left unfixed
+  ├─ fix          BLOCKING and SHOULD FIX, LOW and NIT within reach; what needs your decision is
+  │               deferred; reproductions kept as regression tests; fixes.json
+  ├─ loop next    the fixes checked against fixes.json and the workspace, the next round started
+  │               … until ready, the rounds run out, or what is left needs your decision
+  └─ loop finish  summary.json (why it stopped, every round, what is open, what changed), the report
 ```
 
 The model judges the code; the script decides what must not depend on judgment: what project it
@@ -67,8 +85,14 @@ line that ends the gate's log, so a gate that never finished cannot pass.
 Everything a run produces outside the temporary tests goes to a run directory in the system
 temporary folder (`doberman/<repo>-<time>-<random>`, private to you, or under `DOBERMAN_TMP`):
 `context.json`, `snapshot.json`, `logs/`, `coverage.json`, `result.json`, `clean.json`,
-`verdict.json`.
-`node scripts/doberman.mjs status --run <dir>` says where an interrupted run stopped;
+`verdict.json`, `result.verified.json` (the result a valid verdict checked, byte for byte), and
+`reproductions/` (a copy of each reproduction the cleanup deleted). A loop has
+a directory of its own there (`<repo>-<time>-loop-<random>`): `loop.json` (its state),
+`snapshot.json` (the workspace as it found it), `summary.json`, and a run directory per round
+(`round-<n>/`), which adds `workspace/` (the files changed when the round started), `fixes.json`
+and `fixes.patch` (its fixes, which the next round reviews).
+`node scripts/doberman.mjs status --run <dir>` says where an interrupted run stopped, and
+`loop status --loop <dir>` where a loop stands and what comes next;
 `node scripts/doberman.mjs help` lists the commands. An option a command does not accept stops it
 before it writes anything.
 
@@ -116,3 +140,9 @@ before it writes anything.
   gates that use them. The verdict says which ones could not run.
 - It is a reviewer, not an approver: the merge decision, the approvals and CI stay as the
   template defines them.
+- `--loop` stops at 5 rounds even when findings remain: each round can find something in the
+  previous round's fixes, and the limit keeps that from going on for ever. What it leaves open,
+  and what needs your decision (a dependency, a contract or schema change, a security or policy
+  control, a weaker test or gate, a product choice), is in its final report.
+- The loop sees the workspace as git does: it never edits a file git ignores, since no round could
+  review that change.
