@@ -15,9 +15,13 @@
 // 4. Release-delay exemptions (minimumReleaseAgeExclude): exact versions
 //    only, each with an expiry date no further away than the delay itself,
 //    written as a plain block list, and nothing else applied by pnpm.
+// 5. Release sets: packages published together as one release (Prisma's CLI
+//    and the client whose code it generates) resolve to one version wherever
+//    the workspace uses them, so an update cannot move one of them alone.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { parseAllDocuments } from 'yaml';
 
 // --- License expressions -------------------------------------------------------
 
@@ -274,6 +278,86 @@ export function checkReleaseAgeExemptions({ workspace, applied, today, releaseAg
   return { exemptions, problems };
 }
 
+// --- Release sets ----------------------------------------------------------------
+
+// Packages published together as one release, which work only at the same
+// version. Prisma's CLI generates the client code that @prisma/client runs:
+// a grouped update that moves one of them and leaves the other behind (as
+// when the install policy refuses the other's new version) still builds and
+// can pass every test, with the generated code and its runtime from two
+// releases.
+
+/**
+ * @typedef {{ packages: string[]; reason: string }} ReleaseSet
+ * @typedef {{ specifier: string; version: string }} LockedDependency
+ * @typedef {{
+ *   dependencies?: Record<string, LockedDependency>;
+ *   devDependencies?: Record<string, LockedDependency>;
+ *   optionalDependencies?: Record<string, LockedDependency>;
+ * }} Importer
+ */
+
+/** @type {readonly ('dependencies' | 'devDependencies' | 'optionalDependencies')[]} */
+const DEPENDENCY_TYPES = ['dependencies', 'devDependencies', 'optionalDependencies'];
+
+/**
+ * The problems of the release sets against the lockfile: the members of a
+ * set that the workspace uses directly must resolve to one version, in every
+ * workspace package; a member left out is fine (not every project needs all
+ * of them). A set that matches no direct dependency fails too: it would apply
+ * unseen to packages added later. A resolved version is compared without its
+ * peer suffix ("7.10.0(prisma@7.10.0)" is 7.10.0).
+ * @param {Record<string, Importer>[]} importers the `importers` of each
+ *   document of pnpm-lock.yaml (pnpm's own installation is one, the
+ *   workspace's dependencies another)
+ * @param {Record<string, ReleaseSet>} sets
+ * @returns {string[]}
+ */
+export function checkReleaseSets(importers, sets) {
+  /** @type {string[]} */
+  const problems = [];
+  for (const [name, set] of Object.entries(sets)) {
+    if (
+      !Array.isArray(set.packages) ||
+      set.packages.length < 2 ||
+      typeof set.reason !== 'string' ||
+      set.reason.trim() === ''
+    ) {
+      problems.push(
+        `scripts/dependency-policy.json: the release set "${name}" needs two packages or more and its reason.`,
+      );
+      continue;
+    }
+    /** @type {Map<string, string[]>} each resolved version, and where */
+    const versions = new Map();
+    for (const document of importers) {
+      for (const [importer, dependencies] of Object.entries(document)) {
+        for (const type of DEPENDENCY_TYPES) {
+          for (const pkg of set.packages) {
+            const locked = dependencies[type]?.[pkg];
+            if (locked === undefined) continue;
+            const version = locked.version.replace(/\(.*$/, '');
+            versions.set(version, [...(versions.get(version) ?? []), `${pkg} in ${importer}`]);
+          }
+        }
+      }
+    }
+    if (versions.size === 0) {
+      problems.push(
+        `scripts/dependency-policy.json: the release set "${name}" applies to no direct dependency in pnpm-lock.yaml. Remove it.`,
+      );
+    } else if (versions.size > 1) {
+      const found = [...versions]
+        .map(([version, where]) => `${version} (${where.join(', ')})`)
+        .join(', ');
+      problems.push(
+        `Release set "${name}": ${set.packages.join(', ')} must resolve to one version, found ${found}. Update them together, in one pull request. ${set.reason}`,
+      );
+    }
+  }
+  return problems;
+}
+
 function main() {
   const policy = JSON.parse(
     readFileSync(new URL('dependency-policy.json', import.meta.url), 'utf8'),
@@ -397,6 +481,19 @@ function main() {
     );
   }
 
+  // --- Release sets ------------------------------------------------------------
+
+  // pnpm-lock.yaml holds two YAML documents: pnpm's own installation
+  // (packageManagerDependencies), then the workspace's dependencies.
+  const documents = parseAllDocuments(lockfile);
+  const unreadable = documents.flatMap((document) => document.errors);
+  if (unreadable.length > 0) {
+    problems.push(`pnpm-lock.yaml does not parse as YAML: ${unreadable[0]?.message}`);
+  } else {
+    const importers = documents.map((document) => document.toJS()?.importers ?? {});
+    problems.push(...checkReleaseSets(importers, policy.releaseSets.sets));
+  }
+
   // --- Report ----------------------------------------------------------------
 
   if (problems.length > 0) {
@@ -407,7 +504,7 @@ function main() {
     return 1;
   }
   console.log(
-    `Dependency policy OK: ${checked} lockfile sources, licenses of ${prodPackages.size} production and ${allPackages.size} total packages.`,
+    `Dependency policy OK: ${checked} lockfile sources, licenses of ${prodPackages.size} production and ${allPackages.size} total packages, release sets on one version (${Object.keys(policy.releaseSets.sets).join(', ')}).`,
   );
   return 0;
 }
