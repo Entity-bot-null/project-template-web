@@ -30,6 +30,15 @@
       }
     }
   },
+  "releaseSets": {
+    "description": "Packages published together as one release that work only at the same version (scripts/check-dependencies.mjs, checkReleaseSets): the members the workspace uses directly must resolve to one version in pnpm-lock.yaml, so an update that moves one alone fails here. Dependabot proposes each set in a group of its own (.github/dependabot.yml). A set that matches no direct dependency fails too.",
+    "sets": {
+      "prisma": {
+        "packages": ["prisma", "@prisma/client", "@prisma/adapter-pg"],
+        "reason": "Prisma releases the three as one version: `prisma generate` writes apps/api/src/prisma/generated stamped with the CLI's version and engine, for the runtime that @prisma/client ships, and the driver adapter implements that runtime's interface."
+      }
+    }
+  },
   "sources": {
     "description": "Every package must come from the registry with a sha512 integrity hash. List here, with a reason, a package that must come from a git repository or a tarball URL.",
     "exceptions": {}
