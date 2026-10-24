@@ -23,15 +23,6 @@ engineStrict: true
 # lockfile past its version.
 minimumReleaseAge: 10080
 minimumReleaseAgeExcludePrune: true
-# Fixes of the advisories published on 2026-10-23, all four exempt until one
-# date: the last of them turns seven days old on 2026-10-29 at 11:58 UTC, so
-# on 2026-10-30 every one is old enough all day. Remove the four entries that
-# day (docs/security.md#dependency-vulnerabilities).
-minimumReleaseAgeExclude:
-  - 'body-parser@2.4.0' # expires 2026-10-30: GHSA-27r3-jxmh-p828 (high), every JSON route of the API inflates compressed bodies
-  - 'multer@2.5.0' # expires 2026-10-30: GHSA-q7qp-rjg7-q26m (high), in the API image (no route takes uploads)
-  - 'nodemailer@10.1.4' # expires 2026-10-30: GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w, GHSA-85x2-q946-cp5h (moderate), the API's mail transport
-  - 'fast-uri@3.1.9' # expires 2026-10-30: GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr (moderate), GHSA-xhq7-xmqj-769h, GHSA-333x-w4r6-6crp (low), astro check only
 
 # Supply chain: a new version published with weaker evidence than its earlier
 # ones (for example without the provenance or trusted publisher they had) is
