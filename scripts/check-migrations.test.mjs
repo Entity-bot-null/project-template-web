@@ -413,6 +413,153 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
     );
   });
 
+  test('lets a SET NULL or a SET DEFAULT give way only when the columns it sets can take that', () => {
+    const key = (/** @type {string} */ actions) =>
+      `ALTER TABLE "posts" ADD CONSTRAINT "posts_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "users"("id") ${actions};`;
+    const setNull = key('ON DELETE SET NULL ON UPDATE CASCADE');
+    // A default for the required columns below (a required column added without one is a step of its own).
+    const NO_ONE = '00000000-0000-0000-0000-000000000000';
+    // A required column: PostgreSQL refuses the NULL, so the delete. Prisma
+    // writes this for onDelete: SetNull on a required relation, with a warning.
+    for (const table of [
+      'CREATE TABLE "posts" ("id" UUID NOT NULL, "author_id" UUID NOT NULL);',
+      'CREATE TABLE "posts" ("author_id" UUID, CONSTRAINT "posts_pkey" PRIMARY KEY ("author_id"));',
+      // A domain may refuse NULL too.
+      'CREATE DOMAIN user_ref AS uuid;\nCREATE TABLE "posts" ("author_id" user_ref);',
+      // A column added to the new table later.
+      `CREATE TABLE "posts" ("id" UUID NOT NULL);\nALTER TABLE "posts" ADD COLUMN "author_id" UUID NOT NULL DEFAULT '${NO_ONE}';`,
+    ]) {
+      assert.deepEqual(kinds(`${table}\n${setNull}`), [UNYIELDING], table);
+    }
+    // Declared in the column itself, in a new table or a column added to one.
+    assert.deepEqual(
+      kinds(
+        'CREATE TABLE "posts" ("author_id" UUID NOT NULL REFERENCES "users" ON DELETE SET NULL ON UPDATE SET NULL);',
+      ),
+      [UNYIELDING],
+    );
+    assert.deepEqual(
+      kinds(
+        `CREATE TABLE "posts" ("id" UUID NOT NULL);\nALTER TABLE "posts" ADD COLUMN "author_id" UUID NOT NULL DEFAULT '${NO_ONE}' REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;`,
+      ),
+      [UNYIELDING],
+    );
+    // A nullable column takes the NULL, a SET DEFAULT's too when the column
+    // has no default of its own; one it has names a row that may not exist
+    // (the reason says it does).
+    const setDefault = key('ON DELETE SET DEFAULT ON UPDATE CASCADE');
+    assert.deepEqual(
+      kinds(`CREATE TABLE "posts" ("id" UUID NOT NULL, "author_id" UUID);\n${setNull}`),
+      [],
+    );
+    assert.deepEqual(kinds(`CREATE TABLE "posts" ("author_id" UUID);\n${setDefault}`), []);
+    for (const column of [
+      `UUID DEFAULT '${NO_ONE}'`,
+      `UUID NOT NULL DEFAULT '${NO_ONE}'`,
+      'UUID NOT NULL',
+    ]) {
+      assert.deepEqual(
+        kinds(`CREATE TABLE "posts" ("author_id" ${column});\n${setDefault}`),
+        [UNYIELDING],
+        column,
+      );
+    }
+    // A column list: only the columns it names are set.
+    const composite = (/** @type {string} */ action) =>
+      `CREATE TABLE "posts" ("tenant_id" UUID NOT NULL, "author_id" UUID, CONSTRAINT "posts_author_fkey" FOREIGN KEY ("tenant_id", "author_id") REFERENCES "users"("tenant_id", "id") ON DELETE ${action} ON UPDATE CASCADE);`;
+    assert.deepEqual(kinds(composite('SET NULL ("author_id")')), []);
+    assert.deepEqual(kinds(composite('SET NULL')), [UNYIELDING]);
+  });
+
+  test('judges a SET NULL or a SET DEFAULT by the columns as the whole migration leaves them', () => {
+    const key = (/** @type {string} */ actions) =>
+      `ALTER TABLE "posts" ADD CONSTRAINT "posts_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "users"("id") ${actions};`;
+    const setNull = key('ON DELETE SET NULL ON UPDATE CASCADE');
+    const setDefault = key('ON DELETE SET DEFAULT ON UPDATE CASCADE');
+    const table = 'CREATE TABLE "posts" ("author_id" UUID);';
+    const later = (/** @type {string} */ action) => `ALTER TABLE "posts" ${action};`;
+    /** @type {[string, string[]][]} */
+    const migrations = [
+      // A default given before or after the key, a primary key, a CHECK.
+      [
+        `${table}\n${later(`ALTER COLUMN "author_id" SET DEFAULT 'x'`)}\n${setDefault}`,
+        [UNYIELDING],
+      ],
+      [
+        `${table}\n${setDefault}\n${later(`ALTER COLUMN "author_id" SET DEFAULT 'x'`)}`,
+        [UNYIELDING],
+      ],
+      [
+        `${table}\n${later('ADD CONSTRAINT "posts_pkey" PRIMARY KEY ("author_id")')}\n${setNull}`,
+        [UNYIELDING],
+      ],
+      [
+        `${table}\n${setNull}\n${later('ADD CONSTRAINT "c" CHECK (author_id IS NOT NULL)')}`,
+        [UNYIELDING],
+      ],
+      [
+        `${table}\n${setNull}\n${later('ALTER COLUMN "author_id" ADD GENERATED ALWAYS AS IDENTITY')}`,
+        [UNYIELDING],
+      ],
+      // NOT NULL given later is a step of its own too.
+      [
+        `${table}\n${setNull}\n${later('ALTER COLUMN "author_id" SET NOT NULL')}`,
+        [UNYIELDING, 'makes a column required'],
+      ],
+      [
+        `CREATE TABLE "posts" ("author_id" UUID REFERENCES "users" ON DELETE SET NULL ON UPDATE CASCADE);\n${later('ALTER COLUMN "author_id" SET NOT NULL')}`,
+        [UNYIELDING, 'makes a column required'],
+      ],
+      // CHECKs that read it, in its definition or the table's; not one of another column.
+      [
+        `CREATE TABLE "posts" ("author_id" UUID CHECK ("author_id" IS NOT NULL));\n${setNull}`,
+        [UNYIELDING],
+      ],
+      [
+        `CREATE TABLE "posts" ("author_id" UUID, CONSTRAINT "c" CHECK ("author_id" IS NOT NULL));\n${setNull}`,
+        [UNYIELDING],
+      ],
+      [`CREATE TABLE "posts" ("author_id" UUID, "n" INT, CHECK ("n" > 0));\n${setNull}`, []],
+      // Taken back later: NOT NULL dropped, the default dropped (a step of its own).
+      [
+        `CREATE TABLE "posts" ("author_id" UUID NOT NULL);\n${later('ALTER COLUMN "author_id" DROP NOT NULL')}\n${setNull}`,
+        [],
+      ],
+      [
+        `CREATE TABLE "posts" ("author_id" UUID DEFAULT 'x');\n${setDefault}\n${later('ALTER COLUMN "author_id" DROP DEFAULT')}`,
+        ["removes a column's default"],
+      ],
+      // Renamed: judged under its new name.
+      [
+        `CREATE TABLE "posts" ("writer_id" UUID NOT NULL);\n${later('RENAME COLUMN "writer_id" TO "author_id"')}\n${setNull}`,
+        ['renames a column or a table', UNYIELDING],
+      ],
+    ];
+    for (const [sql, found] of migrations) assert.deepEqual(kinds(sql), found, sql);
+  });
+
+  test('counts a table CREATE TABLE IF NOT EXISTS may find there already as an earlier one', () => {
+    assert.deepEqual(
+      kinds(
+        'CREATE TABLE IF NOT EXISTS "teams" ("id" UUID NOT NULL);\nALTER TABLE "users" ADD COLUMN "team_id" UUID;\nALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+      ),
+      [UNYIELDING],
+    );
+    assert.deepEqual(
+      kinds(
+        'CREATE TABLE IF NOT EXISTS "teams" ("id" UUID NOT NULL, "name" TEXT);\nCREATE UNIQUE INDEX "teams_name_key" ON "teams"("name");',
+      ),
+      ['adds a unique index to an existing table'],
+    );
+    // Its own keys to itself: it is created then, or nothing happens.
+    assert.deepEqual(
+      kinds(
+        'CREATE TABLE IF NOT EXISTS "members" ("id" UUID NOT NULL, "mentor_id" UUID REFERENCES "members");',
+      ),
+      [],
+    );
+  });
+
   test('counts a column as holding data when IF NOT EXISTS may find it, or a domain types it', () => {
     const unique = 'CREATE UNIQUE INDEX "users_code_key" ON "users"("code");';
     assert.deepEqual(

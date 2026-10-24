@@ -21,17 +21,21 @@
 //     (nullable, no default now or later, no domain type, the table not
 //     written: recordAddedColumns), never with NULLS NOT DISTINCT;
 //   - a foreign key, in any table, new ones included, to a table an earlier
-//     migration created that does not give way to it (yieldsToReferenced): it
-//     refuses the previous release's deletes of the rows it references;
+//     migration created that does not give way to it (CASCADE, or a SET NULL
+//     or SET DEFAULT that puts NULL in columns that take it, as the whole
+//     migration leaves them: yieldsToReferenced, columnStates): it refuses the
+//     previous release's deletes of the rows it references;
 //   - a dropped unique index, unique constraint or primary key, a table moved
 //     to another schema, a DELETE without WHERE, and an enum value added
 //     without IF NOT EXISTS (PostgreSQL cannot drop it, so a migration that
 //     failed after adding it could not run again:
 //     docs/database.md#when-a-migration-fails).
-// The migrations before it shipped before those rules, and a committed
-// migration is never edited. Expand steps (new tables, nullable columns,
-// columns with a default, indexes, looser constraints) need nothing. Only
-// plain statements are read: SQL inside a DO block or a function body is not.
+// A table made with CREATE TABLE IF NOT EXISTS may be there already, with its
+// rows: it counts as an earlier migration's. The migrations before
+// TIGHTENING_FROM shipped before those rules, and a committed migration is
+// never edited. Expand steps (new tables, nullable columns, columns with a
+// default, indexes, looser constraints) need nothing. Only plain statements
+// are read: SQL inside a DO block or a function body is not.
 //
 //   node scripts/check-migrations.mjs [<migration.sql>...]
 //
@@ -330,16 +334,34 @@ function columnsOf(text) {
  * The tightening steps of a statement (TIGHTENING_FROM): `created` holds the
  * tables this migration created before it, `added` the columns it added to
  * existing ones, empty (recordAddedColumns); nothing writes either yet.
+ * `declared`: what the columns this migration declares or alters take once it
+ * ran (columnStates), by table; `domains`: the domains known by then.
  * @param {Statement} statement
  * @param {Set<string>} created
  * @param {Map<string, Set<string>>} added
+ * @param {Map<string, Map<string, ColumnFacts>>} declared
+ * @param {Set<string>} domains
  * @returns {string[]}
  */
-function tighteningKinds({ code, bare }, created, added) {
+function tighteningKinds({ code, bare }, created, added, declared, domains) {
   // A new table: nothing wrote it. Only the other side of its foreign keys
-  // counts, the tables they reference.
+  // counts, the tables they reference (itself included: IF NOT EXISTS
+  // creates it, or does nothing at all).
   if (/^CREATE (?:UNLOGGED )?TABLE\b/.test(code)) {
-    return foreignKeysOf(bare).flatMap((key) => (givesWay(key, created) ? [] : [UNYIELDING_KEY]));
+    const table = createdTableOf(bare, domains);
+    if (table === undefined) return [];
+    const itself = new Set([...created, table.name]);
+    // As the migration leaves them; with IF NOT EXISTS, as the statement says.
+    const columns = /^CREATE (?:UNLOGGED )?TABLE IF NOT EXISTS\b/.test(code)
+      ? table.columns
+      : (declared.get(table.name) ?? table.columns);
+    return table.elements
+      .filter((element) => /\bREFERENCES\b/i.test(masked(element)))
+      .flatMap((key) =>
+        givesWay(key, itself, keyColumns(key), (column) => columns.get(column))
+          ? []
+          : [UNYIELDING_KEY],
+      );
   }
   if (/^CREATE UNIQUE INDEX\b/.test(code)) {
     const index = new RegExp(
@@ -398,7 +420,10 @@ function tighteningKinds({ code, bare }, created, added) {
           inline.every(([, word = '']) => /^(?:UNIQUE|REFERENCES)$/i.test(word)));
       if (!safe) return ['adds a constraint to an existing table'];
       const key = inline.some(([, word = '']) => /^REFERENCES$/i.test(word));
-      return key && !givesWay(column[2] ?? '', created) ? [UNYIELDING_KEY] : [];
+      const id = identifier(column[1] ?? '');
+      const facts = declared.get(altered.table)?.get(id) ?? columnFacts(column[2] ?? '', domains);
+      const yields = givesWay(column[2] ?? '', created, [id], () => facts);
+      return key && !yields ? [UNYIELDING_KEY] : [];
     }
     const dropped = drop.exec(action);
     if (dropped !== null) {
@@ -419,7 +444,11 @@ function tighteningKinds({ code, bare }, created, added) {
     if (!onlyNew(altered.table, columns, created, added)) {
       return ['adds a constraint to an existing table'];
     }
-    return /^FOREIGN/.test(kind) && !givesWay(rest, created) ? [UNYIELDING_KEY] : [];
+    const known = declared.get(altered.table);
+    return /^FOREIGN/.test(kind) &&
+      !givesWay(rest, created, columnsOf(rest), (column) => known?.get(column))
+      ? [UNYIELDING_KEY]
+      : [];
   });
 }
 
@@ -455,20 +484,57 @@ function upToClosing(text) {
 }
 
 /**
- * The foreign keys a CREATE TABLE declares, in a column's definition or as a
- * table constraint: each one's definition, as written.
+ * What a CREATE TABLE declares: the table, its elements (columns and table
+ * constraints, as written) and what each column takes (columnFacts), its
+ * table-level primary key and the CHECKs that read it included. Undefined for
+ * one without a column list (CREATE TABLE ... AS).
  * @param {string} bare a Statement's bare form
- * @returns {string[]}
+ * @param {Set<string>} domains
+ * @returns {{ name: string; elements: string[]; columns: Map<string, ColumnFacts> } | undefined}
  */
-function foreignKeysOf(bare) {
+function createdTableOf(bare, domains) {
   const head = new RegExp(
-    String.raw`^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?${QUALIFIED}\s*\(`,
+    String.raw`^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(${QUALIFIED})\s*\(`,
     'i',
   ).exec(bare);
-  if (head === null) return [];
-  return splitTopLevel(upToClosing(bare.slice(head[0].length))).filter((element) =>
-    /\bREFERENCES\b/i.test(masked(element)),
+  if (head === null) return undefined;
+  const elements = splitTopLevel(upToClosing(bare.slice(head[0].length)));
+  /** @type {Map<string, ColumnFacts>} */
+  const columns = new Map();
+  for (const element of elements) {
+    const column = new RegExp(String.raw`^(${IDENT})(?:\s+([\s\S]*))?$`).exec(element);
+    const name = column?.[1];
+    if (name === undefined || CONSTRAINT_WORD.test(name) || /^LIKE$/i.test(name)) continue;
+    columns.set(identifier(name), columnFacts(column?.[2] ?? '', domains));
+  }
+  const primary = new RegExp(
+    String.raw`^(?:CONSTRAINT\s+${IDENT}\s+)?PRIMARY\s+KEY\s*(\([\s\S]*)$`,
+    'i',
   );
+  for (const element of elements) {
+    const list = primary.exec(element)?.[1];
+    for (const name of (list === undefined ? undefined : columnsOf(list)) ?? []) {
+      change(columns, name, { required: true });
+    }
+    for (const name of checkedNames(element)) change(columns, name, { checked: true });
+  }
+  return { name: lastPart(head[1] ?? ''), elements, columns };
+}
+
+/**
+ * The columns a foreign key covers: the list after FOREIGN KEY in a table
+ * constraint, or the column whose definition holds it.
+ * @param {string} element a CREATE TABLE's element, as written
+ * @returns {string[] | undefined}
+ */
+function keyColumns(element) {
+  const listed = new RegExp(
+    String.raw`^(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*(\([\s\S]*)$`,
+    'i',
+  ).exec(element);
+  if (listed !== null) return columnsOf(listed[1] ?? '');
+  const name = new RegExp(`^(${IDENT})`).exec(element)?.[1];
+  return name === undefined ? undefined : [identifier(name)];
 }
 
 /**
@@ -488,10 +554,12 @@ function referencedTable(key) {
  * touches it), or gives way to the rows it references (yieldsToReferenced).
  * @param {string} key the definition, as written
  * @param {Set<string>} created
+ * @param {string[] | undefined} columns the columns it covers
+ * @param {(column: string) => ColumnFacts | undefined} facts what each column takes
  */
-function givesWay(key, created) {
+function givesWay(key, created, columns, facts) {
   const table = referencedTable(key);
-  return (table !== undefined && created.has(table)) || yieldsToReferenced(quotedNamesOut(key));
+  return (table !== undefined && created.has(table)) || yieldsToReferenced(key, columns, facts);
 }
 
 /**
@@ -561,21 +629,119 @@ function withoutNames(definition) {
   return quotedNamesOut(definition).replace(/\bON\s+(?:DELETE|UPDATE)\s+SET\s+DEFAULT\b/gi, '');
 }
 
-// A referential action that gives way to the referenced row.
-const GIVES_WAY = String.raw`(?:SET\s+NULL|SET\s+DEFAULT|CASCADE)\b`;
+/**
+ * What a column takes when a foreign key's SET NULL or SET DEFAULT fires:
+ * NULL only when nothing refuses it (takesNull), and a default of its own
+ * names a row that may not exist.
+ * - notNull: NOT NULL, or a serial type (DROP NOT NULL takes it back);
+ * - required: in the primary key, or an identity: never NULL;
+ * - checked: a CHECK reads it, and may refuse NULL;
+ * - domain: typed with a domain, which may refuse NULL;
+ * - defaulted: a default of its own (other than NULL), a serial's included.
+ * @typedef {{ notNull: boolean; required: boolean; checked: boolean; domain: boolean; defaulted: boolean }} ColumnFacts
+ */
+
+/**
+ * What a column's definition says it takes (ColumnFacts).
+ * @param {string} definition a column's definition after its name, as written
+ * @param {Set<string>} domains
+ * @returns {ColumnFacts}
+ */
+function columnFacts(definition, domains) {
+  const text = withoutNames(definition);
+  const serial = /\b(?:SMALL|BIG)?SERIAL[248]?\b/i.test(text);
+  return {
+    notNull: serial || /\bNOT\s+NULL\b/i.test(text),
+    required: /\b(?:PRIMARY\s+KEY|IDENTITY)\b/i.test(text),
+    checked: /\bCHECK\b/i.test(text),
+    domain: domainTyped(definition, domains),
+    defaulted: serial || /\bDEFAULT\b(?!\s+\(*\s*NULL\b)/i.test(text),
+  };
+}
+
+/** Whether a column takes the NULL a SET NULL, or a SET DEFAULT without a default, gives it. */
+const takesNull = (/** @type {ColumnFacts} */ facts) =>
+  !facts.notNull && !facts.required && !facts.checked && !facts.domain;
+
+/**
+ * Changes what a known column takes (a column the map does not hold is left
+ * alone).
+ * @param {Map<string, ColumnFacts>} columns
+ * @param {string} name
+ * @param {Partial<ColumnFacts>} facts
+ */
+function change(columns, name, facts) {
+  const known = columns.get(name);
+  if (known !== undefined) columns.set(name, { ...known, ...facts });
+}
+
+/**
+ * The names the CHECK constraints of a definition or an action read (each
+ * CHECK (...) it holds), as PostgreSQL resolves them: some are columns.
+ * @param {string} text as written
+ * @returns {string[]}
+ */
+function checkedNames(text) {
+  /** @type {string[]} */
+  const names = [];
+  for (const at of masked(text).matchAll(/\bCHECK\s*\(/gi)) {
+    const expression = upToClosing(text.slice(at.index + at[0].length));
+    for (const [name] of expression.matchAll(new RegExp(IDENT, 'g'))) names.push(identifier(name));
+  }
+  return names;
+}
+
+/**
+ * Whether a column definition starts with a domain's name (not an array of
+ * one, which takes nothing from it).
+ * @param {string} definition a column's definition after its name, as written
+ * @param {Set<string>} domains
+ */
+function domainTyped(definition, domains) {
+  const type = new RegExp(String.raw`^\s*(${QUALIFIED})\s*(\[|ARRAY\b)?`, 'i').exec(definition);
+  return type !== null && type[2] === undefined && domains.has(lastPart(type[1] ?? ''));
+}
+
+// A foreign key's action on a delete and on an update of the referenced row:
+// CASCADE, or SET NULL or SET DEFAULT with the columns it sets, if it lists them.
+const REFERENTIAL_ACTIONS = [
+  /\bON\s+DELETE\s+(?:CASCADE\b|SET\s+(NULL|DEFAULT)\b\s*(\([^)]*\))?)/i,
+  /\bON\s+UPDATE\s+(?:CASCADE\b|SET\s+(NULL|DEFAULT)\b\s*(\([^)]*\))?)/i,
+];
 
 /**
  * Whether a foreign key gives way to the referenced table on both a delete
- * and an update (ON DELETE and ON UPDATE SET NULL, SET DEFAULT or CASCADE):
- * otherwise (RESTRICT, NO ACTION, the default) it refuses the previous
- * release's deletes of rows the new release references.
- * @param {string} text the key's definition, quoted names out
+ * and an update: CASCADE, or a SET NULL or SET DEFAULT (of the columns it
+ * lists, or of all it covers) that puts NULL in columns that take it, as
+ * the migration leaves them (columnStates; a default of the column's own names
+ * a row the check cannot see exists). Otherwise (RESTRICT, NO ACTION, the default, a SET NULL on a
+ * required column, a column this migration does not declare) it refuses the
+ * previous release's deletes of rows the new release references.
+ * @param {string} key the definition, as written
+ * @param {string[] | undefined} columns the columns it covers
+ * @param {(column: string) => ColumnFacts | undefined} facts
  */
-function yieldsToReferenced(text) {
-  return (
-    new RegExp(String.raw`\bON\s+DELETE\s+${GIVES_WAY}`, 'i').test(text) &&
-    new RegExp(String.raw`\bON\s+UPDATE\s+${GIVES_WAY}`, 'i').test(text)
-  );
+function yieldsToReferenced(key, columns, facts) {
+  const text = masked(key);
+  return REFERENTIAL_ACTIONS.every((pattern) => {
+    const action = pattern.exec(text);
+    if (action === null) return false;
+    const set = action[1]?.toUpperCase();
+    if (set === undefined) return true;
+    const list = action[2];
+    const affected =
+      list === undefined
+        ? columns
+        : columnsOf(key.slice(action.index + action[0].length - list.length));
+    return (
+      affected !== undefined &&
+      affected.length > 0 &&
+      affected.every((column) => {
+        const known = facts(column);
+        return known !== undefined && takesNull(known) && (set === 'NULL' || !known.defaulted);
+      })
+    );
+  });
 }
 
 /**
@@ -604,12 +770,10 @@ function recordAddedColumns(bare, added, written, defaulted, domains) {
     if (name === undefined || CONSTRAINT_WORD.test(name)) continue;
     const id = identifier(name);
     const definition = column?.[2] ?? '';
-    const type = new RegExp(String.raw`^\s*(${QUALIFIED})\s*(\[|ARRAY\b)?`, 'i').exec(definition);
-    const domain = type !== null && type[2] === undefined && domains.has(lastPart(type[1] ?? ''));
     if (
       FILLED.test(withoutNames(definition)) ||
       defaulted.has(`${altered.table}.${id}`) ||
-      domain
+      domainTyped(definition, domains)
     ) {
       continue;
     }
@@ -617,6 +781,107 @@ function recordAddedColumns(bare, added, written, defaulted, domains) {
     columns.add(id);
     added.set(altered.table, columns);
   }
+}
+
+/**
+ * What every column this migration declares or alters takes once it ran
+ * (ColumnFacts), by table: the definitions of the tables it creates (not with
+ * IF NOT EXISTS, which may find another one there) and of the columns it
+ * adds, then what later actions change: SET or DROP DEFAULT, SET or DROP NOT
+ * NULL, a new type, an identity, a primary key, a CHECK, a column renamed or
+ * dropped, the table renamed. A foreign key is judged by them: the previous
+ * release meets the migrated schema, whatever the order of the statements.
+ * ADD COLUMN IF NOT EXISTS counts only on a table this migration created,
+ * where it is known whether the column is there.
+ * @param {Statement[]} statements
+ * @param {Set<string>} domains
+ * @returns {Map<string, Map<string, ColumnFacts>>}
+ */
+function columnStates(statements, domains) {
+  /** @type {Map<string, Map<string, ColumnFacts>>} */
+  const tables = new Map();
+  /** @type {Set<string>} */
+  const created = new Set();
+  const alterColumn = new RegExp(String.raw`^ALTER\s+(?:COLUMN\s+)?(${IDENT})\s+([\s\S]*)$`, 'i');
+  const renameColumn = new RegExp(
+    String.raw`^RENAME\s+(?:COLUMN\s+)?(${IDENT})\s+TO\s+(${IDENT})$`,
+    'i',
+  );
+  const renameTable = new RegExp(String.raw`^RENAME\s+TO\s+(${IDENT})$`, 'i');
+  const dropColumn = new RegExp(
+    String.raw`^DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(${IDENT})(?:\s+(?:CASCADE|RESTRICT))?$`,
+    'i',
+  );
+  const primaryKey = new RegExp(
+    String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?PRIMARY\s+KEY\s*(\([\s\S]*)$`,
+    'i',
+  );
+  const check = new RegExp(String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?CHECK\b`, 'i');
+  for (const { code, bare } of statements) {
+    if (/^CREATE (?:UNLOGGED )?TABLE (?!IF NOT EXISTS\b)/.test(code)) {
+      const table = createdTableOf(bare, domains);
+      if (table !== undefined) {
+        tables.set(table.name, new Map(table.columns));
+        created.add(table.name);
+      }
+      continue;
+    }
+    const altered = alterTableOf(bare);
+    if (altered === undefined) continue;
+    let table = altered.table;
+    for (const action of altered.actions) {
+      const columns = tables.get(table) ?? new Map();
+      const added = ADD_COLUMN.exec(action);
+      if (added !== null && !CONSTRAINT_WORD.test(added[1] ?? '')) {
+        const id = identifier(added[1] ?? '');
+        const ifMissing = /^ADD\s+(?:COLUMN\s+)?IF\s+NOT\s+EXISTS\b/i.test(action);
+        if (ifMissing && (!created.has(table) || columns.has(id))) continue;
+        columns.set(id, columnFacts(added[2] ?? '', domains));
+        for (const name of checkedNames(added[2] ?? '')) change(columns, name, { checked: true });
+        tables.set(table, columns);
+        continue;
+      }
+      const renamedTo = renameTable.exec(action)?.[1];
+      if (renamedTo !== undefined) {
+        const to = identifier(renamedTo);
+        if (tables.has(table)) tables.set(to, columns);
+        tables.delete(table);
+        if (created.delete(table)) created.add(to);
+        table = to;
+        continue;
+      }
+      const altering = alterColumn.exec(action);
+      const renamed = renameColumn.exec(action);
+      const dropped = dropColumn.exec(action);
+      const key = primaryKey.exec(action)?.[1];
+      if (altering !== null) {
+        const id = identifier(altering[1] ?? '');
+        const what = altering[2] ?? '';
+        if (/^SET\s+NOT\s+NULL\b/i.test(what)) change(columns, id, { notNull: true });
+        else if (/^DROP\s+NOT\s+NULL\b/i.test(what)) change(columns, id, { notNull: false });
+        else if (/^SET\s+DEFAULT\b/i.test(what)) {
+          change(columns, id, { defaulted: !/^SET\s+DEFAULT\s+\(*\s*NULL\b/i.test(what) });
+        } else if (/^DROP\s+DEFAULT\b/i.test(what)) change(columns, id, { defaulted: false });
+        else if (/^(?:SET\s+DATA\s+)?TYPE\b/i.test(what)) {
+          const type = what.replace(/^(?:SET\s+DATA\s+)?TYPE\s+/i, '');
+          change(columns, id, { domain: domainTyped(type, domains) });
+        } else if (/^ADD\s+GENERATED\b/i.test(what)) change(columns, id, { required: true });
+      } else if (renamed !== null) {
+        const from = identifier(renamed[1] ?? '');
+        const facts = columns.get(from);
+        columns.delete(from);
+        if (facts !== undefined) columns.set(identifier(renamed[2] ?? ''), facts);
+      } else if (dropped !== null && !/^DROP\s+CONSTRAINT\b/i.test(action)) {
+        columns.delete(identifier(dropped[1] ?? ''));
+      } else if (key !== undefined) {
+        for (const name of columnsOf(key) ?? []) change(columns, name, { required: true });
+      } else if (check.test(action)) {
+        for (const name of checkedNames(action)) change(columns, name, { checked: true });
+      }
+      if (columns.size > 0) tables.set(table, columns);
+    }
+  }
+  return tables;
 }
 
 /**
@@ -685,20 +950,21 @@ export function contractSteps(sql, { tightening = true, domains = new Set() } = 
   const defaulted = new Set(statements.flatMap(({ bare }) => defaultedColumns(bare)));
   /** Domains: earlier migrations' (`domains`) and this one's. */
   const typed = domainsOf(sql, new Set(domains));
+  /** What the columns this migration declares or alters take once it ran, by table. */
+  const declared = columnStates(statements, typed);
   return statements.flatMap((statement) => {
     const reason = /^\s*--\s*contract:[ \t]*(\S.*?)\s*$/im.exec(statement.comments)?.[1];
     const text = statement.text.split('\n')[0] ?? '';
-    if (/^CREATE (?:UNLOGGED )?TABLE\b/.test(statement.code)) {
-      const table = tableIn(
-        statement.bare,
-        /^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/i,
-      );
+    // IF NOT EXISTS may find the table there already, with its rows: an
+    // earlier one, then, whatever the statement says its columns are.
+    if (/^CREATE (?:UNLOGGED )?TABLE (?!IF NOT EXISTS\b)/.test(statement.code)) {
+      const table = tableIn(statement.bare, /^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+/i);
       if (table !== undefined) created.add(table);
     }
     recordAddedColumns(statement.bare, added, written, defaulted, typed);
     const kinds = [
       ...contractKinds(statement.code),
-      ...(tightening ? tighteningKinds(statement, created, added) : []),
+      ...(tightening ? tighteningKinds(statement, created, added, declared, typed) : []),
     ];
     return kinds.map((kind) => ({
       kind,

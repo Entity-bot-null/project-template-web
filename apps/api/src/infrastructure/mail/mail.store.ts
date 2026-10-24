@@ -30,9 +30,10 @@ type Claim = Pick<ClaimedMessage, 'id' | 'attempts' | 'claimId'>;
 // made under (status sending, same attempt, same claim id): a worker whose
 // lease ran out and whose message another worker took over can no longer
 // finish it. The id is new at each claim, so a manual retry that starts the
-// attempts again never revives an old claim; the attempt goes up at each claim
-// of the previous release too, which leaves the id as it was (a deployment, a
-// rollback: that release fences by the attempt alone, as before).
+// attempts again never revives an old claim. The previous release (a
+// deployment, a rollback) fences by the attempt alone and leaves the id as it
+// is: a manual retry clears it, so that release's next claims carry none, and
+// no claim of this one matches them whatever the attempt.
 @Injectable()
 export class MailStore {
   /** The kinds nobody can request (security notices): claimed before the others. */
@@ -206,8 +207,9 @@ export class MailStore {
   }
 
   /**
-   * Puts failed messages back in the queue, their attempts started again (the
-   * claim id fences each claim, not the attempt alone) and with a new validity
+   * Puts failed messages back in the queue, their attempts started again and
+   * their last claim's id cleared (the claim id fences each claim, not the
+   * attempt alone: see the class comment) and with a new validity
    * (their kind's), else one that failed through an outage longer than that
    * would be dropped unsent at once: one by id, or
    * every failed one (of a kind). Only those that still have their address
@@ -227,7 +229,7 @@ export class MailStore {
       if (filter.kind !== undefined && filter.kind !== kind) continue;
       queued += await this.prisma.$executeRaw`
         UPDATE "mail_messages" AS "message"
-        SET "status" = 'pending', "attempts" = 0,
+        SET "status" = 'pending', "attempts" = 0, "claim_id" = NULL,
             "next_attempt_at" = ${new Date(now)},
             "expires_at" = ${new Date(now + this.templates[kind].ttlMs)},
             "last_error" = NULL, "updated_at" = now()

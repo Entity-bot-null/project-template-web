@@ -1,9 +1,21 @@
-// Tests of scripts/check-bundle-size.mjs: what counts as the initial
-// JavaScript, how budgets pass, fail or match nothing, and what a page may not
-// carry under the Content-Security-Policy. Run: pnpm test:scripts
+// Tests of scripts/check-bundle-size.mjs: which files of a build are measured,
+// what counts as the initial JavaScript, how budgets pass, fail or match
+// nothing, and what a page or a stylesheet may not carry under the
+// Content-Security-Policy. Run: pnpm test:scripts
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
-import { checkBudgets, cspProblems, cssProblems, initialAssets } from './check-bundle-size.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  builtFiles,
+  checkBudgets,
+  cspProblems,
+  cssProblems,
+  initialAssets,
+} from './check-bundle-size.mjs';
 
 // The shape Vite writes: the entry, a chunk it shares with lazy ones, the CSS.
 const HTML = `<!doctype html>
@@ -67,6 +79,84 @@ describe('initialAssets', () => {
   });
 });
 
+describe('initialAssets and module scripts', () => {
+  test('counts .mjs entries and preloads like .js ones', () => {
+    assert.deepEqual(
+      initialAssets(
+        '<script type="module" src="/assets/index-a.mjs"></script><link rel="modulepreload" href="/assets/vendor-b.MJS">',
+      ),
+      ['index-a.mjs', 'vendor-b.MJS'],
+    );
+  });
+});
+
+describe('the command', () => {
+  test("measures and reads every file of the builds, the landing's public/ ones and upper-case names included", () => {
+    // A copy of the command in a repository of its own: two builds, two budget files.
+    const root = mkdtempSync(join(tmpdir(), 'budget-command-'));
+    const write = (/** @type {string} */ file, /** @type {string} */ content = '') => {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), content);
+    };
+    const run = () =>
+      spawnSync(process.execPath, [join(root, 'scripts', 'check-bundle-size.mjs')], {
+        encoding: 'utf8',
+      });
+    try {
+      mkdirSync(join(root, 'scripts'));
+      copyFileSync(
+        fileURLToPath(new URL('check-bundle-size.mjs', import.meta.url)),
+        join(root, 'scripts', 'check-bundle-size.mjs'),
+      );
+      // parse5, found from the copy as from the original.
+      symlinkSync(
+        fileURLToPath(new URL('../node_modules', import.meta.url)),
+        join(root, 'node_modules'),
+        'junction',
+      );
+      write(
+        'apps/web/performance-budget.json',
+        JSON.stringify({ budgets: [{ name: 'JavaScript', pattern: '\\.m?js$', maxGzipKb: 1 }] }),
+      );
+      write(
+        'apps/web/dist/index.html',
+        '<script type="module" src="/app/assets/index-a.js"></script>',
+      );
+      write('apps/web/dist/assets/index-a.js', 'export {};');
+      write(
+        'apps/landing/performance-budget.json',
+        JSON.stringify({
+          budgets: [
+            { name: 'JavaScript', pattern: '\\.m?js$', maxGzipKb: 0 },
+            { name: 'CSS', pattern: '\\.css$', maxGzipKb: 6 },
+          ],
+        }),
+      );
+      write('apps/landing/dist/index.html', '<link rel="stylesheet" href="/_astro/a.css">');
+      write('apps/landing/dist/_astro/a.css', '.a{color:red}');
+      const clean = run();
+      assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+
+      // What public/ copies next to the pages: a script, a stylesheet that
+      // imports a font's stylesheet from another site.
+      write('apps/landing/dist/vendor/widget.JS', 'console.log(1);');
+      write(
+        'apps/landing/dist/fonts.css',
+        '@import url("https://fonts.example.net/css2?family=Inter");',
+      );
+      const refused = run();
+      assert.equal(refused.status, 1);
+      assert.match(refused.stderr, /OVER BUDGET {2}JavaScript: .* \(1 files\)/);
+      assert.match(
+        refused.stderr,
+        /REFUSED BY THE CSP {2}fonts\.css: an @import from another origin: https:\/\/fonts\.example\.net\//,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('checkBudgets', () => {
   test('counts a preloaded shared chunk in the initial JavaScript', () => {
     const { lines, failed } = checkBudgets(
@@ -120,6 +210,75 @@ describe('checkBudgets', () => {
     assert.equal(over, false);
     assert.match(lines[0]?.line ?? '', /^NO MATCH {2}Renamed: .*fix the pattern "\^gone-"$/);
     assert.match(lines[1]?.line ?? '', /index\.html loads no script from assets\/$/);
+  });
+
+  test("measures every file of the build by its name, what public/ put next to the bundler's included", () => {
+    // The landing's budgets over its whole build: a script copied from
+    // public/ (loaded with <script is:inline src>) is JavaScript all the same.
+    const landing = [
+      { name: 'JavaScript', pattern: /\.m?js$/, maxGzipKb: 0 },
+      { name: 'CSS', pattern: /\.css$/, maxGzipKb: 6 },
+    ];
+    for (const script of ['js/widget.js', 'widget.mjs']) {
+      const { lines, failed } = checkBudgets(landing, {
+        files: ['_astro/Headline.a1.css', 'fonts.css', script, 'index.html'],
+        html: '',
+        gzipBytes: () => 1_000,
+        assets: '_astro/',
+        assetsPath: '/_astro/',
+      });
+      assert.equal(failed, true, script);
+      assert.deepEqual(
+        lines.map((entry) => entry.line),
+        [
+          'OVER BUDGET  JavaScript: 1.0 kB gzip, budget 0 kB (1 files)',
+          'ok  CSS: 2.0 kB gzip, budget 6 kB (2 files)',
+        ],
+        script,
+      );
+    }
+    // The initial JavaScript is found in the assets folder; patterns read the
+    // file's name wherever it is.
+    const { lines } = checkBudgets(
+      [
+        { name: 'JavaScript, initial', initial: true, maxGzipKb: 100 },
+        { name: 'Account pages', pattern: /^AccountPage-/, maxGzipKb: 2 },
+      ],
+      {
+        files: [...FILES.map((file) => `assets/${file}`), 'index.html'],
+        html: HTML,
+        gzipBytes: (file) => SIZES.get(file.replace(/^assets\//, '')) ?? 0,
+        assets: 'assets/',
+      },
+    );
+    assert.deepEqual(
+      lines.map((entry) => entry.line),
+      [
+        'ok  JavaScript, initial: 100.0 kB gzip, budget 100 kB (2 files)',
+        'ok  Account pages: 1.0 kB gzip, budget 2 kB (1 files)',
+      ],
+    );
+  });
+});
+
+describe('builtFiles', () => {
+  test("lists every file of a build, in its folders too, as paths from the build's folder", () => {
+    const dist = mkdtempSync(join(tmpdir(), 'budget-'));
+    try {
+      mkdirSync(join(dist, '_astro'));
+      mkdirSync(join(dist, 'es', 'fonts'), { recursive: true });
+      for (const file of ['index.html', '_astro/Headline.a1.css', 'es/fonts/inter.css', 'w#1.js']) {
+        writeFileSync(join(dist, file), '');
+      }
+      assert.deepEqual(builtFiles(pathToFileURL(`${dist}/`)), [
+        '_astro/Headline.a1.css',
+        'es/fonts/inter.css',
+        'index.html',
+        'w#1.js',
+      ]);
+    } finally {
+      rmSync(dist, { recursive: true, force: true });
+    }
   });
 });
 
@@ -313,6 +472,19 @@ describe('cspProblems', () => {
     ]);
   });
 
+  test('reads a page as browsers with and without JavaScript do, each problem once', () => {
+    // With JavaScript, a <noscript>'s content is text up to </noscript>: the
+    // comment ends nothing there, and the script after it runs.
+    assert.deepEqual(
+      cspProblems('<noscript><!--</noscript><script>alert(1)</script>--></noscript>'),
+      ['an inline script'],
+    );
+    assert.deepEqual(cspProblems('<p><script>alert(1)</script><script>alert(2)</script></p>'), [
+      'an inline script',
+      'an inline script',
+    ]);
+  });
+
   test("finds image candidates of a preload, and what an iframe's srcdoc carries", () => {
     assert.deepEqual(
       cspProblems(`<link rel="preload" as="image" imagesrcset="/a.png 1x, https://cdn.example.net/b.png 2x">
@@ -355,12 +527,68 @@ describe('cssProblems', () => {
       cssProblems("@import 'local.css\n;\n@import url(https://evil.example/x.css);"),
       ['an @import from another origin: https://evil.example/x.css'],
     );
+    // An escaped quote starts no string: the comment after it is a comment,
+    // and the url() between the two strings is read.
     assert.deepEqual(
-      cssProblems(".a\\'{background:url(https://evil.example/x.png)}.b{content:'x'}"),
+      cssProblems(
+        ".a\\'{}.b{content:'x'}.c{content:'/*'}.d{background:url(https://evil.example/x.png)}.e{content:'*/'}",
+      ),
       ['a file from another origin: https://evil.example/x.png'],
     );
-    // An escaped line break goes on with the string.
+    // An escaped line break goes on with the string, CRLF and CR included
+    // (a browser reads both as one line break).
     assert.deepEqual(cssProblems(`.a{content:"a\\\n@import 'https://evil.example/x.css';"}`), []);
+    for (const lineBreak of ['\r\n', '\r', '\f']) {
+      const css = `.a{content:"x\\${lineBreak}y/*"}.b{background:url(https://evil.example/x.png)}.c{content:"*/"}`;
+      assert.deepEqual(
+        cssProblems(css),
+        ['a file from another origin: https://evil.example/x.png'],
+        JSON.stringify(lineBreak),
+      );
+    }
+  });
+
+  test('reads every URL a browser fetches: quoted ones whole, image-set() and image() candidates, escapes', () => {
+    const css = [
+      '.a{background-image:image-set("https://cdn.example.net/a.png" 1x, url(/b.png) 2x)}',
+      ".b{background-image:-webkit-image-set('//cdn.example.net/c.png' 1x)}",
+      '.c{background:url("https://cdn.example.net/x(1).png")}',
+      '.d{background:URL( "https://cdn.example.net/d.png" )}',
+      '.e{background:url(https\\3a //cdn.example.net/e.png)}',
+      '.f{background:image("https://cdn.example.net/f.png", red)}',
+    ].join('\n');
+    assert.deepEqual(cssProblems(css), [
+      'a file from another origin: https://cdn.example.net/a.png',
+      'a file from another origin: //cdn.example.net/c.png',
+      'a file from another origin: https://cdn.example.net/x(1).png',
+      'a file from another origin: https://cdn.example.net/d.png',
+      'a file from another origin: https://cdn.example.net/e.png',
+      'a file from another origin: https://cdn.example.net/f.png',
+    ]);
+  });
+
+  test('leaves alone what a browser does not fetch: other strings, a bad url(), an @namespace', () => {
+    for (const css of [
+      '.a{content:"https://cdn.example.net/a.png"}',
+      '.a{font-family:"https://cdn.example.net"}.b{background:format("https://x.example/a.woff")}',
+      // Bad: a quote or a space inside an unquoted url(); a browser drops the declaration.
+      ".a{background:url(https://cdn.example.net/it's.png)}",
+      '.a{background:url(https://cdn.example.net/a b.png)}',
+      '@namespace svg url(http://www.w3.org/2000/svg);',
+      '@charset "utf-8";',
+      // A hash is a name (#url is no function); conditions fetch nothing.
+      '.a{color:#url(https://cdn.example.net/a.png)}',
+      '@supports (background:url(https://cdn.example.net/a.png)){.a{color:red}}',
+      '@import url(/base.css) supports(background:url(https://cdn.example.net/a.png));',
+      '@import "/base.css" layer(base) screen;',
+    ]) {
+      assert.deepEqual(cssProblems(css), [], css);
+    }
+    // What a rule inside a conditional at-rule loads is fetched.
+    assert.deepEqual(
+      cssProblems('@supports (display:grid){.a{background:url(https://cdn.example.net/a.png)}}'),
+      ['a file from another origin: https://cdn.example.net/a.png'],
+    );
   });
 
   test('finds what the policy refuses: other origins, and fonts from data: URLs', () => {

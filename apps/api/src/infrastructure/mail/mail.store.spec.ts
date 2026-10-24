@@ -252,8 +252,9 @@ describe('MailStore', () => {
     const [sql, ...values] = calls.find((call) => call.includes('password_reset')) ?? [];
     const statement = sql?.join('?') ?? '';
     // The attempts start again, as in the previous release, whose workers
-    // count them: the claim id, not the attempt alone, fences each claim.
-    expect(statement).toContain(`SET "status" = 'pending', "attempts" = 0,`);
+    // count them: the claim id, not the attempt alone, fences each claim, and
+    // it is cleared (the previous release's claims leave it as it is).
+    expect(statement).toContain(`SET "status" = 'pending', "attempts" = 0, "claim_id" = NULL,`);
     expect(statement).toContain(`"status" = 'failed' AND "recipient" IS NOT NULL`);
     // Locked in id order, like expireQueued.
     expect(statement).toContain('ORDER BY "id"');

@@ -1,20 +1,23 @@
 // Performance budget (docs/testing.md#performance-budget): fails when the
-// built assets of an app outgrow its performance-budget.json (the web app's
-// and the landing's), or when a page of the landing, or a stylesheet of
-// either, carries what the web server's Content-Security-Policy refuses. Sizes are gzip, what browsers
+// files of an app's build (the bundler's and those copied from public/) outgrow
+// its performance-budget.json (the web app's and the landing's), or when a
+// page of the landing, or a stylesheet of either, carries what the web
+// server's Content-Security-Policy refuses. Sizes are gzip, what browsers
 // actually download, in kB of 1000 bytes like Vite reports. Run after
 // `pnpm build`; part of `pnpm verify` and CI.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { join, relative } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { parse } from 'parse5';
 
 /** @typedef {import('parse5').DefaultTreeAdapterMap['parentNode']} ParentNode */
 
 /**
- * Each app with a budget: its build folder, the folder of hashed assets
- * inside it, that folder's URL path on the site (the web app is served under
- * /app/) and its budget file.
+ * Each app with a budget: its build folder (every file in it is measured and
+ * read: builtFiles), the folder of hashed assets inside it, where index.html
+ * loads its initial scripts from, that folder's URL path on the site (the web
+ * app is served under /app/) and its budget file.
  * `pages`: every HTML page of the build is checked against the CSP too.
  * @type {{ name: string; dist: URL; assets: string; assetsPath: string; budget: URL; pages?: boolean }[]}
  */
@@ -63,15 +66,17 @@ const isAbsolute = (/** @type {string} */ url) =>
  * The elements of an HTML document, in document order, as a browser builds
  * them: parse5 follows the HTML standard (raw text elements, comments,
  * character references, SVG and MathML with their integration points and the
- * tags that leave them). With scripting off, a <noscript>'s content is
- * elements too (a browser without JavaScript renders it), and a <template>'s
- * content is read (a script may put it in the page). Names and attribute
- * names come in lower case, a namespaced attribute with its prefix
- * (xlink:href); `parent` is the enclosing element's name.
+ * tags that leave them). `scripting`: as a browser with JavaScript parses it
+ * (a <noscript>'s content is text), or, off, as one without (that content is
+ * elements, which it renders). A <template>'s content is read (a script may
+ * put it in the page). Names and attribute names come in lower case, a
+ * namespaced attribute with its prefix (xlink:href); `parent` is the
+ * enclosing element's name.
  * @param {string} html
+ * @param {{ scripting?: boolean }} [options]
  * @returns {{ name: string; parent: string; attributes: Map<string, string> }[]}
  */
-export function elementsOf(html) {
+export function elementsOf(html, { scripting = false } = {}) {
   /** @type {{ name: string; parent: string; attributes: Map<string, string> }[]} */
   const elements = [];
   /**
@@ -94,7 +99,7 @@ export function elementsOf(html) {
       visit('content' in child ? child.content : child, name);
     }
   };
-  visit(parse(html, { scriptingEnabled: false }), '');
+  visit(parse(html, { scriptingEnabled: scripting }), '');
   return elements;
 }
 
@@ -107,15 +112,32 @@ export function elementsOf(html) {
  * embed, a base or a form pointing elsewhere, a file from another origin, and
  * any of those in an iframe's srcdoc (which takes the page's policy). The
  * preview server sends no CSP, so such a page would break in production only.
- * A JSON-LD block is data, not a script.
+ * A JSON-LD block is data, not a script. The page is read as browsers with
+ * and without JavaScript parse it (a <noscript> reads differently in each:
+ * elementsOf), each problem once.
  * @param {string} html
  * @returns {string[]}
  */
 export function cspProblems(html) {
+  const without = problemsOf(elementsOf(html));
+  const more = problemsOf(elementsOf(html, { scripting: true }));
+  for (const problem of without) {
+    const same = more.indexOf(problem);
+    if (same !== -1) more.splice(same, 1);
+  }
+  return [...without, ...more];
+}
+
+/**
+ * What the elements of a page carry that the policy refuses (cspProblems).
+ * @param {ReturnType<typeof elementsOf>} elements
+ * @returns {string[]}
+ */
+function problemsOf(elements) {
   /** @type {string[]} */
   const problems = [];
   const absolute = isAbsolute;
-  for (const { name, parent, attributes } of elementsOf(html)) {
+  for (const { name, parent, attributes } of elements) {
     const attribute = (/** @type {string} */ key) => attributes.get(key)?.trim();
     if (
       name === 'script' &&
@@ -185,122 +207,229 @@ export function cspProblems(html) {
 
 /**
  * What a stylesheet loads that the Content-Security-Policy refuses: an import
- * (`@import`) or a url() from another origin (a web font's stylesheet, for
- * instance: self-host it), or a data: URL that is not an image (only images
- * may come from data: URLs; a font may not).
+ * (`@import`) or a file (url(), and the strings of src(), image-set() and
+ * image()) from another origin (a web font's stylesheet, for instance:
+ * self-host it), or a data: URL that is not an image (only images may come
+ * from data: URLs; a font may not).
  * @param {string} css
  * @returns {string[]}
  */
 export function cssProblems(css) {
   /** @type {string[]} */
   const problems = [];
-  const code = cssWithoutComments(css);
-  const imports = cssImports(code);
-  for (const [from, to] of imports) {
-    const url = /^@import\s*(?:url\(\s*)?["']?([^"')\s;]+)/i.exec(code.slice(from, to))?.[1] ?? '';
-    if (isAbsolute(url)) problems.push(`an @import from another origin: ${url}`);
-  }
-  // The url() of an @import is that import's, reported once.
-  let rules = code;
-  for (const [from, to] of [...imports].reverse()) rules = rules.slice(0, from) + rules.slice(to);
-  for (const [, , url = ''] of rules.matchAll(/url\(\s*(["']?)([^"')]*)\1\s*\)/gi)) {
+  for (const { url, imported } of cssUrls(css)) {
     const target = url.trim();
-    if (/^data:/i.test(target)) {
+    if (imported) {
+      if (isAbsolute(target)) problems.push(`an @import from another origin: ${target}`);
+    } else if (/^data:/i.test(target)) {
       if (!/^data:image\//i.test(target)) problems.push('a data: URL that is not an image');
     } else if (isAbsolute(target)) problems.push(`a file from another origin: ${target}`);
   }
   return problems;
 }
 
-/**
- * Where the strings of a stylesheet end, read from `from` on: the index after
- * the string that starts there (a backslash escapes the next character, a
- * line break included). A line break the string does not escape ends it
- * there, as a browser ends it (a bad string): what follows is read as rules.
- * @param {string} css
- * @param {number} from the opening quote's index
- */
-function cssStringEnd(css, from) {
-  const quote = css[from];
-  let k = from + 1;
-  while (k < css.length && css[k] !== quote) {
-    if (/[\n\r\f]/.test(css[k] ?? '')) return k;
-    k += css[k] === '\\' ? 2 : 1;
-  }
-  return k + 1;
-}
+// The functions whose strings are URLs a browser fetches (CSS Values, CSS
+// Images): url("...") and src("..."), and the candidates of image-set() and
+// image().
+const URL_FUNCTIONS = new Set(['url', 'src', 'image-set', '-webkit-image-set', 'image']);
 
 /**
- * A stylesheet without its comments, strings kept as written (a "/*" in a
- * string starts no comment). Outside a string, a backslash escapes the next
- * character: an escaped quote starts no string.
+ * The URLs a stylesheet loads, in order, read as a browser tokenizes it (CSS
+ * Syntax Level 3): CRLF, CR and FF are line breaks; comments; strings, where
+ * a backslash escapes the next character (an escaped line break goes on with
+ * the string) and a line break it does not escape ends a bad string, which a
+ * browser drops; escapes outside strings (an escaped quote starts no string);
+ * unquoted url() values (a bad one is dropped too); hashes (#name), which
+ * call no function; the strings of URL_FUNCTIONS. `imported`: the URL of an
+ * `@import`. A URL elsewhere in an at-rule's prelude (an `@namespace`'s, an
+ * `@supports` condition's) is fetched by nothing.
  * @param {string} css
+ * @returns {{ url: string; imported: boolean }[]}
  */
-function cssWithoutComments(css) {
-  let out = '';
+function cssUrls(css) {
+  const text = css.replace(/\r\n?|\f/g, '\n');
+  /** @type {{ url: string; imported: boolean }[]} */
+  const urls = [];
+  // The functions and parentheses open around k, innermost last ('' for a
+  // plain parenthesis).
+  /** @type {string[]} */
+  const open = [];
+  // The at-rule whose prelude k is in, before its URL ('' outside one).
+  let rule = '';
   let k = 0;
-  while (k < css.length) {
-    const c = css[k] ?? '';
-    if (c === '\\') {
-      out += css.slice(k, k + 2);
-      k += 2;
+  const at = (/** @type {number} */ i) => text[i] ?? '';
+  const space = (/** @type {number} */ i) => /^[ \t\n]$/.test(at(i));
+  // A backslash that starts an escape: not one before a line break or at the end.
+  const escapes = (/** @type {number} */ i) =>
+    at(i) === '\\' && i + 1 < text.length && at(i + 1) !== '\n';
+  const identChar = (/** @type {string} */ c) => /^[\w-]$/.test(c) || c.charCodeAt(0) >= 0x80;
+  // What an unquoted url() may not hold (a bad url): controls other than
+  // tab, line feed and carriage return, and delete.
+  const nonPrintable = (/** @type {string} */ c) => {
+    const code = c.charCodeAt(0);
+    return code <= 0x08 || code === 0x0b || (code >= 0x0e && code <= 0x1f) || code === 0x7f;
+  };
+
+  // The character an escape stands for, read from k (past its backslash):
+  // up to six hex digits and one white space after them, or the character.
+  const escape = () => {
+    const hex = /^[0-9a-f]{1,6}/i.exec(text.slice(k, k + 6))?.[0];
+    if (hex === undefined) {
+      const c = String.fromCodePoint(text.codePointAt(k) ?? 0xfffd);
+      k += c.length;
+      return c;
+    }
+    k += hex.length;
+    if (space(k)) k += 1;
+    const code = Number.parseInt(hex, 16);
+    return code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff
+      ? '\ufffd'
+      : String.fromCodePoint(code);
+  };
+  const ident = () => {
+    let name = '';
+    while (k < text.length) {
+      if (identChar(at(k))) {
+        name += at(k);
+        k += 1;
+      } else if (escapes(k)) {
+        k += 1;
+        name += escape();
+      } else break;
+    }
+    return name;
+  };
+  /** @returns {string | undefined} undefined for a bad string */
+  const string = () => {
+    const quote = at(k);
+    k += 1;
+    let value = '';
+    while (k < text.length) {
+      const c = at(k);
+      if (c === quote) {
+        k += 1;
+        return value;
+      }
+      if (c === '\n') return undefined;
+      if (c === '\\') {
+        k += 1;
+        if (at(k) === '\n') k += 1;
+        else if (k < text.length) value += escape();
+      } else {
+        value += c;
+        k += 1;
+      }
+    }
+    return value;
+  };
+  // The rest of a bad url(), to its closing parenthesis.
+  const badUrl = () => {
+    while (k < text.length && at(k) !== ')') k += escapes(k) ? 2 : 1;
+    k += 1;
+    return undefined;
+  };
+  /** @returns {string | undefined} undefined for a bad url */
+  const unquotedUrl = () => {
+    while (space(k)) k += 1;
+    let value = '';
+    while (k < text.length) {
+      const c = at(k);
+      if (c === ')') {
+        k += 1;
+        return value;
+      }
+      if (space(k)) {
+        while (space(k)) k += 1;
+        if (k >= text.length) return value;
+        if (at(k) !== ')') return badUrl();
+        k += 1;
+        return value;
+      }
+      if (c === '"' || c === "'" || c === '(' || nonPrintable(c)) return badUrl();
+      if (c === '\\') {
+        if (!escapes(k)) return badUrl();
+        k += 1;
+        value += escape();
+      } else {
+        value += c;
+        k += 1;
+      }
+    }
+    return value;
+  };
+  // Outside an at-rule's prelude, a file; in an @import's, the first URL is
+  // the one it loads. Any other in a prelude (an @namespace's, one in an
+  // @supports or a supports() condition, an @import's once its URL is read)
+  // is fetched by nothing.
+  const found = (/** @type {string} */ url) => {
+    if (rule === '') urls.push({ url, imported: false });
+    else if (rule === 'import') {
+      urls.push({ url, imported: true });
+      rule = 'import, read';
+    }
+  };
+
+  while (k < text.length) {
+    const c = at(k);
+    if (text.startsWith('/*', k)) {
+      const end = text.indexOf('*/', k + 2);
+      k = end === -1 ? text.length : end + 2;
     } else if (c === '"' || c === "'") {
-      const end = cssStringEnd(css, k);
-      out += css.slice(k, end);
-      k = end;
-    } else if (css.startsWith('/*', k)) {
-      const end = css.indexOf('*/', k + 2);
-      k = end === -1 ? css.length : end + 2;
+      const value = string();
+      const inner = open.at(-1);
+      const isUrl = inner === undefined ? rule === 'import' : URL_FUNCTIONS.has(inner);
+      if (value !== undefined && isUrl) found(value);
+    } else if (identChar(c) || escapes(k)) {
+      const name = ident().toLowerCase();
+      if (at(k) !== '(') continue;
+      k += 1;
+      let next = k;
+      while (space(next)) next += 1;
+      if (name === 'url' && at(next) !== '"' && at(next) !== "'") {
+        const value = unquotedUrl();
+        if (value !== undefined) found(value);
+      } else open.push(name);
+    } else if (c === '@') {
+      k += 1;
+      rule = ident().toLowerCase();
+    } else if (c === '#' && (identChar(at(k + 1)) || escapes(k + 1))) {
+      // A hash (#url is a name, as in a color or an id selector): no function.
+      k += 1;
+      ident();
     } else {
-      out += c;
+      if (c === '(') open.push('');
+      else if (c === ')') open.pop();
+      else if ((c === ';' || c === '{' || c === '}') && open.length === 0) rule = '';
       k += 1;
     }
   }
-  return out;
+  return urls;
 }
 
 /**
- * The import rules of a stylesheet (`@import`), outside strings, as
- * [start, end) ranges (to the ; that ends each): a longer at-keyword, or a
- * string that only says the word, is none.
- * @param {string} css a stylesheet without comments
- * @returns {[number, number][]}
+ * Every file of a build, as paths relative to its folder with forward
+ * slashes, in order: the bundler's assets and what it copied from public/
+ * alike (a script or a stylesheet put there reaches the pages as much as a
+ * bundled one does).
+ * @param {URL} dist the build folder
+ * @returns {string[]}
  */
-function cssImports(css) {
-  /** @type {[number, number][]} */
-  const ranges = [];
-  let k = 0;
-  while (k < css.length) {
-    const c = css[k] ?? '';
-    if (c === '\\') {
-      k += 2;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      k = cssStringEnd(css, k);
-      continue;
-    }
-    if (c === '@' && /^@import(?![\w-])/i.test(css.slice(k, k + 8))) {
-      let end = k + 7;
-      while (end < css.length && css[end] !== ';') {
-        if (css[end] === '\\') end += 2;
-        else if (css[end] === '"' || css[end] === "'") end = cssStringEnd(css, end);
-        else end += 1;
-      }
-      ranges.push([k, Math.min(end + 1, css.length)]);
-      k = end + 1;
-      continue;
-    }
-    k += 1;
-  }
-  return ranges;
+export function builtFiles(dist) {
+  const root = fileURLToPath(dist);
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(root, join(entry.parentPath, entry.name)).replaceAll('\\', '/'))
+    .sort();
 }
 
+/** The name of a build's file, without its folders. */
+const fileName = (/** @type {string} */ file) => file.slice(file.lastIndexOf('/') + 1);
+
 /**
- * A budget measures the assets whose file name matches `pattern`, or, with
- * `initial`, the JavaScript every visit downloads before the app starts. A
- * budget of 0 kB means the build has no such asset at all: matching nothing
- * is its pass, and any file is over it.
+ * A budget measures the build's files whose name matches `pattern`, wherever
+ * they are in the build, or, with `initial`, the JavaScript every visit
+ * downloads before the app starts. A budget of 0 kB means the build has no
+ * such file at all: matching nothing is its pass, and any file is over it.
  * @typedef {{ name: string; pattern?: string; initial?: boolean; maxGzipKb: number }} Budget
  * @typedef {Omit<Budget, 'pattern'> & { pattern?: RegExp }} CompiledBudget
  */
@@ -323,7 +452,7 @@ export function initialAssets(html, assetsPath = '/assets/') {
     const url = /\b(?:src|href)=["']?([^"'\s>]+)/i.exec(tag)?.[1];
     // A file directly in the assets folder, its query or fragment left out.
     const file = url?.startsWith(assetsPath)
-      ? /^([^/?#]+\.js)(?:[?#]|$)/i.exec(url.slice(assetsPath.length))?.[1]
+      ? /^([^/?#]+\.m?js)(?:[?#]|$)/i.exec(url.slice(assetsPath.length))?.[1]
       : undefined;
     if ((isEntry || isPreload) && file !== undefined) files.add(file);
   }
@@ -332,17 +461,25 @@ export function initialAssets(html, assetsPath = '/assets/') {
 
 /**
  * Checks every budget; returns the report lines and whether any failed.
+ * `files` are the build's (builtFiles); `assets` is the folder of hashed
+ * assets among them (`assets/`), whose URL path is `assetsPath`: the initial
+ * JavaScript is found there.
  * @param {CompiledBudget[]} budgets
- * @param {{ files: string[]; html: string; gzipBytes: (file: string) => number; assetsPath?: string }} build
+ * @param {{ files: string[]; html: string; gzipBytes: (file: string) => number; assets?: string; assetsPath?: string }} build
  */
-export function checkBudgets(budgets, { files, html, gzipBytes, assetsPath = '/assets/' }) {
+export function checkBudgets(
+  budgets,
+  { files, html, gzipBytes, assets = '', assetsPath = '/assets/' },
+) {
   /** @type {{ ok: boolean; line: string }[]} */
   const lines = [];
   let over = false;
   for (const budget of budgets) {
     const matched = budget.initial
-      ? initialAssets(html, assetsPath).filter((file) => files.includes(file))
-      : files.filter((file) => budget.pattern?.test(file) === true);
+      ? initialAssets(html, assetsPath)
+          .map((file) => `${assets}${file}`)
+          .filter((file) => files.includes(file))
+      : files.filter((file) => budget.pattern?.test(fileName(file)) === true);
     const kb = matched.reduce((sum, file) => sum + gzipBytes(file), 0) / 1000;
     const line = `${budget.name}: ${kb.toFixed(1)} kB gzip, budget ${budget.maxGzipKb} kB (${matched.length} files)`;
     if (matched.length === 0 && budget.maxGzipKb === 0) {
@@ -385,26 +522,35 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     const { budgets } = /** @type {{ budgets: Budget[] }} */ (
       JSON.parse(readFileSync(app.budget, 'utf8'))
     );
-    // The patterns come from the repository's own budget files.
+    // The patterns come from the repository's own budget files. They match
+    // file names whatever the letter case of their extension (widget.JS is a
+    // script as much as widget.js), like the stylesheet and page checks.
     /** @type {CompiledBudget[]} */
     const compiled = [];
     for (const { pattern, ...budget } of budgets) {
-      compiled.push(pattern === undefined ? budget : { ...budget, pattern: new RegExp(pattern) });
+      compiled.push(
+        pattern === undefined ? budget : { ...budget, pattern: new RegExp(pattern, 'i') },
+      );
     }
+    // Every file of the build: what public/ holds goes out with the pages too.
+    const root = fileURLToPath(app.dist);
+    const read = (/** @type {string} */ file) => readFileSync(join(root, file));
+    const files = builtFiles(app.dist);
     const result = checkBudgets(compiled, {
-      files: readdirSync(assets),
-      html: readFileSync(new URL('index.html', app.dist), 'utf8'),
-      gzipBytes: (file) => gzipSync(readFileSync(new URL(file, assets))).length,
+      files,
+      html: read('index.html').toString('utf8'),
+      gzipBytes: (file) => gzipSync(read(file)).length,
+      assets: app.assets,
       assetsPath: app.assetsPath,
     });
     for (const { ok, line } of result.lines) (ok ? console.log : console.error)(`  ${line}`);
     failed ||= result.failed;
     over ||= result.over;
-    const stylesheets = readdirSync(assets).filter((file) => file.endsWith('.css'));
+    const stylesheets = files.filter((file) => /\.css$/i.test(file));
     let refusedStyles = 0;
     for (const file of stylesheets) {
-      for (const problem of cssProblems(readFileSync(new URL(file, assets), 'utf8'))) {
-        console.error(`  REFUSED BY THE CSP  ${app.assets}${file}: ${problem}`);
+      for (const problem of cssProblems(read(file).toString('utf8'))) {
+        console.error(`  REFUSED BY THE CSP  ${file}: ${problem}`);
         refusedStyles += 1;
       }
     }
@@ -415,12 +561,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     }
     refused ||= refusedStyles > 0;
     if (app.pages === true) {
-      const pages = readdirSync(app.dist, { recursive: true })
-        .map((file) => String(file).replaceAll('\\', '/'))
-        .filter((file) => file.endsWith('.html'));
+      const pages = files.filter((file) => /\.html?$/i.test(file));
       let found = 0;
       for (const page of pages) {
-        for (const problem of cspProblems(readFileSync(new URL(page, app.dist), 'utf8'))) {
+        for (const problem of cspProblems(read(page).toString('utf8'))) {
           console.error(`  REFUSED BY THE CSP  ${page}: ${problem}`);
           found += 1;
         }

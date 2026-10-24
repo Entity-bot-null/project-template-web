@@ -168,7 +168,7 @@ it('puts a failed message back with its attempts started again, out of reach of 
   await expect(store.retryFailed({ id: row.id })).resolves.toBe(1);
   const back = await t.prisma.mailMessage.findUniqueOrThrow({ where: { id: row.id } });
   // As the previous release does: its workers count the attempts.
-  expect(back).toMatchObject({ status: 'pending', attempts: 0, lastError: null });
+  expect(back).toMatchObject({ status: 'pending', attempts: 0, claimId: null, lastError: null });
   expect(back.expiresAt.getTime()).toBeGreaterThan(Date.now());
   // The next claim is attempt 1 again, under a new id: a stale worker still
   // holding an old claim of the same number never matches it.
@@ -178,4 +178,62 @@ it('puts a failed message back with its attempts started again, out of reach of 
   await expect(store.markSent({ id: row.id, attempts: 1, claimId: CLAIM })).resolves.toBe(false);
   if (claimed !== undefined) await expect(store.markSent(claimed)).resolves.toBe(true);
   await expect(store.retryFailed({ id: 'not-an-id' })).resolves.toBe(0);
+});
+
+// The previous release's claim, as origin/main writes it during a deployment
+// or after a rollback: the attempt goes up, the claim id stays as it is.
+async function previousReleaseClaim(): Promise<{ id: string; attempts: number }> {
+  const rows = await t.prisma.$queryRaw<{ id: string; attempts: number }[]>`
+    UPDATE "mail_messages"
+    SET "status" = 'sending', "attempts" = "attempts" + 1,
+        "locked_until" = now() + interval '2 minutes', "updated_at" = now()
+    WHERE "id" = (
+      SELECT "id" FROM "mail_messages"
+      WHERE ("status" = 'pending' AND "next_attempt_at" <= now())
+         OR ("status" = 'sending' AND "locked_until" < now())
+      ORDER BY "next_attempt_at", "id"
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING "id", "attempts"`;
+  const row = rows[0];
+  if (row === undefined) throw new Error('The previous release claimed nothing');
+  return row;
+}
+
+it("keeps a stalled claim dead after a retry by hand, when the previous release's workers take the message", async () => {
+  await resetDatabase(t.prisma);
+  const store = t.app.get(MailStore);
+  await t.prisma.mailMessage.create({
+    data: {
+      kind: 'test',
+      recipient: 'mixed@example.test',
+      recipientHash: 'c'.repeat(64),
+      expiresAt: new Date(Date.now() + 60 * 60_000),
+    },
+  });
+  // A worker of this release claims it, then stalls past its lease.
+  const stalled = await store.claim(5_000);
+  expect(stalled).toBeDefined();
+  if (stalled === undefined) return;
+  await t.prisma.mailMessage.update({
+    where: { id: stalled.id },
+    data: { lockedUntil: new Date(Date.now() - 1_000) },
+  });
+  // A worker of the previous release takes it over and gives up on it, fenced
+  // by the attempt alone; the operator retries it by hand; a worker of the
+  // previous release claims it again, at the stalled claim's attempt number.
+  const taken = await previousReleaseClaim();
+  await t.prisma.mailMessage.updateMany({
+    where: { id: taken.id, status: 'sending', attempts: taken.attempts },
+    data: { status: 'failed', lockedUntil: null, lastError: 'smtp_5xx_550' },
+  });
+  await expect(store.retryFailed({ id: stalled.id })).resolves.toBe(1);
+  await expect(previousReleaseClaim()).resolves.toEqual({
+    id: stalled.id,
+    attempts: stalled.attempts,
+  });
+  // The stalled worker wakes up: the message is the other worker's.
+  await expect(store.markSent(stalled)).resolves.toBe(false);
+  await expect(store.renewLease(stalled)).resolves.toBe(false);
 });

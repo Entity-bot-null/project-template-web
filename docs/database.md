@@ -110,12 +110,17 @@ ALTER TABLE "users" DROP COLUMN "name";
     and no `UPDATE`, `INSERT`, `MERGE` or `COPY ... FROM` of that table in the migration, one inside
     a `WITH` query, a `COPY (...) TO`, an `EXPLAIN`, a `PREPARE` or a rule included. Never exempt:
     `NULLS NOT DISTINCT` (the NULLs collide), a `CHECK` (it may read other columns) and a primary
-    key (it refuses NULLs);
+    key (it refuses NULLs). A table made with `CREATE TABLE IF NOT EXISTS` may be there already,
+    with its rows: it counts as an earlier migration's;
   - a foreign key, in any table (new ones included), to a table an earlier migration created that
-    does not give way to it (`ON DELETE` and `ON UPDATE` `SET NULL`, `SET DEFAULT` or `CASCADE`):
-    the previous release's deletes of the rows it references would be refused. Prisma writes
-    `ON DELETE RESTRICT` for a required relation: give it `onDelete: Cascade` (or make it optional,
-    `SET NULL`), or write why the previous release never deletes those rows;
+    does not give way to it (`ON DELETE` and `ON UPDATE` each `CASCADE`, or `SET NULL` or
+    `SET DEFAULT` putting NULL in columns that take it): the previous release's deletes of the rows
+    it references would be refused. The columns are judged as the whole migration leaves them: one
+    that is `NOT NULL`, in a primary key, an identity, read by a `CHECK` or typed with a domain may
+    refuse the NULL (Prisma only warns about `onDelete: SetNull` on a required relation), and a
+    `SET DEFAULT` to a default of the column's own names a row the check cannot see. Prisma writes `ON DELETE RESTRICT` for a
+    required relation: give it `onDelete: Cascade` (or make it optional, `SET NULL`), or write why
+    the previous release never deletes those rows;
   - a dropped unique index (every name of a `DROP INDEX`), unique constraint or primary key; a
     table moved to another schema; a `DELETE` without `WHERE`; an enum value added without
     `IF NOT EXISTS` (see below).

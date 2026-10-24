@@ -23,7 +23,7 @@
     },
     {
       "name": "JavaScript, total",
-      "pattern": "\\.js$",
+      "pattern": "\\.m?js$",
       "maxGzipKb": 158
     },
     {
