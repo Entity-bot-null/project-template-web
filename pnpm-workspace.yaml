@@ -23,6 +23,15 @@ engineStrict: true
 # lockfile past its version.
 minimumReleaseAge: 10080
 minimumReleaseAgeExcludePrune: true
+# Fixes of the advisories published on 2026-10-23, all four exempt until one
+# date: the last of them turns seven days old on 2026-10-29 at 11:58 UTC, so
+# on 2026-10-30 every one is old enough all day. Remove the four entries that
+# day (docs/security.md#dependency-vulnerabilities).
+minimumReleaseAgeExclude:
+  - 'body-parser@2.4.0' # expires 2026-10-30: GHSA-27r3-jxmh-p828 (high), every JSON route of the API inflates compressed bodies
+  - 'multer@2.5.0' # expires 2026-10-30: GHSA-q7qp-rjg7-q26m (high), in the API image (no route takes uploads)
+  - 'nodemailer@10.1.4' # expires 2026-10-30: GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w, GHSA-85x2-q946-cp5h (moderate), the API's mail transport
+  - 'fast-uri@3.1.9' # expires 2026-10-30: GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr (moderate), GHSA-xhq7-xmqj-769h, GHSA-333x-w4r6-6crp (low), astro check only
 
 # Supply chain: a new version published with weaker evidence than its earlier
 # ones (for example without the provenance or trusted publisher they had) is
@@ -59,15 +68,25 @@ ignoredOptionalDependencies:
   - sharp
 
 # Security overrides: transitive versions forced past a published advisory
-# until the dependency that pins them ships the fix. Each entry names the
-# advisory; delete it once `pnpm why <package>` shows a fixed version without
-# the override (docs/security.md#dependency-vulnerabilities).
+# until the dependency that pins them ships the fix, or, within the range a
+# dependency accepts, because `pnpm update` moves direct dependencies only.
+# Each entry names the advisory; delete it once `pnpm why <package>` shows a
+# fixed version without the override (docs/security.md#dependency-vulnerabilities).
 overrides:
   # GHSA-ggr8-5vv4-36mx (high), pinned at 7.1.5 by @prisma/config 7.10.
   '@prisma/config>deepmerge-ts': ^8.0.2
   # GHSA-3f6p-5ww8-9rcr (high) and GHSA-rgwj-5xj2-c3m3 (moderate), pinned at
   # 3.15.3 by the prisma CLI 7.10 (MySQL support; this template uses PostgreSQL).
   'prisma>mysql2': ^3.24.5
+  # GHSA-q7qp-rjg7-q26m (high), pinned at 2.4.0 by @nestjs/platform-express
+  # 12.1.3 (no route of this template takes uploads; it is in the image).
+  '@nestjs/platform-express>multer': ^2.5.0
+  # GHSA-27r3-jxmh-p828 (high), within express 5's ^2.2.1: every JSON route of
+  # the API inflates compressed bodies.
+  'express>body-parser': ^2.4.0
+  # GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr (moderate) and two low ones,
+  # within ajv's ^3.0.1 (astro check's YAML language server only).
+  'ajv>fast-uri': ^3.1.9
 
 # Reviewed peer exceptions: each entry says why the mismatch is safe.
 peerDependencyRules:

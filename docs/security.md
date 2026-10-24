@@ -635,9 +635,12 @@ mail without authentication: it is published on 127.0.0.1 only and is never part
 
 `pnpm security` = `pnpm audit --audit-level=high` + `pnpm deps:check` + the repository secret scan. High and critical
 advisories fail the gate. Fix order: update the direct dependency; if the vulnerable package is
-pinned by a dependency, add a scoped override in `pnpm-workspace.yaml` naming the advisory (two are
-there now, for packages pinned by the Prisma CLI); if neither is possible, document an exception
-with the advisory, why it is not exploitable here, and a review date, in the pull request and here.
+pinned by a dependency, or is a transitive one `pnpm update` does not move (it updates direct
+dependencies only), add a scoped override in `pnpm-workspace.yaml` naming the advisory (those there
+now: two packages pinned by the Prisma CLI, `multer` pinned by `@nestjs/platform-express`,
+`body-parser` and `fast-uri` within their parents' ranges); if neither is possible, document an
+exception with the advisory, why it is not exploitable here, and a review date, in the pull request
+and here.
 
 **Urgent fix younger than the release delay:** exempt only the fixed version, in
 `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with the date the exemption expires and the
