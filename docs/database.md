@@ -96,8 +96,9 @@ ALTER TABLE "users" DROP COLUMN "name";
 `pnpm test:scripts` (so in CI) and on the migrations staged at each commit. Contract steps:
 
 - dropping a table, column, type or view; renaming a table, column, type or enum value; changing
-  a column's type; making a column required, adding a required column without a default, or
-  removing a default; emptying a table;
+  a column's type; making a column required (`SET NOT NULL`, or a `NOT NULL` table constraint,
+  PostgreSQL 18), adding a required column without a default, or removing a default; emptying a
+  table;
 - in the migrations from `TIGHTENING_FROM` on (the ones before it shipped before these rules, and
   a committed migration is never edited), also:
   - a unique index or a constraint (`CHECK`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `EXCLUDE`, in
@@ -116,11 +117,12 @@ ALTER TABLE "users" DROP COLUMN "name";
     does not give way to it (`ON DELETE` and `ON UPDATE` each `CASCADE`, or `SET NULL` or
     `SET DEFAULT` putting NULL in columns that take it): the previous release's deletes of the rows
     it references would be refused. The columns are judged as the whole migration leaves them: one
-    that is `NOT NULL`, in a primary key, an identity, read by a `CHECK` or typed with a domain may
-    refuse the NULL (Prisma only warns about `onDelete: SetNull` on a required relation), and a
-    `SET DEFAULT` to a default of the column's own names a row the check cannot see. Prisma writes `ON DELETE RESTRICT` for a
-    required relation: give it `onDelete: Cascade` (or make it optional, `SET NULL`), or write why
-    the previous release never deletes those rows;
+    that is `NOT NULL` (in its definition, by `SET NOT NULL` or a `NOT NULL` table constraint), in
+    a primary key (one taken `USING INDEX` too), an identity, read by a `CHECK` or typed with a
+    domain may refuse the NULL (Prisma only warns about `onDelete: SetNull` on a required
+    relation), and a `SET DEFAULT` to a default of the column's own names a row the check cannot
+    see. Prisma writes `ON DELETE RESTRICT` for a required relation: give it `onDelete: Cascade`
+    (or make it optional, `SET NULL`), or write why the previous release never deletes those rows;
   - a dropped unique index (every name of a `DROP INDEX`), unique constraint or primary key; a
     table moved to another schema; a `DELETE` without `WHERE`; an enum value added without
     `IF NOT EXISTS` (see below).

@@ -10,9 +10,9 @@
 //
 // Contract steps: dropping a table, column, type or view; renaming a table,
 // column or type (or an enum value); changing a column's type; making a column
-// required, adding a required column without a default, or removing a
-// default; emptying a table. From the migration named TIGHTENING_FROM on,
-// also:
+// required (SET NOT NULL, or a NOT NULL table constraint), adding a required
+// column without a default, or removing a default; emptying a table. From the
+// migration named TIGHTENING_FROM on, also:
 //   - a unique index or a constraint (CHECK, UNIQUE, PRIMARY KEY, FOREIGN KEY,
 //     EXCLUDE, in the table or in a column's definition) added to a table an
 //     earlier migration created (the previous release may write what it
@@ -222,6 +222,8 @@ const ALTER_TABLE_RULES = [
   [new RegExp(`^RENAME (?:COLUMN )?${NAME} TO\\b|^RENAME TO\\b`), 'renames a column or a table'],
   [new RegExp(`^ALTER (?:COLUMN )?${NAME} (?:SET DATA )?TYPE\\b`), "changes a column's type"],
   [new RegExp(`^ALTER (?:COLUMN )?${NAME} SET NOT NULL\\b`), 'makes a column required'],
+  // The same as a table constraint (PostgreSQL 18): [CONSTRAINT name] NOT NULL column.
+  [new RegExp(`^ADD (?:CONSTRAINT ${NAME} )?NOT NULL\\b`), 'makes a column required'],
   [new RegExp(`^ALTER (?:COLUMN )?${NAME} DROP DEFAULT\\b`), "removes a column's default"],
 ];
 
@@ -364,17 +366,10 @@ function tighteningKinds({ code, bare }, created, added, declared, domains) {
       );
   }
   if (/^CREATE UNIQUE INDEX\b/.test(code)) {
-    const index = new RegExp(
-      String.raw`^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:${IDENT}\s+)?ON\s+(?:ONLY\s+)?(${QUALIFIED})\s*(?:USING\s+\w+\s*)?([\s\S]*)$`,
-      'i',
-    ).exec(bare);
-    const table = index === null ? undefined : lastPart(index[1] ?? '');
+    const index = uniqueIndexOf(bare);
     // NULLS NOT DISTINCT: the NULLs of new columns collide.
-    const columns =
-      index === null || /\bNULLS\s+NOT\s+DISTINCT\b/i.test(index[2] ?? '')
-        ? undefined
-        : columnsOf(index[2] ?? '');
-    return onlyNew(table, columns, created, added)
+    const columns = index?.nullsNotDistinct === false ? index.columns : undefined;
+    return onlyNew(index?.table, columns, created, added)
       ? []
       : ['adds a unique index to an existing table'];
   }
@@ -484,10 +479,31 @@ function upToClosing(text) {
 }
 
 /**
+ * What a CREATE UNIQUE INDEX declares: its name (if it has one), its table,
+ * the plain columns it covers (columnsOf: undefined for an expression) and
+ * whether it says NULLS NOT DISTINCT. Undefined for any other statement.
+ * @param {string} bare a Statement's bare form
+ */
+function uniqueIndexOf(bare) {
+  const index = new RegExp(
+    String.raw`^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:(${IDENT})\s+)?ON\s+(?:ONLY\s+)?(${QUALIFIED})\s*(?:USING\s+\w+\s*)?([\s\S]*)$`,
+    'i',
+  ).exec(bare);
+  if (index === null) return undefined;
+  const rest = index[3] ?? '';
+  return {
+    name: index[1] === undefined ? undefined : identifier(index[1]),
+    table: lastPart(index[2] ?? ''),
+    columns: columnsOf(rest),
+    nullsNotDistinct: /\bNULLS\s+NOT\s+DISTINCT\b/i.test(rest),
+  };
+}
+
+/**
  * What a CREATE TABLE declares: the table, its elements (columns and table
  * constraints, as written) and what each column takes (columnFacts), its
- * table-level primary key and the CHECKs that read it included. Undefined for
- * one without a column list (CREATE TABLE ... AS).
+ * table-level primary key, NOT NULL constraints and the CHECKs that read it
+ * included. Undefined for one without a column list (CREATE TABLE ... AS).
  * @param {string} bare a Statement's bare form
  * @param {Set<string>} domains
  * @returns {{ name: string; elements: string[]; columns: Map<string, ColumnFacts> } | undefined}
@@ -511,11 +527,14 @@ function createdTableOf(bare, domains) {
     String.raw`^(?:CONSTRAINT\s+${IDENT}\s+)?PRIMARY\s+KEY\s*(\([\s\S]*)$`,
     'i',
   );
+  const notNull = new RegExp(`^${NOT_NULL_CONSTRAINT}`, 'i');
   for (const element of elements) {
     const list = primary.exec(element)?.[1];
     for (const name of (list === undefined ? undefined : columnsOf(list)) ?? []) {
       change(columns, name, { required: true });
     }
+    const required = notNull.exec(element)?.[1];
+    if (required !== undefined) change(columns, identifier(required), { notNull: true });
     for (const name of checkedNames(element)) change(columns, name, { checked: true });
   }
   return { name: lastPart(head[1] ?? ''), elements, columns };
@@ -602,8 +621,12 @@ const ADD_COLUMN = new RegExp(
   String.raw`^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})(?:\s+([\s\S]*))?$`,
   'i',
 );
-// What starts a table constraint rather than a column, after ADD.
-const CONSTRAINT_WORD = /^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY|FOREIGN|EXCLUDE)$/i;
+// What starts a table constraint rather than a column, after ADD and in a
+// CREATE TABLE (NOT: a NOT NULL table constraint, PostgreSQL 18).
+const CONSTRAINT_WORD = /^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY|FOREIGN|EXCLUDE|NOT)$/i;
+// A NOT NULL table constraint (PostgreSQL 18), [CONSTRAINT name] NOT NULL
+// column, as written: the column it makes required.
+const NOT_NULL_CONSTRAINT = String.raw`(?:CONSTRAINT\s+${IDENT}\s+)?NOT\s+NULL\s+(${IDENT})`;
 // A definition that puts a value in every existing row: a default (other
 // than NULL), a generated or identity value, a serial type; and NOT NULL,
 // which no existing row could satisfy otherwise. Read without its quoted
@@ -633,8 +656,10 @@ function withoutNames(definition) {
  * What a column takes when a foreign key's SET NULL or SET DEFAULT fires:
  * NULL only when nothing refuses it (takesNull), and a default of its own
  * names a row that may not exist.
- * - notNull: NOT NULL, or a serial type (DROP NOT NULL takes it back);
- * - required: in the primary key, or an identity: never NULL;
+ * - notNull: NOT NULL (in its definition, SET NOT NULL or a NOT NULL table
+ *   constraint), or a serial type (DROP NOT NULL takes it back);
+ * - required: in the primary key (one taken from a unique index included), or
+ *   an identity: never NULL;
  * - checked: a CHECK reads it, and may refuse NULL;
  * - domain: typed with a domain, which may refuse NULL;
  * - defaulted: a default of its own (other than NULL), a serial's included.
@@ -788,11 +813,13 @@ function recordAddedColumns(bare, added, written, defaulted, domains) {
  * (ColumnFacts), by table: the definitions of the tables it creates (not with
  * IF NOT EXISTS, which may find another one there) and of the columns it
  * adds, then what later actions change: SET or DROP DEFAULT, SET or DROP NOT
- * NULL, a new type, an identity, a primary key, a CHECK, a column renamed or
- * dropped, the table renamed. A foreign key is judged by them: the previous
- * release meets the migrated schema, whatever the order of the statements.
- * ADD COLUMN IF NOT EXISTS counts only on a table this migration created,
- * where it is known whether the column is there.
+ * NULL, a NOT NULL table constraint, a new type, an identity, a primary key
+ * (one taken from a unique index this migration creates included: an earlier
+ * one's covers none of these columns), a CHECK, a column renamed or dropped,
+ * the table renamed. A foreign key is judged by them: the previous release
+ * meets the migrated schema, whatever the order of the statements. ADD COLUMN
+ * IF NOT EXISTS counts only on a table this migration created, where it is
+ * known whether the column is there.
  * @param {Statement[]} statements
  * @param {Set<string>} domains
  * @returns {Map<string, Map<string, ColumnFacts>>}
@@ -802,6 +829,9 @@ function columnStates(statements, domains) {
   const tables = new Map();
   /** @type {Set<string>} */
   const created = new Set();
+  // The columns of the unique indexes this migration creates, by index name.
+  /** @type {Map<string, string[]>} */
+  const indexes = new Map();
   const alterColumn = new RegExp(String.raw`^ALTER\s+(?:COLUMN\s+)?(${IDENT})\s+([\s\S]*)$`, 'i');
   const renameColumn = new RegExp(
     String.raw`^RENAME\s+(?:COLUMN\s+)?(${IDENT})\s+TO\s+(${IDENT})$`,
@@ -816,6 +846,11 @@ function columnStates(statements, domains) {
     String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?PRIMARY\s+KEY\s*(\([\s\S]*)$`,
     'i',
   );
+  const fromIndex = new RegExp(
+    String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?PRIMARY\s+KEY\s+USING\s+INDEX\s+(${IDENT})`,
+    'i',
+  );
+  const notNull = new RegExp(String.raw`^ADD\s+${NOT_NULL_CONSTRAINT}`, 'i');
   const check = new RegExp(String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?CHECK\b`, 'i');
   for (const { code, bare } of statements) {
     if (/^CREATE (?:UNLOGGED )?TABLE (?!IF NOT EXISTS\b)/.test(code)) {
@@ -823,6 +858,13 @@ function columnStates(statements, domains) {
       if (table !== undefined) {
         tables.set(table.name, new Map(table.columns));
         created.add(table.name);
+      }
+      continue;
+    }
+    const index = uniqueIndexOf(bare);
+    if (index !== undefined) {
+      if (index.name !== undefined && index.columns !== undefined) {
+        indexes.set(index.name, index.columns);
       }
       continue;
     }
@@ -854,6 +896,8 @@ function columnStates(statements, domains) {
       const renamed = renameColumn.exec(action);
       const dropped = dropColumn.exec(action);
       const key = primaryKey.exec(action)?.[1];
+      const keyIndex = fromIndex.exec(action)?.[1];
+      const required = notNull.exec(action)?.[1];
       if (altering !== null) {
         const id = identifier(altering[1] ?? '');
         const what = altering[2] ?? '';
@@ -875,6 +919,12 @@ function columnStates(statements, domains) {
         columns.delete(identifier(dropped[1] ?? ''));
       } else if (key !== undefined) {
         for (const name of columnsOf(key) ?? []) change(columns, name, { required: true });
+      } else if (keyIndex !== undefined) {
+        for (const name of indexes.get(identifier(keyIndex)) ?? []) {
+          change(columns, name, { required: true });
+        }
+      } else if (required !== undefined) {
+        change(columns, identifier(required), { notNull: true });
       } else if (check.test(action)) {
         for (const name of checkedNames(action)) change(columns, name, { checked: true });
       }

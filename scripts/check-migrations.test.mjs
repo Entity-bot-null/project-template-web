@@ -68,6 +68,17 @@ describe('contractSteps', () => {
     assert.deepEqual(kinds('ALTER TABLE "users" ALTER COLUMN "name" SET NOT NULL;'), [
       'makes a column required',
     ]);
+    // The same as a NOT NULL table constraint (PostgreSQL 18), named or not.
+    for (const constraint of [
+      'CONSTRAINT "users_name_not_null" NOT NULL "name"',
+      'NOT NULL name',
+    ]) {
+      assert.deepEqual(
+        kinds(`ALTER TABLE "users" ADD ${constraint};`),
+        ['makes a column required'],
+        constraint,
+      );
+    }
     assert.deepEqual(kinds('ALTER TABLE "users" ALTER COLUMN "role" DROP DEFAULT;'), [
       "removes a column's default",
     ]);
@@ -509,6 +520,29 @@ ALTER TABLE "users" ADD CONSTRAINT "users_team_id_fkey" FOREIGN KEY ("team_id") 
       [
         `CREATE TABLE "posts" ("author_id" UUID REFERENCES "users" ON DELETE SET NULL ON UPDATE CASCADE);\n${later('ALTER COLUMN "author_id" SET NOT NULL')}`,
         [UNYIELDING, 'makes a column required'],
+      ],
+      // NOT NULL as a table constraint (PostgreSQL 18): in the table, or added later.
+      [`CREATE TABLE "posts" ("author_id" UUID, NOT NULL "author_id");\n${setNull}`, [UNYIELDING]],
+      [
+        'CREATE TABLE "posts" ("author_id" UUID REFERENCES "users" ON DELETE SET NULL ON UPDATE CASCADE, NOT NULL "author_id");',
+        [UNYIELDING],
+      ],
+      [
+        `CREATE TABLE "posts" ("author_id" UUID, CONSTRAINT "posts_author_id_not_null" NOT NULL "author_id");\n${setNull}`,
+        [UNYIELDING],
+      ],
+      [
+        `${table}\n${setNull}\n${later('ADD CONSTRAINT "posts_author_id_not_null" NOT NULL "author_id"')}`,
+        [UNYIELDING, 'makes a column required'],
+      ],
+      // A primary key taken from a unique index the migration creates.
+      [
+        `${table}\nCREATE UNIQUE INDEX "posts_author_id_key" ON "posts"("author_id");\n${setNull}\n${later('ADD CONSTRAINT "posts_pkey" PRIMARY KEY USING INDEX "posts_author_id_key"')}`,
+        [UNYIELDING],
+      ],
+      [
+        `${table}\nCREATE UNIQUE INDEX "posts_author_id_key" ON "posts"("author_id");\n${setNull}`,
+        [],
       ],
       // CHECKs that read it, in its definition or the table's; not one of another column.
       [
