@@ -781,7 +781,10 @@ The web app's deployment settings are set on the web container and served as `/a
    no simpler alternative. `pnpm deps:check` fails on a license outside
    `scripts/dependency-policy.json` (production dependencies need a permissive one) and on a
    package from a git repository or a URL instead of the registry
-   ([security.md](security.md#dependency-policy)).
+   ([security.md](security.md#dependency-policy)). A package that works only at the same version
+   as another one, because both are published as one release (as Prisma's CLI and client), goes
+   into a release set of the policy and a Dependabot group of its own; `pnpm deps:check` then fails
+   when they drift apart.
 3. **Install scripts:** if the package runs one, pnpm stops with `ERR_PNPM_IGNORED_BUILDS` and adds
    it to `allowBuilds` in `pnpm-workspace.yaml` with a placeholder. Set `true` only when the script
    is needed (native binaries), otherwise `false`, with a comment saying why.
