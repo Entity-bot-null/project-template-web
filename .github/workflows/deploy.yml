@@ -142,7 +142,11 @@ jobs:
         id: recorded
         env:
           RECORDS: ${{ needs.resolve.outputs.records }}
-        run: echo "run-id=$(jq -r --arg image "$IMAGE_NAME" '.[$image] // empty' <<< "$RECORDS")" >> "$GITHUB_OUTPUT"
+        # On its own line: a jq failure inside $(...) passed to echo would go
+        # unseen, and production would rebuild instead of reusing the digest.
+        run: |
+          run_id=$(jq -r --arg image "$IMAGE_NAME" '.[$image] // empty' <<< "$RECORDS")
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
       # Staging recorded this commit's image already: production gets the very
       # same digest, never a rebuild.
       - name: Reuse it
@@ -153,8 +157,21 @@ jobs:
           path: recorded
           run-id: ${{ steps.recorded.outputs.run-id }}
           github-token: ${{ github.token }}
+      # The BuildKit daemon pinned by digest (scripts/tool-images/Dockerfile),
+      # through the mirror where it has it: the action's default is a moving tag.
+      - name: BuildKit image
+        id: buildkit
+        if: steps.recorded.outputs.run-id == ''
+        env:
+          TOOL_IMAGE_MIRROR: mirror.gcr.io
+        # On its own line: a failure inside $(...) passed to echo would go unseen.
+        run: |
+          image=$(node scripts/tool-image.mjs --mirrored buildkit)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.recorded.outputs.run-id == ''
+        with:
+          driver-opts: image=${{ steps.buildkit.outputs.image }}
       # Both paths pull from the registry: the scan below reads the image it
       # deploys, built here or reused.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -345,10 +362,18 @@ jobs:
             "REGISTRY_TOKEN=\$(cat) REGISTRY_USER='$GITHUB_ACTOR' '$DEPLOY_PATH/deploy.sh' '$API_REF' '$MIGRATE_REF' '$WEB_REF' '$SHA'"
       - name: Smoke test
         run: node scripts/smoke-test.mjs --url "$PUBLIC_URL" --release "$SHA"
+      # rollback.sh exits 2 after a redeployment of the release that was
+      # already running: going back would start an older one.
       - name: Roll back
         if: failure() && steps.deploy.outcome == 'success'
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "'$DEPLOY_PATH/rollback.sh'"
+          status=0
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "'$DEPLOY_PATH/rollback.sh'" || status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "::error title=Not rolled back::The smoke test failed on a redeployment of the release that was already running, which stays: nothing earlier ran in this deployment. Investigate; rollback.sh --previous on the server starts the release before it."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
           echo "::error title=Rolled back::The smoke test failed: the previous release is running again."
 
   # --- Any other platform ------------------------------------------------------

@@ -13,6 +13,7 @@ import { type ErrorOrigin, recordServerError } from '../../observability/metrics
 import { isDatabaseConnectionFailure } from '../../prisma/connection-failures.js';
 import { Prisma } from '../../prisma/generated/client.js';
 import { ExternalServiceError } from '../http/external-http.js';
+import { loggableStack } from '../logging/error-summary.js';
 import { pathOf } from '../logging/request-context.middleware.js';
 
 export interface ErrorOutcome {
@@ -59,7 +60,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
           : `${failure.origin}: ${failure.dependency}`;
       this.logger.error(
         `${req.method} ${pathOf(req)} -> ${status} (request ${req.id ?? 'unknown'}, ${origin})`,
-        exception instanceof Error ? exception.stack : String(exception),
+        // A Prisma error's message can quote the query's arguments: its class,
+        // code and frames only (the tracker drops it too).
+        loggableStack(exception),
       );
       if (failure.report) {
         errorTracker().capture(exception, {
@@ -99,14 +102,10 @@ export function normalizeException(exception: unknown): ErrorOutcome {
       message: 'Service temporarily unavailable, retry later',
     };
   }
+  // A middleware's own client error (the body parser's 413). A malformed JSON
+  // body never gets here: common/http/malformed-json.middleware.ts answers it.
   if (isExposedClientError(exception)) {
-    // The JSON parser's own text (positions, expected tokens) says nothing
-    // useful to a client: one plain message instead.
-    const malformed = (exception as { type?: unknown }).type === 'entity.parse.failed';
-    return {
-      status: exception.status,
-      message: malformed ? 'The request body is not valid JSON' : exception.message,
-    };
+    return { status: exception.status, message: exception.message };
   }
   return { status: HttpStatus.INTERNAL_SERVER_ERROR, message: 'An unexpected error occurred' };
 }

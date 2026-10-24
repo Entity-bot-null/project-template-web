@@ -1,9 +1,12 @@
-# syntax=docker/dockerfile:1
 # API image. The build context is the repository root (workspace files):
 #   docker build -f apps/api/Dockerfile -t api .                      runtime
 #   docker build -f apps/api/Dockerfile --target migrate -t api-migrate .
 # The migrate target applies the committed migrations (prisma migrate deploy)
 # and is run once per release, before the new API version takes traffic.
+#
+# No `# syntax=` line: BuildKit's built-in Dockerfile frontend reads this file
+# (cache mounts, COPY --chmod), so no parser image is pulled by a moving tag;
+# CI's BuildKit is pinned by digest (scripts/tool-images/Dockerfile, buildkit).
 #
 # Base image: Node.js 24 (.nvmrc), by tag and digest, so a build is
 # reproducible and a moved tag changes nothing; Dependabot proposes tag and

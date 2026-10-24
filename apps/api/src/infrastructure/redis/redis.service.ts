@@ -31,6 +31,17 @@ export type RedisHealth = 'ok' | 'unavailable' | 'disabled';
 // Server replies that mean "not now", not "wrong command": among them a Redis
 // that cannot persist (MISCONF, a full disk) or is out of memory (OOM).
 const TRANSIENT_REPLY = /^(LOADING|BUSY|MASTERDOWN|READONLY|TRYAGAIN|CLUSTERDOWN|MISCONF|OOM)\b/;
+// A key or a command outside the ACL: another REDIS_KEY_PREFIX than the
+// ACL's, or a command the ACL does not list. A configuration fault, not a bug
+// in the caller: the adapters degrade as if Redis were down (a rate limiter
+// that threw instead would answer 500 to every route), the log line names
+// NOPERM, and readiness says Redis is unavailable (health()).
+const REFUSED_REPLY = /^NOPERM\b/;
+// Readiness writes a key of its own under the prefix, through EVAL as the
+// adapters do. A PING alone answers even where the ACL refuses every key or
+// script of this API, and readiness would stay green while they all failed.
+const HEALTH_SCRIPT = "return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])";
+const HEALTH_KEY_TTL_MS = 10_000;
 
 const CLOSE_TIMEOUT_MS = 2_000;
 /** Commands in a row without a reply in time, before the service stops waiting on Redis. */
@@ -171,11 +182,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.send(client, operation);
   }
 
-  /** For the readiness probe: a PING within the command timeout. */
+  /** For the readiness probe: a write under the prefix, through EVAL, within the command timeout. */
   async health(): Promise<RedisHealth> {
     if (!this.enabled) return 'disabled';
     try {
-      await this.run((redis) => redis.ping());
+      await this.run((redis) =>
+        redis.eval(HEALTH_SCRIPT, {
+          keys: [this.key('health')],
+          arguments: ['1', String(HEALTH_KEY_TTL_MS)],
+        }),
+      );
       return 'ok';
     } catch {
       return 'unavailable';
@@ -209,7 +225,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       if (error instanceof ErrorReply) {
         // An error reply is still a reply: Redis answers.
         this.answered();
-        if (!TRANSIENT_REPLY.test(error.message)) throw error;
+        if (!TRANSIENT_REPLY.test(error.message) && !REFUSED_REPLY.test(error.message)) throw error;
       }
       if (error instanceof RedisUnavailableError) throw error;
       throw new RedisUnavailableError(describe(error), { cause: error });

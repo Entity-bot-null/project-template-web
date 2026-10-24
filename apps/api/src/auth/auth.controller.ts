@@ -27,6 +27,8 @@ import {
   AuthCapabilitiesSchema,
   type AuthSession,
   AuthSessionSchema,
+  type LogoutDto,
+  LogoutSchema,
   type PasswordResetConfirmDto,
   PasswordResetConfirmSchema,
   type PasswordResetRequestDto,
@@ -44,7 +46,9 @@ import {
   clearSessionCookies,
   hasAmbiguousRefreshCookie,
   refreshTokenOf,
+  refreshTokensOf,
   respondWithSession,
+  setSessionHint,
 } from './session-cookies.js';
 import { SignUpService } from './sign-up.service.js';
 
@@ -119,15 +123,50 @@ export class AuthController {
   // the cookies are cleared. When the database cannot be reached the cookies
   // stay: the family is still live, and the client's retry needs the cookie
   // to end it (a cleared one would make the retry a no-op that reads as done).
+  // A logout that names its sessions touches the cookies only when it ended
+  // one of them: the jar then holds a session started meanwhile, whose hint
+  // the client may have dropped already (it drops it first), so a live one
+  // gets it back.
   @Post('logout')
   @HttpCode(204)
-  @ApiOperation({ summary: 'End the current session family and clear the cookies' })
+  @ApiOperation({
+    summary: 'End the current session family and clear the cookies',
+    description:
+      "Without sessionIds, ends the refresh cookie's session, whichever it is. With them, ends it only when it is one of those sessions (AuthSession.sessionId), and clears the cookies only then; a live session started meanwhile is left alone, with its session hint set again.",
+  })
+  @ZodBody(LogoutSchema, { required: false })
   @ApiResponse({ status: 204, description: 'Signed out' })
-  @ApiErrors(403)
-  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
-    const token = refreshTokenOf(req);
-    if (token !== undefined) await this.auth.logout(token);
-    clearSessionCookies(res);
+  @ApiErrors(400, 403)
+  async logout(
+    @Body() body: LogoutDto | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<void> {
+    // Ids compare in lower case, as the database writes them.
+    const only = body?.sessionIds?.map((id) => id.toLowerCase());
+    if (only === undefined) {
+      const token = refreshTokenOf(req);
+      if (token !== undefined) await this.auth.logout(token);
+      clearSessionCookies(res);
+      return;
+    }
+    // Every refresh cookie the request carries, two included (one planted for
+    // a parent domain next to ours): only the named sessions end, so trying
+    // each is safe, and the other one's session is left alone.
+    const tokens = refreshTokensOf(req);
+    let retired = false;
+    let liveUntil: Date | undefined;
+    for (const token of tokens) {
+      const outcome = await this.auth.logout(token, only);
+      if (outcome.retired) retired = true;
+      else if (outcome.liveUntil !== undefined) liveUntil = outcome.liveUntil;
+    }
+    if (retired) clearSessionCookies(res);
+    // Its hint back to a live session left alone; not with two refresh
+    // cookies (an empty one included), which a refresh refuses anyway.
+    else if (liveUntil !== undefined && !hasAmbiguousRefreshCookie(req)) {
+      setSessionHint(res, liveUntil);
+    }
   }
 
   // Public and the same for everyone: the web app shows only what works here.

@@ -1,10 +1,10 @@
-import { screen, within } from '@testing-library/react';
+import { act, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resetCapabilitiesForTests } from '../auth/capabilities';
+import { resetCapabilitiesForTests, useCapabilities } from '../auth/capabilities';
 import { getAccessToken, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, json, ok, session, stubFetch } from '../test/http';
+import { failure, json, ok, session, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const CHANGE = 'POST /api/account/password';
@@ -19,7 +19,7 @@ const GOOD = 'violet harbour lantern 7';
 beforeEach(() => {
   resetForTests();
   resetCapabilitiesForTests();
-  setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+  setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
 });
 afterEach(() => {
   resetForTests();
@@ -132,10 +132,16 @@ describe('changing the email', () => {
   }
 
   it('is offered only where email works', async () => {
-    const { calls } = stubFetch({ [CAPABILITIES]: offers(false) });
+    stubFetch({ [CAPABILITIES]: offers(false) });
     renderRoute('/account');
     await screen.findByRole('heading', { name: 'Your account' });
-    await expect.poll(() => calls.length).toBe(1);
+    // The page and this hook share the one answer: once the hook holds it, the
+    // page has applied it too.
+    const { result } = renderHook(() => useCapabilities());
+    await waitFor(() => {
+      expect(result.current).toMatchObject({ emailChange: false });
+    });
+    await act(() => Promise.resolve());
     expect(screen.queryByRole('form', { name: 'Change your email' })).toBeNull();
   });
 

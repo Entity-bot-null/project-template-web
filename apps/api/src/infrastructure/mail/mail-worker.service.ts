@@ -18,6 +18,8 @@ import { MailOutboxService } from './mail-outbox.service.js';
 import {
   MAIL_BACKLOG_DEGRADED_SEC,
   MAIL_FAILURE_DEGRADED_MS,
+  MAIL_EXCHANGE_MAX_MS,
+  MAIL_LEASE_RENEW_MS,
   MAIL_OPTIONS,
   MAIL_POLL_INTERVAL_MS,
   MAIL_SHUTDOWN_GRACE_MS,
@@ -203,7 +205,7 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
     const started = performance.now();
     try {
-      await this.transportOrThrow().send(mail);
+      await this.sendLeased(claimed, mail, label);
     } catch (error) {
       const seconds = (performance.now() - started) / 1000;
       const failure = classifyDeliveryError(error);
@@ -229,9 +231,35 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
     if (await this.store.markSent(claimed)) {
       this.logger.log(`Sent ${label} in ${String(Math.round(seconds * 1000))} ms`);
     } else {
-      this.logger.warn(
-        `Sent ${label}, but its lease had run out: another worker may send it again`,
-      );
+      await this.refused(claimed, `Sent ${label}`, { sent: true });
+    }
+  }
+
+  // The exchange has no overall deadline (the SMTP timeouts apply to each
+  // step): the lease is renewed while it lasts, so no other worker takes the
+  // message over and sends it too.
+  private async sendLeased(claimed: ClaimedMessage, mail: OutgoingMail, label: string) {
+    const started = Date.now();
+    const renewal = setInterval(() => {
+      // A relay that answers every step just in time would hold the message
+      // for good: past the cap the lease runs out, and another worker can
+      // take the message over (it may then go out twice). This worker stays
+      // in the exchange until the relay lets go.
+      if (Date.now() - started >= MAIL_EXCHANGE_MAX_MS) {
+        clearInterval(renewal);
+        this.logger.warn(
+          `${label}: the SMTP exchange has lasted ${String(MAIL_EXCHANGE_MAX_MS / 60_000)} minutes; its lease is no longer renewed`,
+        );
+        return;
+      }
+      void this.store.renewLease(claimed).catch((error: unknown) => {
+        this.logger.warn(`Could not renew the lease of ${label}: ${message(error)}`);
+      });
+    }, MAIL_LEASE_RENEW_MS).unref();
+    try {
+      await this.transportOrThrow().send(mail);
+    } finally {
+      clearInterval(renewal);
     }
   }
 
@@ -249,7 +277,8 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
 
   // Every outcome is counted here, whatever led to it (a refused send, a
   // render that failed, a worker that kept dying): the alerts read them.
-  // `seconds` is the SMTP exchange, when there was one.
+  // `seconds` is the SMTP exchange, when there was one. An outcome the row no
+  // longer takes is settled by `refused`.
   private async retryLater(
     claimed: ClaimedMessage,
     label: string,
@@ -260,26 +289,56 @@ export class MailWorker implements OnApplicationBootstrap, OnModuleDestroy {
       await this.fail(claimed, label, failure.category, seconds);
       return;
     }
-    recordMailDelivery(claimed.kind, 'retry', seconds);
     const delayMs = retryDelayMs(claimed.attempts);
-    await this.store.reschedule(claimed, delayMs, failure.category);
+    if (!(await this.store.reschedule(claimed, delayMs, failure.category))) {
+      await this.refused(claimed, `Could not send ${label}: ${failure.category}`);
+      return;
+    }
+    recordMailDelivery(claimed.kind, 'retry', seconds);
     this.logger.warn(
       `Could not send ${label}: ${failure.category}; retrying in ${String(Math.round(delayMs / 1000))} s`,
     );
   }
 
   private async fail(claimed: ClaimedMessage, label: string, category: string, seconds?: number) {
+    if (!(await this.store.markFailed(claimed, category))) {
+      await this.refused(claimed, `Gave up on ${label}: ${category}`);
+      return;
+    }
     recordMailDelivery(claimed.kind, 'failed', seconds);
-    await this.store.markFailed(claimed, category);
     this.logger.error(
       `Gave up on ${label}: ${category}. Inspect and retry: pnpm --filter api mail status`,
     );
   }
 
   private async expire(claimed: ClaimedMessage, label: string, reason: string) {
+    if (!(await this.store.markExpired(claimed, reason))) {
+      await this.refused(claimed, `Dropped ${label}: ${reason}`);
+      return;
+    }
     recordMailDelivery(claimed.kind, 'expired');
-    await this.store.markExpired(claimed, reason);
     this.logger.warn(`Dropped ${label}: ${reason}`);
+  }
+
+  // An outcome the row no longer takes (MailStore.finish refused it). Dropped
+  // meanwhile under this worker's claim (an undo of a change of email): the
+  // message was this worker's, and counts as expired here when the undo left
+  // it to this worker (MailStore.fateOf) and it did not go out (`sent`: counted
+  // as sent already). Taken over by another worker: that worker counts it.
+  private async refused(claimed: ClaimedMessage, what: string, { sent = false } = {}) {
+    const fate = await this.store.fateOf(claimed);
+    if (fate === 'dropped' || fate === 'counted') {
+      // `counted`: the undo counted it (no live lease); `sent`: counted here
+      // as sent already.
+      if (fate === 'dropped' && !sent) recordMailDelivery(claimed.kind, 'expired');
+      this.logger.warn(`${what}, but it was dropped meanwhile (an undo of a change of email)`);
+    } else if (fate === 'gone') {
+      this.logger.warn(`${what}, but it is gone (its account was deleted)`);
+    } else {
+      this.logger.warn(
+        `${what}, but another worker took it over${sent ? ': it may have gone out twice' : ''}`,
+      );
+    }
   }
 
   private transportOrThrow(): MailTransport {

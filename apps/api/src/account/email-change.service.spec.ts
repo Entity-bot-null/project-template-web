@@ -78,7 +78,6 @@ async function setup({
                 email: ACCOUNT.email,
                 targetEmail: tokenRow?.targetEmail ?? null,
                 expiresAt: new Date(NOW + 60_000),
-                createdAt: new Date(NOW - 60_000),
               },
             ]),
       );
@@ -117,6 +116,11 @@ async function setup({
       calls.push(`queue ${input.kind}`);
       return Promise.resolve('queued');
     }),
+    expireQueued: vi.fn((_tx: unknown, input: { kind: string }) => {
+      calls.push(`drop queued ${input.kind}`);
+      return Promise.resolve({ dropped: 3, unclaimed: 2 });
+    }),
+    recordExpired: vi.fn(),
     notifyQueued: vi.fn(),
   };
   const service = new EmailChangeService(
@@ -144,10 +148,13 @@ describe('EmailChangeService.request', () => {
     expect(mail.enqueue).not.toHaveBeenCalled();
     release();
     await service.settled();
+    // Bound to the account as it was when asked for: a password change before
+    // the message goes out voids it (the template checks).
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'email_change_confirmation',
       to: 'new@example.test',
       userId: 'u1',
+      payload: { securityVersion: String(ACCOUNT.securityVersion) },
     });
     expect(mail.notifyQueued).toHaveBeenCalledOnce();
   });
@@ -215,7 +222,11 @@ describe('EmailChangeService.confirm', () => {
       kind: 'email_changed',
       to: 'ada@example.test',
       userId: 'u1',
-      payload: { changedAt: new Date(NOW).toISOString() },
+      // The securityVersion right after the change ranks its undo link.
+      payload: {
+        changedAt: new Date(NOW).toISOString(),
+        securityVersion: String(ACCOUNT.securityVersion + 1),
+      },
     });
     const [, hash] = tx.$queryRaw.mock.calls[1] as unknown as [unknown, string];
     expect(hash).toBe(hashAccountToken(TOKEN));
@@ -297,7 +308,6 @@ describe('EmailChangeService.revert', () => {
           email: 'new@example.test',
           targetEmail: 'ada@example.test',
           expiresAt: new Date(NOW + 60_000),
-          createdAt: new Date(NOW - 3_600_000),
         },
       ],
     });
@@ -308,6 +318,7 @@ describe('EmailChangeService.revert', () => {
       'update account',
       'end sessions',
       'drop other links',
+      'drop queued email_changed',
       'queue password_changed',
     ]);
     const [[{ data }]] = tx.user.update.mock.calls as unknown as [
@@ -316,15 +327,26 @@ describe('EmailChangeService.revert', () => {
     expect(data.email).toBe('ada@example.test');
     expect(data.securityVersion).toEqual({ increment: 1 });
     await expect(checkPassword(data.passwordHash, GOOD)).resolves.toBe(true);
-    // Every other link of the account, except undo links minted before
-    // this one: the earliest owner wins.
+    // Every other link of the account, except the undo links of earlier
+    // changes (a lower securityVersion right after the change): the earliest
+    // owner wins, whenever the notices went out.
     expect(tx.accountToken.deleteMany).toHaveBeenCalledWith({
       where: {
         userId: 'u1',
         usedAt: null,
-        NOT: { purpose: 'email_revert', createdAt: { lt: new Date(NOW - 3_600_000) } },
+        NOT: { purpose: 'email_revert', securityVersion: { lt: 4 } },
       },
     });
+    // Notices of this change or later ones still in the outbox go unsent.
+    expect(mail.expireQueued).toHaveBeenCalledWith(tx, {
+      kind: 'email_changed',
+      userId: 'u1',
+      key: 'securityVersion',
+      from: 4,
+      reason: 'superseded',
+    });
+    // Counted once the undo committed: those no worker held (a worker counts its own).
+    expect(mail.recordExpired).toHaveBeenCalledWith('email_changed', 2);
     expect(mail.enqueue).toHaveBeenCalledWith(expect.anything(), {
       kind: 'password_changed',
       to: 'ada@example.test',
@@ -375,5 +397,55 @@ describe('EmailChangeService.revert', () => {
     const failing = await setup({ tokenRow: revertRow });
     failing.tx.user.update.mockRejectedValueOnce(new Error('database down'));
     await expect(failing.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('database down');
+    expect(failing.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the undo once more when PostgreSQL aborted it as a deadlock, and only once', async () => {
+    // From a model query (P2034), and from expireQueued's raw one (P2010
+    // carrying the adapter's kind), which is where the deadlock happens.
+    const modelDeadlock = () =>
+      new Prisma.PrismaClientKnownRequestError('Transaction failed due to a write conflict', {
+        code: 'P2034',
+        clientVersion: 'test',
+      });
+    const rawDeadlock = () =>
+      new Prisma.PrismaClientKnownRequestError('Raw query failed. Code: `40P01`', {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: {
+          driverAdapterError: {
+            cause: { originalCode: '40P01', kind: 'TransactionWriteConflict' },
+          },
+        },
+      });
+    const model = await setup({ tokenRow: revertRow });
+    model.tx.user.update.mockRejectedValueOnce(modelDeadlock());
+    await expect(model.service.revert(TOKEN, GOOD, NOW)).resolves.toBeUndefined();
+    expect(model.prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(model.mail.recordExpired).toHaveBeenCalledTimes(1);
+
+    const raw = await setup({ tokenRow: revertRow });
+    raw.mail.expireQueued.mockRejectedValueOnce(rawDeadlock());
+    await expect(raw.service.revert(TOKEN, GOOD, NOW)).resolves.toBeUndefined();
+    expect(raw.prisma.$transaction).toHaveBeenCalledTimes(2);
+
+    const twice = await setup({ tokenRow: revertRow });
+    twice.mail.expireQueued
+      .mockRejectedValueOnce(rawDeadlock())
+      .mockRejectedValueOnce(rawDeadlock());
+    await expect(twice.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('40P01');
+    expect(twice.prisma.$transaction).toHaveBeenCalledTimes(2);
+
+    // Any other raw failure is not retried.
+    const other = await setup({ tokenRow: revertRow });
+    other.mail.expireQueued.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Raw query failed. Code: `23514`', {
+        code: 'P2010',
+        clientVersion: 'test',
+        meta: { driverAdapterError: { cause: { originalCode: '23514', kind: 'CheckViolation' } } },
+      }),
+    );
+    await expect(other.service.revert(TOKEN, GOOD, NOW)).rejects.toThrow('23514');
+    expect(other.prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,14 +1,14 @@
 import { act, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { admin, member } from '../test/fixtures';
-import { ok, stubFetch } from '../test/http';
+import { ok, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 import { returnPath } from './return-path';
 import { clearSession, resetForTests, setSession, signOut } from './session';
 import type { AuthUser } from './types';
 
 const signedInAs = (user: AuthUser) => {
-  setSession({ accessToken: 't', expiresIn: 900, user });
+  setSession({ accessToken: 't', expiresIn: 900, sessionId: SESSION_ID, user });
 };
 
 beforeEach(() => {

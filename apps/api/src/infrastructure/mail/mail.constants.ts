@@ -14,11 +14,22 @@ export const SMTP_CONNECTION_TIMEOUT_MS = 10_000;
 export const SMTP_GREETING_TIMEOUT_MS = 10_000;
 export const SMTP_SOCKET_TIMEOUT_MS = 30_000;
 
-// A claim's lease: longer than the slowest exchange the timeouts allow, so a
-// live worker never loses a message it is still sending, and short enough
-// that a crashed worker's message is taken over within minutes. Messages are
-// claimed one at a time, so no message waits in a claimed batch.
+// A claim's lease: short enough that a crashed worker's message is taken over
+// within minutes. The SMTP timeouts above apply to each step, not to the whole
+// exchange (a slow relay that answers every step just in time can take longer
+// than the lease), so a live worker renews its lease while it sends, and never
+// loses a message it is still sending. Messages are claimed one at a time, so
+// no message waits in a claimed batch.
 export const MAIL_LEASE_MS = 120_000;
+export const MAIL_LEASE_RENEW_MS = MAIL_LEASE_MS / 3;
+// The longest a worker keeps renewing for one exchange: then the lease runs
+// out and another worker may take the message over.
+export const MAIL_EXCHANGE_MAX_MS = 10 * 60_000;
+
+// Appended to the reason of a message dropped while a worker held it under a
+// live lease (MailOutboxService.expireQueued): that worker counts it
+// (MailStore.fateOf); the caller counts the others.
+export const DROPPED_WHILE_HELD = ':held';
 
 // Retries: exponential from 30 seconds, at most an hour apart, with jitter.
 export const MAIL_RETRY_BASE_MS = 30_000;

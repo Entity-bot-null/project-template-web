@@ -264,12 +264,18 @@ describe('deploy.sh', { skip: SKIP }, () => {
     assert.equal(pointer('release.previous.env'), A[3]);
   });
 
-  test('redeploying the running release keeps the rollback target', () => {
+  test('redeploying the running release keeps the rollback target, and says it redeployed', () => {
     run('deploy.sh', A);
     run('deploy.sh', B);
+    assert.equal(existsSync(join(srv, 'release.redeployed')), false);
     assert.equal(run('deploy.sh', B).status, 0);
     assert.equal(pointer('release.env'), B[3]);
     assert.equal(pointer('release.previous.env'), A[3]);
+    assert.equal(existsSync(join(srv, 'release.redeployed')), true);
+    // The next release that changes something clears it.
+    assert.equal(run('deploy.sh', A).status, 0);
+    assert.equal(pointer('release.previous.env'), B[3]);
+    assert.equal(existsSync(join(srv, 'release.redeployed')), false);
   });
 
   test('a failed migration stops before the rollout: the running release keeps serving', () => {
@@ -460,6 +466,35 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(pointer('release.previous.env'), A[3]);
   });
 
+  test('after a redeployment of the running release, refuses to start the older one before it', () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const result = run('rollback.sh');
+    assert.equal(result.status, 2);
+    assert.match(
+      result.stderr,
+      new RegExp(
+        `last successful deployment redeployed release ${B[3]}.*--previous starts release ${A[3]}`,
+      ),
+    );
+    assert.deepEqual(calls().slice(before), []);
+    assert.equal(running(), B[0]);
+    assert.equal(pointer('release.env'), B[3]);
+  });
+
+  test('with --previous, starts the release before a redeployed one', () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    run('deploy.sh', B);
+    const result = run('rollback.sh', ['--previous']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(running(), A[0]);
+    assert.equal(pointer('release.env'), A[3]);
+    assert.equal(existsSync(join(srv, 'release.redeployed')), false);
+  });
+
   test('refuses when no previous release is recorded', () => {
     run('deploy.sh', A);
     const result = run('rollback.sh');
@@ -495,5 +530,30 @@ describe('rollback.sh', { skip: SKIP }, () => {
     assert.equal(running(), A[0]);
     assert.equal(pointer('release.env'), A[3]);
     assert.equal(pointer('release.previous.env'), B[3]);
+  });
+
+  test('says a deployment is running, rather than read a previous release it may be writing', async () => {
+    // The first deployment: no previous release yet, until it finishes.
+    const before = calls().length;
+    const deployment = start('deploy.sh', A, { FAKE_SECONDS: '1' });
+    await logged(`pull ${A[0]}`, before);
+    const rollback = run('rollback.sh');
+    assert.equal(rollback.status, 1);
+    assert.match(rollback.stderr, /another deployment or rollback is running/);
+    assert.doesNotMatch(rollback.stderr, /no previous release recorded/);
+    assert.equal((await deployment).status, 0);
+  });
+
+  test('says a deployment is running, rather than read a redeployment it may be changing', async () => {
+    run('deploy.sh', A);
+    run('deploy.sh', B);
+    run('deploy.sh', B);
+    const before = calls().length;
+    const deployment = start('deploy.sh', A, { FAKE_SECONDS: '1' });
+    await logged(`pull ${A[0]}`, before);
+    const rollback = run('rollback.sh');
+    assert.equal(rollback.status, 1);
+    assert.match(rollback.stderr, /another deployment or rollback is running/);
+    assert.equal((await deployment).status, 0);
   });
 });

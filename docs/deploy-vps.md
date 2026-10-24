@@ -71,10 +71,12 @@ The **Deploy** workflow, with the repository variable `DEPLOY_TARGET=vps`:
    - starts the new `api` and `web`, waits until both are healthy and the API is ready,
    - on success records it in `release.env` (the release it replaced moves to
      `release.previous.env`, the rollback target; redeploying the running release keeps the
-     rollback target as it was); on failure starts the release that was running
-     again, by itself, and checks that it is ready;
+     rollback target as it was and leaves `release.redeployed`); on failure starts the release
+     that was running again, by itself, and checks that it is ready;
 4. runs the smoke test against the public URL; if it fails, runs `rollback.sh` on the server,
-   which fails in turn when the release it puts back is not ready.
+   which fails in turn when the release it puts back is not ready. After a redeployment of the
+   running release there is nothing earlier to go back to: `rollback.sh` changes nothing (exit 2)
+   and the job says so, rather than start the older release recorded before it.
 
 Tested end to end on Docker (a local registry and PostgreSQL standing in for GHCR and the managed
 database): first deployment, migration with the two roles, HTTPS and HSTS, the smoke test, the
@@ -113,6 +115,7 @@ in files on the server, readable by the deploy user only.
 | `backup.env`           | `PGPASSWORD`, the backup role's (`db` profile)                                                                                                                  | no (server only) |
 | `release.env`          | the digests and release running now (written by `deploy.sh`)                                                                                                    | no (server only) |
 | `release.previous.env` | the release before it                                                                                                                                           | no (server only) |
+| `release.redeployed`   | present when the last successful deployment redeployed the running release: `rollback.sh` then refuses, unless `--previous`                                     | no (server only) |
 | `.deploy.lock`         | held by `deploy.sh` or `rollback.sh` while it runs: one at a time                                                                                               | no (server only) |
 
 Why `realip.conf`: the web image replaces `X-Forwarded-For` with the address that connected to it
@@ -274,11 +277,16 @@ GRANT CONNECT ON DATABASE app TO app_runtime;
 GRANT USAGE ON SCHEMA public TO app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
 ```
 
 Generate each password with `openssl rand -hex 24`. The migrator owns the schema and is used only by
 the migration job; the API connects as `app_runtime`, which can read and write data but cannot
-change the schema.
+change the schema, nor the migration history: a migration takes its rights on `_prisma_migrations`
+back at the first deployment. Running these statements again after a deployment (a new database, a
+restore) gives those rights back: follow them with
+`REVOKE ALL ON TABLE _prisma_migrations FROM app_runtime;`.
 
 ## 6. The files on the server
 
@@ -673,7 +681,9 @@ docker compose --env-file server.env --env-file release.env up -d --force-recrea
   running, and stops before changing the release when they do not start. It ends once the API is
   ready, and fails, saying so, when the release it put back is not (a database credential changed
   since, for example). While a deployment runs it stops at once: a failed deployment puts the
-  running release back by itself.
+  running release back by itself. After a deployment that redeployed the release already running,
+  nothing ran before it but that release: it refuses (exit 2), naming the release recorded before
+  it, and `./rollback.sh --previous` starts that one.
 - **Planned**: run Deploy with the previous tag.
 
 Migrations are never reversed: the previous release runs on the current schema

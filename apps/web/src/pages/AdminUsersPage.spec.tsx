@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getState, resetForTests, setSession } from '../auth/session';
 import { admin, member } from '../test/fixtures';
-import { failure, json, ok, stubFetch } from '../test/http';
+import { failure, json, ok, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const LIST = 'GET /api/users';
@@ -11,7 +11,7 @@ const row = (user: typeof member) => ({ ...user, createdAt: '2026-01-01T00:00:00
 
 beforeEach(() => {
   resetForTests();
-  setSession({ accessToken: 'admin-token', expiresIn: 900, user: admin });
+  setSession({ accessToken: 'admin-token', expiresIn: 900, sessionId: SESSION_ID, user: admin });
 });
 afterEach(() => {
   resetForTests();
@@ -66,7 +66,7 @@ describe('the session switches to another user', () => {
       id: '0190b6a1-0000-7000-8000-000000000003',
       email: 'other-admin@example.com',
     };
-    setSession({ accessToken: 'token-a', expiresIn: 900, user: admin });
+    setSession({ accessToken: 'token-a', expiresIn: 900, sessionId: SESSION_ID, user: admin });
     let answerFirst: (response: Response) => void = () => undefined;
     let requests = 0;
     const { calls } = stubFetch({
@@ -83,7 +83,12 @@ describe('the session switches to another user', () => {
     await expect.poll(() => calls.length).toBe(1);
     // What a refresh does when the cookie now belongs to someone else.
     act(() => {
-      setSession({ accessToken: 'token-b', expiresIn: 900, user: otherAdmin });
+      setSession({
+        accessToken: 'token-b',
+        expiresIn: 900,
+        sessionId: SESSION_ID,
+        user: otherAdmin,
+      });
     });
     await act(async () => {
       answerFirst(ok({ items: [row({ ...member, email: 'loaded-for-a@example.com' })], total: 1 }));
@@ -102,7 +107,7 @@ describe('the session switches to another user', () => {
 
 describe('a request whose renewal fails while the session is kept', () => {
   it('fails as unavailable, never with "session ended"', async () => {
-    setSession({ accessToken: 'admin-token', expiresIn: 900, user: admin });
+    setSession({ accessToken: 'admin-token', expiresIn: 900, sessionId: SESSION_ID, user: admin });
     stubFetch({
       // The access token expired, and the refresh hit a server error: the
       // session is kept (docs/error-handling.md).

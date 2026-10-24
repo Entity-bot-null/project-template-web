@@ -37,6 +37,12 @@ FROM public.ecr.aws/hashicorp/terraform:1.16.6@sha256:bfffc1ded5fbf0a17beaaf22eb
 FROM ghcr.io/terraform-linters/tflint:v0.64.0@sha256:1c595f42d794c32c45a6ea8b58655fd66433d4ca3b1bc631c574a48d120bd19f AS tflint
 FROM public.ecr.aws/docker/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS ubuntu
 
+# The BuildKit daemon that builds and pushes the application images
+# (docker/setup-buildx-action in docker-images.yml and deploy.yml), whose own
+# default is a moving tag (moby/buildkit:buildx-stable-1). Its built-in
+# Dockerfile frontend parses apps/*/Dockerfile, which name no `# syntax=` image.
+FROM moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea AS buildkit
+
 # Image vulnerability scanning.
 FROM ghcr.io/aquasecurity/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 AS trivy
 

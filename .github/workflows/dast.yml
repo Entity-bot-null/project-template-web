@@ -79,7 +79,8 @@ jobs:
           mkdir -p zap
           cp .zap/rules.tsv openapi/openapi.json zap/
           chmod -R a+rwX zap
-          echo "image=$(node scripts/tool-image.mjs zap)" >> "$GITHUB_ENV"
+          image=$(node scripts/tool-image.mjs zap)
+          echo "image=$image" >> "$GITHUB_ENV"
 
       # Passive: spiders the app and inspects every response (headers,
       # cookies, disclosures). -I: warnings are reported, only FAIL rules fail.

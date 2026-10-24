@@ -29,7 +29,11 @@ export function newAccountToken(): string {
 export interface MintInput {
   userId: string;
   purpose: AccountTokenPurpose;
-  /** The account's securityVersion now: a later credential change makes the token stale. */
+  /**
+   * The account's securityVersion now: a later credential change makes the
+   * token stale. email_revert: the securityVersion right after the change it
+   * undoes, which ranks the undo links (consumeAccountToken).
+   */
   securityVersion: number;
   /** The account's address now: a later change of email makes the token stale. */
   email: string;
@@ -85,8 +89,12 @@ export interface UsableToken {
   userId: string;
   /** email_change: the new address; email_revert: the address to put back. */
   targetEmail: string | null;
-  /** When it was minted: an undo link outranks the ones minted after it. */
-  createdAt: Date;
+  /**
+   * The securityVersion it was minted for. email_revert: the account's right
+   * after the change it undoes, so an undo link outranks those of later
+   * changes, whenever their messages went out.
+   */
+  securityVersion: number;
 }
 
 /**
@@ -118,11 +126,10 @@ export async function consumeAccountToken(
       email: string;
       targetEmail: string | null;
       expiresAt: Date;
-      createdAt: Date;
     }[]
   >`
     SELECT "id", "user_id" AS "userId", "security_version" AS "securityVersion", "email",
-           "target_email" AS "targetEmail", "expires_at" AS "expiresAt", "created_at" AS "createdAt"
+           "target_email" AS "targetEmail", "expires_at" AS "expiresAt"
     FROM "account_tokens"
     WHERE "token_hash" = ${hashAccountToken(token)}
       AND "purpose" = ${purpose}::"AccountTokenPurpose"
@@ -141,7 +148,12 @@ export async function consumeAccountToken(
     data: { usedAt: new Date(now) },
   });
   return count === 1
-    ? { id: row.id, userId: row.userId, targetEmail: row.targetEmail, createdAt: row.createdAt }
+    ? {
+        id: row.id,
+        userId: row.userId,
+        targetEmail: row.targetEmail,
+        securityVersion: row.securityVersion,
+      }
     : undefined;
 }
 
@@ -165,6 +177,12 @@ export async function tokenOwner(
 }
 
 const DAY_MS = 86_400_000;
+
+/**
+ * How long a used token is kept after its use (AccountTokenSweep): as long as
+ * a check of earlier uses can see it (the notice of a change of email).
+ */
+export const USED_ACCOUNT_TOKEN_RETENTION_MS = DAY_MS;
 const SWEEP_INTERVAL_MS = 60 * 60_000;
 
 // Used and expired tokens no longer work, whatever is kept: they are deleted a
@@ -191,7 +209,12 @@ export class AccountTokenSweep implements OnModuleInit, OnModuleDestroy {
     try {
       const before = new Date(now - DAY_MS);
       const { count } = await this.prisma.accountToken.deleteMany({
-        where: { OR: [{ expiresAt: { lt: before } }, { usedAt: { lt: before } }] },
+        where: {
+          OR: [
+            { expiresAt: { lt: before } },
+            { usedAt: { lt: new Date(now - USED_ACCOUNT_TOKEN_RETENTION_MS) } },
+          ],
+        },
       });
       // Sign-ups whose link expired, and those whose message never went out
       // (its queue validity is SIGN_UP_TTL_MS): nobody can finish them.

@@ -20,13 +20,15 @@ describe('HTTP pipeline (integration)', () => {
     expect(res.body).toEqual({ data: null, message: expect.any(String) as string });
   });
 
-  it('answers a malformed JSON body with a 400 envelope', async () => {
-    const res = await request(t.server)
-      .post('/api/auth/sign-in')
-      .set('Content-Type', 'application/json')
-      .send('{"email":')
-      .expect(400);
-    expect(res.body).toMatchObject({ data: null });
+  it("answers a malformed JSON body with one plain message, never the parser's text", async () => {
+    for (const body of ['{"email":', '{"email": "a@example.com", "password": hunter2}']) {
+      const res = await request(t.server)
+        .post('/api/auth/sign-in')
+        .set('Content-Type', 'application/json')
+        .send(body)
+        .expect(400);
+      expect(res.body).toEqual({ data: null, message: 'The request body is not valid JSON' });
+    }
   });
 
   it('refuses a body over the size limit', async () => {

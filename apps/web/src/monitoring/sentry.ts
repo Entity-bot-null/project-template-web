@@ -69,9 +69,18 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
   return event;
 }
 
+// A DOM breadcrumb (ui.click, ui.input) names the element as a CSS-like path
+// that carries some attributes' values (aria-label, title, name, alt). Those
+// hold what the page says about someone (a row's button is labelled with the
+// invitee's address): only the attribute names are kept.
+const ATTRIBUTE_VALUE = /\[([\w:-]+)="(?:[^"\\]|\\.)*"\]/g;
+
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
   // Console output can hold anything the app printed: not sent.
   if (breadcrumb.category === 'console') return null;
+  if (breadcrumb.category?.startsWith('ui.') === true && breadcrumb.message !== undefined) {
+    breadcrumb.message = breadcrumb.message.replace(ATTRIBUTE_VALUE, '[$1]');
+  }
   if (breadcrumb.data !== undefined) {
     const data: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(breadcrumb.data)) {

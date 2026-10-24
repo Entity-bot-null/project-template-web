@@ -1,9 +1,17 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearSession, getState, resetForTests, setSession } from '../auth/session';
+import { boot, clearSession, getState, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, stubFetch } from '../test/http';
+import {
+  clearSessionHint,
+  deferred,
+  failure,
+  session,
+  SESSION_ID,
+  setSessionHint,
+  stubFetch,
+} from '../test/http';
 import { renderRoute } from '../test/render';
 
 // The two pages a change of email's messages open: confirming the new
@@ -12,6 +20,7 @@ import { renderRoute } from '../test/render';
 const CONFIRM = 'POST /api/auth/email-changes/confirm';
 const REVERT = 'POST /api/auth/email-changes/revert';
 const LOGOUT = 'POST /api/auth/logout';
+const REFRESH = 'POST /api/auth/refresh';
 const TOKEN = 'Ec4_b-Rv8'.padEnd(43, 'q');
 const GOOD = 'violet harbour lantern 7';
 const done = () => new Response(null, { status: 204 });
@@ -23,6 +32,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetForTests();
+  // Set by the tests of a tab still booting: gone even when one fails.
+  clearSessionHint();
 });
 
 describe('ConfirmEmailChangePage', () => {
@@ -54,7 +65,7 @@ describe('ConfirmEmailChangePage', () => {
 
   it('signs this browser out when it was signed in: every session of the account ended', async () => {
     const { calls } = stubFetch({ [CONFIRM]: done, [LOGOUT]: done });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     renderRoute(LINK);
     await useAddress();
     await screen.findByRole('heading', { name: 'Email address changed' });
@@ -75,6 +86,25 @@ describe('ConfirmEmailChangePage', () => {
       await screen.findByRole('heading', { name: 'This link does not work' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(shown);
+  });
+
+  it('signs out a tab whose boot refresh is still on its way, so it never lands', async () => {
+    resetForTests();
+    setSessionHint();
+    const refreshed = deferred<Response>();
+    const { calls } = stubFetch({
+      [CONFIRM]: done,
+      [REFRESH]: () => refreshed.promise,
+      [LOGOUT]: done,
+    });
+    const booting = boot();
+    renderRoute(LINK);
+    await useAddress();
+    await screen.findByRole('heading', { name: 'Email address changed' });
+    await expect.poll(() => calls.map(pathOf)).toContain('/api/auth/logout');
+    refreshed.resolve(session('token-1'));
+    await expect(booting).resolves.toBe(false);
+    expect(getState().status).toBe('anonymous');
   });
 
   it('keeps the button for another try when the server fails, and explains a cut link', async () => {
@@ -105,7 +135,7 @@ describe('RevertEmailChangePage', () => {
 
   it('puts the address back with a new password, then signs this browser out', async () => {
     const { calls } = stubFetch({ [REVERT]: done, [LOGOUT]: done });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const router = renderRoute(LINK);
     await expect.poll(() => router.state.location.hash).toBe('');
     await undo(GOOD);
@@ -113,6 +143,25 @@ describe('RevertEmailChangePage', () => {
       await screen.findByRole('heading', { name: 'Your address is back' }),
     ).toBeInTheDocument();
     await expect(calls[0]?.json()).resolves.toEqual({ token: TOKEN, password: GOOD });
+    expect(getState().status).toBe('anonymous');
+  });
+
+  it('signs out a tab whose boot refresh is still on its way, so it never lands', async () => {
+    resetForTests();
+    setSessionHint();
+    const refreshed = deferred<Response>();
+    const { calls } = stubFetch({
+      [REVERT]: done,
+      [REFRESH]: () => refreshed.promise,
+      [LOGOUT]: done,
+    });
+    const booting = boot();
+    renderRoute(LINK);
+    await undo(GOOD);
+    await screen.findByRole('heading', { name: 'Your address is back' });
+    await expect.poll(() => calls.map(pathOf)).toContain('/api/auth/logout');
+    refreshed.resolve(session('token-1'));
+    await expect(booting).resolves.toBe(false);
     expect(getState().status).toBe('anonymous');
   });
 

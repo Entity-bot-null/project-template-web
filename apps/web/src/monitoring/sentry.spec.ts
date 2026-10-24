@@ -67,6 +67,19 @@ describe('scrubbing', () => {
     expect(scrubBreadcrumb(navigation)?.data).toEqual({ from: '/sign-in', to: '/admin' });
   });
 
+  it("keeps the element a DOM breadcrumb names, never its attributes' values", () => {
+    const click: Breadcrumb = {
+      category: 'ui.click',
+      message: 'td > button.link-button[aria-label="Send again to ada@example.com"][type="button"]',
+    };
+    expect(scrubBreadcrumb(click)?.message).toBe('td > button.link-button[aria-label][type]');
+    const input: Breadcrumb = {
+      category: 'ui.input',
+      message: 'input[name="email"][title="Grace \\"G\\" Hopper"]',
+    };
+    expect(scrubBreadcrumb(input)?.message).toBe('input[name][title]');
+  });
+
   it('cuts a URL at its query string or fragment', () => {
     expect(withoutQuery('/a/b?c=d')).toBe('/a/b');
     expect(withoutQuery('/a#hash')).toBe('/a');

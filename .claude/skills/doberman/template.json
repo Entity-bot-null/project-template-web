@@ -196,7 +196,7 @@
       "when": "always",
       "requires": ["database"],
       "tags": ["tests"],
-      "note": "Runs on <db>_test, never the development database. The Redis adapter specs and the outbox specs run against the development Redis and Mailpit (REDIS_URL and MAIL_SMTP_URL of apps/api/.env, or REDIS_TEST_URL and MAIL_TEST_SMTP_URL), each under its own key prefix or mailbox; required in CI, skipped locally without a URL: say so."
+      "note": "Runs on <db>_test, never the development database; its global setup first replays every migration on an empty <db>_shadow and compares it with schema.prisma (a failure there is a migration that does not run from nothing, or a schema change without its migration). The Redis adapter specs and the outbox specs run against the development Redis and Mailpit (REDIS_URL and MAIL_SMTP_URL of apps/api/.env, or REDIS_TEST_URL and MAIL_TEST_SMTP_URL), each under its own key prefix or mailbox; required in CI, skipped locally without a URL: say so."
     },
     {
       "id": "test:e2e",
@@ -243,7 +243,7 @@
       "start": "pnpm services:up",
       "stop": "docker compose stop db redis mailpit",
       "needs": ["docker"],
-      "note": "The template's development services (docker-compose.yml): PostgreSQL, where the suites use <db>_test and <db>_e2e, and the Redis and Mailpit the integration specs reach through apps/api/.env."
+      "note": "The template's development services (docker-compose.yml): PostgreSQL, where the suites use <db>_test, <db>_shadow and <db>_e2e, and the Redis and Mailpit the integration specs reach through apps/api/.env."
     }
   },
   "environment": {

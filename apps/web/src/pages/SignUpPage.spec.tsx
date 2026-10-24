@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearSession, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, json, stubFetch } from '../test/http';
+import { failure, json, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const SIGN_UP = 'POST /api/auth/sign-ups';
@@ -92,7 +92,7 @@ describe('SignUpPage', () => {
 
   it('is for signed-out visitors only', async () => {
     stubFetch({});
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const router = renderRoute('/sign-up');
     await screen.findByRole('heading', { name: `Welcome, ${member.name}` });
     expect(router.state.location.pathname).toBe('/');

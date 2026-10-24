@@ -109,7 +109,12 @@ describe('consumeAccountToken', () => {
     const { tx, client } = txWith();
     await expect(
       consumeAccountToken(client, 'the-token', 'password_reset', ACCOUNT, NOW),
-    ).resolves.toEqual({ id: 't1', userId: 'u1', targetEmail: null });
+    ).resolves.toEqual({
+      id: 't1',
+      userId: 'u1',
+      targetEmail: null,
+      securityVersion: ACCOUNT.securityVersion,
+    });
     const [sql, ...values] = tx.$queryRaw.mock.calls[0] as unknown as [
       TemplateStringsArray,
       ...unknown[],
@@ -139,10 +144,16 @@ describe('consumeAccountToken', () => {
 
   it('takes a revert token whatever happened to the account since, never an expired one', async () => {
     const changed = { ...ACCOUNT, email: 'thief@example.test', securityVersion: 9 };
-    const { client } = txWith([row({ targetEmail: 'ada@example.test' })]);
+    // Its securityVersion, right after the change it undoes, ranks it.
+    const { client } = txWith([row({ targetEmail: 'ada@example.test', securityVersion: 4 })]);
     await expect(
       consumeAccountToken(client, 'the-token', 'email_revert', changed, NOW, false),
-    ).resolves.toEqual({ id: 't1', userId: 'u1', targetEmail: 'ada@example.test' });
+    ).resolves.toEqual({
+      id: 't1',
+      userId: 'u1',
+      targetEmail: 'ada@example.test',
+      securityVersion: 4,
+    });
     const expired = txWith([row({ expiresAt: new Date(NOW) })]);
     await expect(
       consumeAccountToken(expired.client, 'the-token', 'email_revert', changed, NOW, false),

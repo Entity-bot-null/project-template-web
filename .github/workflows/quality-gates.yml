@@ -50,11 +50,16 @@ jobs:
             scripts/tool-image.mjs
           sparse-checkout-cone-mode: false
       - id: images
+        # Each on its own line: a failure inside $(...) passed to echo would go
+        # unseen, and the service would start from an empty image name.
         run: |
+          postgres=$(node scripts/tool-image.mjs --mirrored postgres)
+          redis=$(node scripts/tool-image.mjs --mirrored redis)
+          mailpit=$(node scripts/tool-image.mjs --mirrored mailpit)
           {
-            echo "postgres=$(node scripts/tool-image.mjs --mirrored postgres)"
-            echo "redis=$(node scripts/tool-image.mjs --mirrored redis)"
-            echo "mailpit=$(node scripts/tool-image.mjs --mirrored mailpit)"
+            echo "postgres=$postgres"
+            echo "redis=$redis"
+            echo "mailpit=$mailpit"
           } >> "$GITHUB_OUTPUT"
 
   static:

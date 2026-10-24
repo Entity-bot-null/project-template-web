@@ -118,6 +118,8 @@ describe('SessionsService', () => {
     expect(rows[0]?.tokenHash).toBe(hashRefreshToken(issued.token));
     expect(rows[0]?.tokenHash).not.toContain(issued.token);
     expect(rows[0]?.familyId).toMatch(/^[0-9a-f-]{36}$/);
+    // The session's id for the client: its family.
+    expect(issued.familyId).toBe(rows[0]?.familyId);
     const now = Date.now();
     expect(issued.expiresAt.getTime() - now).toBeGreaterThan((REFRESH_TOKEN_TTL_SEC - 5) * 1000);
     expect((rows[0]?.familyExpiresAt.getTime() ?? 0) - now).toBeGreaterThan(
@@ -143,6 +145,7 @@ describe('SessionsService', () => {
     expect(user).toEqual(USER);
     expect(securityVersion).toBe(4);
     expect(session.token).not.toBe('old');
+    expect(session.familyId).toBe(FAMILY);
     expect(rows[0]).toMatchObject({ rotated: true, revokedAt: expect.any(Date) as Date });
     expect(rows[1]).toMatchObject({
       tokenHash: hashRefreshToken(session.token),
@@ -214,7 +217,9 @@ describe('SessionsService', () => {
       rowFor('other device', { familyId: OTHER_FAMILY }),
     ];
     const { prisma } = fakePrisma(rows);
-    await new SessionsService(prisma).retire('previous', 'sign-in');
+    await expect(new SessionsService(prisma).retire('previous', 'sign-in')).resolves.toEqual({
+      retired: true,
+    });
     expect(rows[1]?.revokedAt).toBeInstanceOf(Date);
     expect(rows[2]?.revokedAt).toBeNull();
     // Within the leeway: a client race, not a theft.
@@ -243,7 +248,39 @@ describe('SessionsService', () => {
   it('ignores an unknown token at logout', async () => {
     const rows = [rowFor('mine')];
     const { prisma } = fakePrisma(rows);
-    await expect(new SessionsService(prisma).retire('unknown', 'logout')).resolves.toBeUndefined();
+    await expect(new SessionsService(prisma).retire('unknown', 'logout')).resolves.toEqual({
+      retired: false,
+    });
+    expect(rows[0]?.revokedAt).toBeNull();
+  });
+
+  it('ends only a family it names, and says when the presented one is a live session', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const rows = [
+      rowFor('newer', { familyId: OTHER_FAMILY }),
+      rowFor('stale', { familyId: OTHER_FAMILY, ...rotatedAgo(REFRESH_REUSE_LEEWAY_SEC + 5) }),
+      rowFor('mine'),
+    ];
+    const { prisma } = fakePrisma(rows);
+    const service = new SessionsService(prisma);
+
+    // A session started meanwhile: left alone, reported live until it expires.
+    await expect(service.retire('newer', 'logout', [FAMILY])).resolves.toEqual({
+      retired: false,
+      liveUntil: rows[0]?.expiresAt,
+    });
+    // Not named, and not live: left alone too, nothing to report (no theft
+    // warning: this logout does not touch families it does not name).
+    await expect(service.retire('stale', 'logout', [FAMILY])).resolves.toEqual({
+      retired: false,
+    });
+    expect(rows[0]?.revokedAt).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    // Named: ended like any logout.
+    await expect(service.retire('mine', 'logout', [OTHER_FAMILY, FAMILY])).resolves.toEqual({
+      retired: true,
+    });
+    expect(rows[2]?.revokedAt).toBeInstanceOf(Date);
     expect(rows[0]?.revokedAt).toBeNull();
   });
 

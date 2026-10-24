@@ -22,9 +22,10 @@ REST over JSON, everything under `/api`. The contract is `openapi/openapi.json`
 
 | Rule                       | Example                                                                         |
 | -------------------------- | ------------------------------------------------------------------------------- |
-| Plural nouns, kebab-case   | `/api/users`, `/api/password-resets`                                            |
+| Plural nouns, kebab-case   | `/api/users`, `/api/auth/password-resets`                                       |
 | Nest by ownership only     | `/api/projects/:projectId/tasks` (not deeper than one level)                    |
-| Actions as sub-resources   | `POST /api/auth/sign-in`, `POST /api/invitations/:id/accept`                    |
+| Actions as sub-resources   | `POST /api/auth/sign-in`, `POST /api/auth/password-resets/confirm`              |
+| `/api/auth/` is anonymous  | sign-in, the session cookie, emailed links; the web client sends no token there |
 | ids are UUIDs              | `@Param('id', ParseUUIDPipe)`; params named `id`/`…Id` are documented as `uuid` |
 | `camelCase` JSON fields    | `createdAt`, `accessToken`                                                      |
 | Timestamps in ISO 8601 UTC | `2026-01-31T12:00:00.000Z`                                                      |

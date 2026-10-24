@@ -72,12 +72,22 @@ function setup({ storedHashInTransaction }: { storedHashInTransaction?: string }
   };
   const sessions = {
     create: vi.fn(() =>
-      Promise.resolve({ token: 'new-refresh', expiresAt: new Date(), securityVersion: 5 }),
+      Promise.resolve({
+        token: 'new-refresh',
+        expiresAt: new Date(),
+        familyId: 'family-new',
+        securityVersion: 5,
+      }),
     ),
   };
   const auth = {
-    sessionFor: vi.fn((authUser: unknown, sv: number) =>
-      Promise.resolve({ accessToken: `token-sv-${String(sv)}`, expiresIn: 900, user: authUser }),
+    sessionFor: vi.fn((authUser: unknown, started: { securityVersion: number; familyId: string }) =>
+      Promise.resolve({
+        accessToken: `token-sv-${String(started.securityVersion)}`,
+        expiresIn: 900,
+        sessionId: started.familyId,
+        user: authUser,
+      }),
     ),
   };
   const mail = {
@@ -115,6 +125,7 @@ describe('AccountService.changePassword', () => {
     // The new session is created with the new hash, after the old ones ended.
     expect(sessions.create).toHaveBeenCalledWith('u1', data.passwordHash);
     expect(result.session.accessToken).toBe('token-sv-5');
+    expect(result.session.sessionId).toBe('family-new');
     expect(result.session.user).toEqual({
       id: 'u1',
       email: 'ada@example.test',
