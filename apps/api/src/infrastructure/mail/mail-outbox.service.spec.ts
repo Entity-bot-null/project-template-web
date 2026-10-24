@@ -6,6 +6,9 @@ import { deriveRecipientKey, recipientHash } from './mail.recipient.js';
 import type { MailOptions } from './mail.types.js';
 import type { MailTemplate, MailTemplates } from './templates/registry.js';
 
+const metrics = vi.hoisted(() => ({ recordMailDelivery: vi.fn(), recordMailSuppressed: vi.fn() }));
+vi.mock('../../observability/metrics.js', () => metrics);
+
 const options: MailOptions = {
   smtpUrl: 'smtp://localhost:1035',
   from: { address: 'no-reply@acme.test' },
@@ -44,6 +47,7 @@ function txWith({ minute = 0, day = 0, created = 1 } = {}) {
     );
   const tx = {
     $executeRaw: vi.fn(() => Promise.resolve(1)),
+    $queryRaw: vi.fn(() => Promise.resolve([] as { unclaimed: boolean }[])),
     mailMessage: {
       count,
       createMany: vi.fn(() => Promise.resolve({ count: created })),
@@ -63,6 +67,59 @@ afterEach(() => {
 describe('MailOutboxService', () => {
   const limited = new MailOutboxService(options, registry(true));
   const unlimited = new MailOutboxService(options, registry(false));
+
+  it("drops, unsent, an account's waiting messages of a kind from a payload number on", async () => {
+    const { tx, client } = txWith();
+    // Two dropped: one a worker held (being sent), one nobody did.
+    tx.$queryRaw.mockResolvedValueOnce([{ unclaimed: false }, { unclaimed: true }]);
+    await expect(
+      unlimited.expireQueued(client, {
+        kind: 'email_changed',
+        userId: 'u1',
+        key: 'securityVersion',
+        from: 4,
+        reason: 'superseded',
+      }),
+    ).resolves.toEqual({ dropped: 2, unclaimed: 1 });
+    const [sql, ...values] = tx.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    const statement = sql.join('?');
+    // The address goes with it, as for any dropped message (the CHECK constraint).
+    expect(statement).toContain(
+      `SET "status" = 'expired', "recipient" = NULL, "locked_until" = NULL`,
+    );
+    expect(statement).toContain(`"status" IN ('pending', 'sending', 'failed')`);
+    // A message without the number (queued by the previous release) goes too.
+    expect(statement).toContain('ELSE true END');
+    // Locked in id order; a message being sent under a live lease is its worker's to count.
+    expect(statement).toContain('ORDER BY "id"\n        FOR UPDATE');
+    expect(statement).toContain(
+      `("status" <> 'sending' OR "locked_until" < statement_timestamp()) AS "unclaimed"`,
+    );
+    // A message a worker holds keeps its reason, marked for that worker.
+    expect(statement).toMatch(/CASE WHEN "before"\."unclaimed" THEN \?\s+ELSE \? \|\| \? END/);
+    expect(values).toEqual([
+      'superseded',
+      'superseded',
+      ':held',
+      'u1',
+      'email_changed',
+      'securityVersion',
+      'securityVersion',
+      4,
+    ]);
+  });
+
+  it('counts the messages a caller dropped, once its transaction committed', () => {
+    metrics.recordMailDelivery.mockClear();
+    unlimited.recordExpired('email_changed', 2);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(2);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('email_changed', 'expired');
+    unlimited.recordExpired('email_changed', 0);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(2);
+  });
 
   it('queues nothing when email is off: no row, no token to deliver later', async () => {
     const off = new MailOutboxService({ ...options, smtpUrl: undefined }, registry(true));

@@ -1,9 +1,17 @@
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearSession, getState, resetForTests, setSession } from '../auth/session';
+import { boot, clearSession, getState, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { deferred, failure, stubFetch } from '../test/http';
+import {
+  clearSessionHint,
+  deferred,
+  failure,
+  session,
+  SESSION_ID,
+  setSessionHint,
+  stubFetch,
+} from '../test/http';
 import { renderRoute } from '../test/render';
 
 const CONFIRM = 'POST /api/auth/password-resets/confirm';
@@ -18,6 +26,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetForTests();
+  // Set by the test of a tab still booting: gone even when it fails.
+  clearSessionHint();
 });
 
 async function choose(password: string) {
@@ -119,7 +129,7 @@ describe('ResetPasswordPage', () => {
       [CONFIRM]: done,
       'POST /api/auth/logout': () => new Response(null, { status: 204 }),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     renderRoute(LINK);
     await choose(GOOD);
     await screen.findByRole('heading', { name: 'Password changed' });
@@ -156,7 +166,7 @@ describe('ResetPasswordPage', () => {
     await choose(GOOD);
     // Signed in after the click, before the answer.
     act(() => {
-      setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+      setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     });
     answer.resolve(done());
     await screen.findByRole('heading', { name: 'Password changed' });
@@ -164,6 +174,28 @@ describe('ResetPasswordPage', () => {
     await expect
       .poll(() => calls.map((request) => new URL(request.url).pathname))
       .toContain('/api/auth/logout');
+  });
+
+  it('signs out a tab whose boot refresh is still on its way, so it never lands', async () => {
+    resetForTests();
+    setSessionHint();
+    const refreshed = deferred<Response>();
+    const { calls } = stubFetch({
+      [CONFIRM]: done,
+      'POST /api/auth/refresh': () => refreshed.promise,
+      'POST /api/auth/logout': () => new Response(null, { status: 204 }),
+    });
+    const booting = boot();
+    renderRoute(LINK);
+    await choose(GOOD);
+    await screen.findByRole('heading', { name: 'Password changed' });
+    await expect
+      .poll(() => calls.map((request) => new URL(request.url).pathname))
+      .toContain('/api/auth/logout');
+    // The boot refresh answers afterwards, with a session the reset ended.
+    refreshed.resolve(session('token-1'));
+    await expect(booting).resolves.toBe(false);
+    expect(getState().status).toBe('anonymous');
   });
 
   it('moves the focus to the field with the problem, and to the heading of a new view', async () => {

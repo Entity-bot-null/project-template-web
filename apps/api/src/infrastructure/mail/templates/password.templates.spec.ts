@@ -12,6 +12,7 @@ const message = (overrides: Partial<ClaimedMessage> = {}): ClaimedMessage => ({
   userId: 'u1',
   payload: {},
   attempts: 1,
+  claimId: 'claim-1',
   expiresAt: new Date(Date.now() + 60_000),
   createdAt: new Date(),
   requestId: null,

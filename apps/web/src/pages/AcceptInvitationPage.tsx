@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { describeFailure, failedField } from '../api/errors';
 import { useAuth } from '../auth';
+import { getState } from '../auth/session';
 import { newPasswordError, PASSWORD_MIN_LENGTH } from '../auth/password-rules';
 import { type LinkToken, useLinkToken } from '../auth/useLinkToken';
 import { Alert } from '../components/Alert';
@@ -10,7 +11,7 @@ import { PasswordField } from '../components/PasswordField';
 import { TextField } from '../components/TextField';
 import { useFocusFirstInvalid } from '../hooks/useFocusFirstInvalid';
 
-type Outcome = 'invalid-link' | 'exists' | null;
+type Outcome = 'invalid-link' | 'exists' | 'created' | null;
 
 // Accepts an invitation with the link of its message: the person chooses
 // their name and password, the account is created with the role the
@@ -51,6 +52,10 @@ function AcceptInvitationContent({ token, dropToken }: LinkToken) {
     if (result.ok) {
       dropToken();
       setPassword('');
+      if (getState().status !== 'authenticated') {
+        setOutcome('created');
+        return;
+      }
       void navigate('/', { replace: true });
       return;
     }
@@ -69,6 +74,22 @@ function AcceptInvitationContent({ token, dropToken }: LinkToken) {
     } else {
       setFailure(describeFailure(result.failure));
     }
+  }
+
+  // Created, but another tab signed out while the request was on its way:
+  // that sign-out stands (src/auth/session.ts), so no session here.
+  if (outcome === 'created') {
+    return (
+      <main className="auth-page stack">
+        <FocusHeading>Your account is ready</FocusHeading>
+        <Alert tone="info">
+          You were signed out in another tab meanwhile: sign in with your email and password.
+        </Alert>
+        <p>
+          <Link to="/sign-in">Sign in</Link>
+        </p>
+      </main>
+    );
   }
 
   if (outcome === 'exists') {

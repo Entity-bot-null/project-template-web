@@ -1,9 +1,14 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { normalizeEmail } from '../../auth/auth.constants.js';
 import type { MailKind, Prisma } from '../../prisma/generated/client.js';
-import { recordMailSuppressed } from '../../observability/metrics.js';
+import { recordMailDelivery, recordMailSuppressed } from '../../observability/metrics.js';
 import { currentRequestId } from '../../observability/request-context.js';
-import { MAIL_OPTIONS, MAIL_PER_ADDRESS_PER_MINUTE, MAIL_TEMPLATES } from './mail.constants.js';
+import {
+  DROPPED_WHILE_HELD,
+  MAIL_OPTIONS,
+  MAIL_PER_ADDRESS_PER_MINUTE,
+  MAIL_TEMPLATES,
+} from './mail.constants.js';
 import { recipientHash } from './mail.recipient.js';
 import type { MailOptions } from './mail.types.js';
 import type { MailTemplates } from './templates/registry.js';
@@ -111,6 +116,63 @@ export class MailOutboxService {
       skipDuplicates: true,
     });
     return count === 1 ? 'queued' : 'duplicate';
+  }
+
+  /**
+   * Drops, unsent, the messages of a kind about an account that still wait in
+   * the outbox (pending, being sent, failed), whose payload number `key` is at
+   * least `from` or missing: what a later change made moot. Inside the
+   * caller's transaction, like enqueue. One being composed at that moment is
+   * refused by its template, which reads its row under the same lock as the
+   * caller's (email-changed.template.ts); one already past composing goes out,
+   * and its worker finds the row changed. The rows are locked in id order,
+   * like a retry from the command line (MailStore.retryFailed): none of these
+   * deadlock each other (against the sweep, which locks in its own order, the
+   * caller runs once more: onceMoreOnWriteConflict). Returns how many it
+   * dropped, and how many of them no worker held under a live lease: those the
+   * caller reports with recordExpired once it has committed. The others are
+   * marked (DROPPED_WHILE_HELD) for the worker holding them, which reports
+   * their outcome (MailStore.fateOf); one that died holding it reports none.
+   */
+  async expireQueued(
+    tx: Prisma.TransactionClient,
+    input: { kind: MailKind; userId: string; key: string; from: number; reason: string },
+  ): Promise<{ dropped: number; unclaimed: number }> {
+    const { kind, userId, key, from, reason } = input;
+    const rows = await tx.$queryRaw<{ unclaimed: boolean }[]>`
+      UPDATE "mail_messages" AS "message"
+      SET "status" = 'expired', "recipient" = NULL, "locked_until" = NULL,
+          "last_error" = CASE WHEN "before"."unclaimed" THEN ${reason}
+                              ELSE ${reason} || ${DROPPED_WHILE_HELD} END,
+          "updated_at" = now()
+      FROM (
+        -- The statement's clock, not the transaction's (now()): the caller
+        -- may have waited for the account's lock since it began, and a lease
+        -- that ran out meanwhile is held by no live worker.
+        SELECT "id", ("status" <> 'sending' OR "locked_until" < statement_timestamp()) AS "unclaimed"
+        FROM "mail_messages"
+        WHERE "user_id" = ${userId}::uuid
+          AND "kind" = ${kind}::"MailKind"
+          AND "status" IN ('pending', 'sending', 'failed')
+          AND CASE WHEN "payload"->>${key} ~ '^[0-9]{1,18}$'
+                   THEN ("payload"->>${key})::bigint >= ${from}
+                   ELSE true END
+        ORDER BY "id"
+        FOR UPDATE
+      ) AS "before"
+      WHERE "message"."id" = "before"."id"
+      RETURNING "before"."unclaimed"`;
+    return { dropped: rows.length, unclaimed: rows.filter((row) => row.unclaimed).length };
+  }
+
+  /**
+   * Counts the messages a caller dropped with expireQueued that no worker
+   * held, after its transaction committed (a rolled-back one dropped
+   * nothing): the delivery metric then counts a dropped message at most once,
+   * whoever settled it.
+   */
+  recordExpired(kind: MailKind, count: number): void {
+    for (let i = 0; i < count; i += 1) recordMailDelivery(kind, 'expired');
   }
 
   /**

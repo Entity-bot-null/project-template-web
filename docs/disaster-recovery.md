@@ -64,9 +64,14 @@ CREATE ROLE app_runtime LOGIN PASSWORD '<from the secret store>' CONNECTION LIMI
 GRANT CONNECT ON DATABASE app TO app_runtime;
 GRANT USAGE ON SCHEMA public TO app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
--- Tables the migrator creates later get the same rights.
+-- Tables and sequences the migrator creates later get the same rights.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
 ```
+
+Never on the migration history (`_prisma_migrations`): a migration takes the runtime role's rights
+back from it at the first deployment, and a restore does the same (below).
 
 `CONNECTION LIMIT` caps what all API instances together may open (instances × `DB_POOL_MAX`,
 docs/database.md#connections). The application never holds backup or restore credentials.
@@ -126,9 +131,11 @@ Run it from the incident record (docs/incident-response.md), writing down the ti
    [The server's own database](#the-servers-own-database). Logical backup: a new database owned by
    the migrator (`CREATE DATABASE <new database> OWNER app_migrator`, as the administrator), then,
    as the migrator, `pg_restore --no-owner --exit-on-error -d <new database> <dump>`, then the
-   runtime role's rights again, connected as the migrator to the new database: the four `GRANT` and
-   `ALTER DEFAULT PRIVILEGES` statements of [deploy-vps.md](deploy-vps.md#5-the-database) with the
-   new database's name. Without them the API connects and its readiness answers ok (it reads no
+   runtime role's rights again, connected as the migrator to the new database: the six `GRANT` and
+   `ALTER DEFAULT PRIVILEGES` statements of [deploy-vps.md](deploy-vps.md#5-the-database) (tables
+   and sequences) with the new database's name, then
+   `REVOKE ALL ON TABLE _prisma_migrations FROM app_runtime;` (the restored history is a table the
+   migrator created: the grants just given reach it, and it stays the migrator's alone). Without them the API connects and its readiness answers ok (it reads no
    table) while every request that does fails with `permission denied for table ...`: checked with a
    restore made with `--no-privileges`, or from a dump taken with it. See the
    [rehearsal](#rehearsal-on-a-development-machine).
@@ -225,6 +232,10 @@ dc() { docker compose --env-file server.env --env-file release.env "$@"; }
    GRANT USAGE ON SCHEMA public TO app_runtime;
    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_runtime;
+   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_runtime;
+   -- The migration history stays the migrator's alone.
+   REVOKE ALL ON TABLE _prisma_migrations FROM app_runtime;
    SQL
    ```
 

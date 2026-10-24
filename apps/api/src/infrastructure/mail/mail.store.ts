@@ -1,16 +1,18 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { MailKind, Prisma } from '../../prisma/generated/client.js';
+import { type MailKind, Prisma } from '../../prisma/generated/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
   MAIL_FAILED_ADDRESS_RETENTION_DAYS,
   MAIL_LEASE_MS,
   MAIL_RETENTION_DAYS,
   MAIL_TEMPLATES,
+  DROPPED_WHILE_HELD,
 } from './mail.constants.js';
 import type { ClaimedMessage } from './mail.types.js';
 import type { MailTemplates } from './templates/registry.js';
 
 const DAY_MS = 86_400_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface OutboxStats {
   /** Messages still to send: pending, or being sent. */
@@ -20,13 +22,18 @@ export interface OutboxStats {
 }
 
 /** The claim a transition was made under: only that claim may finish the message. */
-type Claim = Pick<ClaimedMessage, 'id' | 'attempts'>;
+type Claim = Pick<ClaimedMessage, 'id' | 'attempts' | 'claimId'>;
 
 // Every read and write of the outbox's delivery state (the queueing side is
 // MailOutboxService.enqueue, in the caller's transaction). A claim is one
 // atomic statement; every transition after it is fenced by the claim it was
-// made under (status sending, same attempt): a worker whose lease ran out and
-// whose message another worker took over can no longer finish it.
+// made under (status sending, same attempt, same claim id): a worker whose
+// lease ran out and whose message another worker took over can no longer
+// finish it. The id is new at each claim, so a manual retry that starts the
+// attempts again never revives an old claim. The previous release (a
+// deployment, a rollback) fences by the attempt alone and leaves the id as it
+// is: a manual retry clears it, so that release's next claims carry none, and
+// no claim of this one matches them whatever the attempt.
 @Injectable()
 export class MailStore {
   /** The kinds nobody can request (security notices): claimed before the others. */
@@ -47,13 +54,14 @@ export class MailStore {
    * or in several) never take the same message; SKIP LOCKED lets each pass
    * over the row another is taking. The attempt is counted here, before the
    * send: a message that crashes its worker every time still runs out of
-   * attempts.
+   * attempts. The claim id is new: what this worker records is fenced by it.
    */
   async claim(leaseMs: number = MAIL_LEASE_MS): Promise<ClaimedMessage | undefined> {
     const rows = await this.prisma.$queryRaw<ClaimedMessage[]>`
       UPDATE "mail_messages"
       SET "status" = 'sending',
           "attempts" = "attempts" + 1,
+          "claim_id" = gen_random_uuid(),
           "locked_until" = now() + make_interval(secs => ${leaseMs / 1000}::double precision),
           "updated_at" = now()
       WHERE "id" = (
@@ -67,13 +75,36 @@ export class MailStore {
         FOR UPDATE SKIP LOCKED
       )
       RETURNING "id", "kind", "recipient", "user_id" AS "userId", "payload", "attempts",
-                "expires_at" AS "expiresAt", "created_at" AS "createdAt", "request_id" AS "requestId"`;
+                "claim_id" AS "claimId", "expires_at" AS "expiresAt",
+                "created_at" AS "createdAt", "request_id" AS "requestId"`;
     return rows[0];
   }
 
   /** Runs a template's work in a short transaction of its own (never around the SMTP exchange). */
   inTransaction<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(work, { timeout: 10_000 });
+    // READ COMMITTED whatever the database's default, like the session and
+    // account transactions: a template that waits for the account's lock
+    // (email-changed.template.ts) must then read what the transaction it
+    // waited for committed, not fail with a serialization error.
+    return this.prisma.$transaction(work, {
+      timeout: 10_000,
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    });
+  }
+
+  /**
+   * Extends the lease of a message this worker is still sending, by the
+   * database's clock like the claim. False once the claim is no longer held
+   * (another worker took the message over after a pause longer than the lease).
+   */
+  async renewLease(claim: Claim, leaseMs: number = MAIL_LEASE_MS): Promise<boolean> {
+    const count = await this.prisma.$executeRaw`
+      UPDATE "mail_messages"
+      SET "locked_until" = now() + make_interval(secs => ${leaseMs / 1000}::double precision),
+          "updated_at" = now()
+      WHERE "id" = ${claim.id}::uuid AND "status" = 'sending' AND "attempts" = ${claim.attempts}
+        AND "claim_id" = ${claim.claimId}::uuid`;
+    return count === 1;
   }
 
   /** The server accepted it: the address goes, only its hash stays. */
@@ -110,6 +141,24 @@ export class MailStore {
       lockedUntil: null,
       lastError: reason,
     });
+  }
+
+  /**
+   * What became of a message whose claim refused a transition (finish):
+   * `dropped`, under this very claim, by a caller that left its outcome to
+   * this worker (expireQueued, DROPPED_WHILE_HELD); `counted`, under it, by
+   * a caller that counted it (the lease had run out); `taken-over`, another
+   * worker's claim since; `gone`, its account was deleted with it.
+   */
+  async fateOf(claim: Claim): Promise<'dropped' | 'counted' | 'taken-over' | 'gone'> {
+    const row = await this.prisma.mailMessage.findUnique({
+      where: { id: claim.id },
+      select: { status: true, attempts: true, claimId: true, lastError: true },
+    });
+    if (row === null) return 'gone';
+    const same = row.attempts === claim.attempts && row.claimId === claim.claimId;
+    if (row.status !== 'expired' || !same) return 'taken-over';
+    return row.lastError?.endsWith(DROPPED_WHILE_HELD) === true ? 'dropped' : 'counted';
   }
 
   async stats(): Promise<OutboxStats> {
@@ -158,43 +207,47 @@ export class MailStore {
   }
 
   /**
-   * Puts failed messages back in the queue, with their attempts counted from
-   * zero and a new validity (their kind's), else one that failed through an
-   * outage longer than that would be dropped unsent at once: one by id, or
+   * Puts failed messages back in the queue, their attempts started again and
+   * their last claim's id cleared (the claim id fences each claim, not the
+   * attempt alone: see the class comment) and with a new validity
+   * (their kind's), else one that failed through an outage longer than that
+   * would be dropped unsent at once: one by id, or
    * every failed one (of a kind). Only those that still have their address
    * (retention clears it after a week). A link's own validity starts when it
-   * is sent, so a late message never carries a long-lived token.
+   * is sent, so a late message never carries a long-lived token. The rows are
+   * locked in id order, like expireQueued's: the two never deadlock.
    */
   async retryFailed(
     filter: { id?: string; kind?: MailKind },
     now: number = Date.now(),
   ): Promise<number> {
+    // An id that is no message's (a typo on the command line) matches nothing.
+    if (filter.id !== undefined && !UUID.test(filter.id)) return 0;
+    const id = filter.id ?? null;
     let queued = 0;
     for (const kind of Object.keys(this.templates) as MailKind[]) {
       if (filter.kind !== undefined && filter.kind !== kind) continue;
-      const { count } = await this.prisma.mailMessage.updateMany({
-        where: {
-          status: 'failed',
-          recipient: { not: null },
-          kind,
-          ...(filter.id === undefined ? {} : { id: filter.id }),
-        },
-        data: {
-          status: 'pending',
-          attempts: 0,
-          nextAttemptAt: new Date(now),
-          expiresAt: new Date(now + this.templates[kind].ttlMs),
-          lastError: null,
-        },
-      });
-      queued += count;
+      queued += await this.prisma.$executeRaw`
+        UPDATE "mail_messages" AS "message"
+        SET "status" = 'pending', "attempts" = 0, "claim_id" = NULL,
+            "next_attempt_at" = ${new Date(now)},
+            "expires_at" = ${new Date(now + this.templates[kind].ttlMs)},
+            "last_error" = NULL, "updated_at" = now()
+        FROM (
+          SELECT "id" FROM "mail_messages"
+          WHERE "status" = 'failed' AND "recipient" IS NOT NULL AND "kind" = ${kind}::"MailKind"
+            AND (${id}::uuid IS NULL OR "id" = ${id}::uuid)
+          ORDER BY "id"
+          FOR UPDATE
+        ) AS "due"
+        WHERE "message"."id" = "due"."id"`;
     }
     return queued;
   }
 
   private async finish(claim: Claim, data: Prisma.MailMessageUpdateManyMutationInput) {
     const { count } = await this.prisma.mailMessage.updateMany({
-      where: { id: claim.id, status: 'sending', attempts: claim.attempts },
+      where: { id: claim.id, status: 'sending', attempts: claim.attempts, claimId: claim.claimId },
       data,
     });
     return count === 1;

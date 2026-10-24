@@ -155,9 +155,14 @@ echo "deploy: rolling out"
 if compose up --detach --wait --wait-timeout 180 api web proxy && api_ready; then
   # Only a release that went live moves the pointers: the one it replaces
   # becomes the rollback target of rollback.sh. Redeploying the running
-  # release changes nothing, so the rollback target stays the one before it.
-  if [ -f release.env ] && ! cmp -s release.env release.next.env; then
-    mv release.env release.previous.env
+  # release changes nothing, so the rollback target stays the one before it,
+  # and release.redeployed tells rollback.sh so: a rollback now would start
+  # that older release, not the one that was running before this deployment.
+  if [ -f release.env ] && cmp -s release.env release.next.env; then
+    touch release.redeployed
+  else
+    if [ -f release.env ]; then mv release.env release.previous.env; fi
+    rm -f release.redeployed
   fi
   mv release.next.env release.env
   echo "deploy: release $4 is live"

@@ -75,8 +75,9 @@ on another origin ([security.md](security.md#csrf-cors-xss)), deploy and roll ba
 3. Review `apps/api/prisma/migrations/<timestamp>_add_notes/migration.sql`: locks on big tables,
    defaults, `DROP` statements. A column that existing rows cannot fill needs a default or the
    [expand/contract](database.md#expand-and-contract) steps. A contract step (a drop, a rename, a
-   column made required) needs `-- contract: <why it is safe now>` right above it, or the commit
-   and CI stop (`scripts/check-migrations.mjs`).
+   column made required, a required relation to an existing model without `onDelete: Cascade`)
+   needs `-- contract: <why it is safe now>` right above it, or the commit and CI stop
+   (`scripts/check-migrations.mjs`).
 4. Commit the schema and the migration folder together with the code that uses them. Never edit a
    migration that is already on `main`: the migration image refuses a database that applied an
    earlier text of it.
@@ -249,10 +250,13 @@ export class NotesController {
 }
 ```
 
-Admin-only routes: `@Auth('admin')` on the handler or the controller. Public routes (rare):
-leave `@Auth()` out, say why in a comment, and add the route to the public ones of
+Admin-only routes: `@Auth('admin')` on the controller, or `@RequireRoles('admin')` on one
+handler of an `@Auth()` controller (`@Auth('admin')` there would register and run the guards
+twice: [authorization.md](authorization.md#roles)). Public routes (rare): leave `@Auth()` out, say
+why in a comment, and add the route, with its reason, to `PUBLIC_ROUTES` in
 `apps/api/src/openapi/openapi.spec.ts`, which fails on any other route without the bearer
-requirement.
+requirement. `/api/auth/` is for anonymous routes only (the web client sends no token there): a
+route that needs a session goes elsewhere, and the spec fails on one under `/api/auth/`.
 
 **4. Module** (`notes.module.ts`), then add `NotesModule` to the `imports` of
 `apps/api/src/app.module.ts`:
@@ -697,7 +701,10 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
   `localePath(locale, '/pricing/')`.
 - **A language.** Its code in `src/i18n/locales.ts`, its dictionary next to `en.ts` (registered in
   `src/i18n/index.ts`), its pages under `src/pages/<code>/`, its not-found page as
-  `src/pages/<code>/404.astro`. Routing, the sitemap and the alternate links follow `LOCALES`.
+  `src/pages/<code>/404.astro`. Routing, the sitemap and the alternate links follow `LOCALES`. The
+  web server answers an unknown address with the not-found page of its language: one line per
+  language in the `map $uri $landing_not_found` of `apps/web/nginx/default.conf.template`
+  (`pnpm test:scripts` checks that the two agree).
 - **A link into the app.** `appPath('sign-in')` from `src/lib/links.ts`, never a written path.
 - **A picture.** Vector images (SVG) work as they are. Raster images would need an optimizer
   (sharp), which `pnpm-workspace.yaml` keeps out because its binaries are LGPL: put a WebP or AVIF
@@ -705,10 +712,14 @@ exception for it. Run it with `pnpm dev` (or `pnpm --filter landing dev`) at htt
   `src/components/fragments/`, with `data-ui`, `role="img"` and a label in each language.
 - **A script.** There is none: `apps/landing/performance-budget.json` holds JavaScript at 0 kB.
   A script that becomes necessary must reach the page as a file of this origin, never inline (the
-  Content-Security-Policy refuses inline scripts: check the built HTML), and its budget is raised
-  in the same reviewed pull request.
+  Content-Security-Policy refuses inline scripts; `pnpm perf:check` reads the built pages for
+  them), and its budget is raised in the same reviewed pull request.
+- **A font.** Self-hosted, in `public/` or imported by the stylesheet as a file: the policy refuses
+  a font, or a font's stylesheet, from another site (Google Fonts' `@import` included), and a font
+  inlined as a `data:` URL; `pnpm perf:check` reads the stylesheets for them.
 
-Check: `pnpm --filter landing test`, `pnpm verify` and `pnpm build && pnpm test:e2e`
+Check: `pnpm --filter landing test`, `pnpm verify` (its `perf:check` reads the built pages),
+`pnpm test:scripts` (the web server's routes for each language) and `pnpm build && pnpm test:e2e`
 (`e2e/landing.e2e.ts` covers both languages, the 404 and the sitemap).
 
 ## Add an environment variable
@@ -746,7 +757,10 @@ The web app's deployment settings are set on the web container and served as `/a
 1. Add the value to `enum Role` in `apps/api/prisma/schema.prisma` and to `ROLES` in
    `apps/api/src/common/types/request-user.ts`, in the same order, least to most privileged (a
    unit spec fails when they differ).
-2. `pnpm db:migrate --name add_<role>_role`.
+2. The migration, written before it is applied: `pnpm db:migrate --name add_<role>_role --create-only`,
+   then in its `migration.sql` turn `ADD VALUE '<role>'` into `ADD VALUE IF NOT EXISTS '<role>'`
+   (`scripts/check-migrations.mjs` asks for it: PostgreSQL cannot drop an enum value, so a migration
+   that failed after adding it could not run again), then `pnpm db:migrate` to apply it.
 3. Use it: `@Auth('admin', '<role>')` on the routes it may call, ownership rules in the services,
    `<RequireRole role={['admin', '<role>']} />` for its screens.
 4. `pnpm contract` (the role appears in the contract; the web `Role` type follows).
@@ -906,8 +920,10 @@ must happen exactly once, make the write itself idempotent in the database
 Email goes through the outbox ([architecture.md](architecture.md#email)): you queue a message in
 the transaction of the change it reports, never send it from the request.
 
-1. **A kind.** Add it to `MailKind` in `apps/api/prisma/schema.prisma` and run
-   `pnpm db:migrate --name add_<kind>_mail_kind` (`ALTER TYPE ... ADD VALUE`: an expand step).
+1. **A kind.** Add it to `MailKind` in `apps/api/prisma/schema.prisma`, create the migration
+   without applying it, `pnpm db:migrate --name add_<kind>_mail_kind --create-only`, turn its
+   `ADD VALUE '<kind>'` into `ADD VALUE IF NOT EXISTS '<kind>'` (an expand step that can run again
+   after a failure: [database.md](database.md#when-a-migration-fails)), then `pnpm db:migrate`.
 2. **A template** in `apps/api/src/infrastructure/mail/templates/`, registered in `registry.ts`:
 
    ```ts

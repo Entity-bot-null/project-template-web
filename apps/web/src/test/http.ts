@@ -18,8 +18,11 @@ export const ok = (data: unknown, message = 'Operation successful') => json(200,
 export const failure = (status: number, message: string, headers?: Record<string, string>) =>
   json(status, { data: null, message }, headers);
 
-export const session = (accessToken: string, user: AuthUser = member) =>
-  ok({ accessToken, expiresIn: 900, user });
+/** The session (its refresh token family) the fixtures answer with, unless told otherwise. */
+export const SESSION_ID = '0d5f6c2a-9b7e-4c1d-8a3f-2e6b9c4d7a10';
+
+export const session = (accessToken: string, user: AuthUser = member, sessionId = SESSION_ID) =>
+  ok({ accessToken, expiresIn: 900, sessionId, user });
 
 type Handler = (request: Request) => Response | Promise<Response>;
 

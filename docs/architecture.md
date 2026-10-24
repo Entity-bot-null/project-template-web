@@ -97,13 +97,14 @@ schemas; their inferred types are the TypeScript types. Response objects come fr
 **Authentication flow:**
 
 ```
-sign-in ─► 200 { accessToken (15 min), user }   + Set-Cookie: the refresh token (httpOnly;
-          __Host-refresh_token in production, refresh_token on /api/auth elsewhere)
-          (a new session family; the browser's previous one, if any, ends)
+sign-in ─► 200 { accessToken (15 min), sessionId, user }   + Set-Cookie: the refresh token
+          (httpOnly; __Host-refresh_token in production, refresh_token on /api/auth elsewhere)
+          (a new session family, named by sessionId; the browser's previous one, if any, ends)
 API call ─► Authorization: Bearer <accessToken>
 401 ─► POST /api/auth/refresh (cookie) ─► new access token + rotated cookie ─► replay once
 reload ─► boot: POST /api/auth/refresh (only if the has_session hint cookie exists)
 logout ─► the session family ends, cookies cleared, other tabs signed out
+          ({ sessionIds }: only when the cookie's session is one of those)
 replay of an old refresh token ─► its whole family ends (theft), logged
 ```
 
@@ -145,12 +146,19 @@ Without `REDIS_URL` everything above still runs in process. Decision record:
   sent or not (a Redis that stays connected but stops answering fails the command at the deadline;
   a late reply is dropped). While disconnected, commands fail at once instead of queueing. Replies
   that mean "not now" (`LOADING`, `BUSY`, `READONLY`, `MISCONF` on a full disk, `OOM`...) count as
-  unavailable too.
+  unavailable too, and so does `NOPERM` (a key or a command outside the ACL: another
+  `REDIS_KEY_PREFIX` than the ACL's, a command it does not list): a configuration fault the
+  adapters degrade through, never a 500 on every rate-limited route.
 - **Stalls:** after 3 commands in a row get no reply in time, commands fail at once, without being
   sent, for 5 s; then one PING probes Redis: a reply ends the stall, another timeout starts another
   5 s. A Redis that is connected but stalled costs three requests the timeout, not every request.
-- **Health:** a PING for readiness (`redis: ok | unavailable | disabled`); a hard dependency only
-  with `REDIS_REQUIRED=true`.
+- **Health:** readiness writes a key of its own under the prefix (`<prefix>health`, 10 s TTL)
+  through `EVAL`, as the adapters write (`redis: ok | unavailable | disabled`): a PING would answer
+  even where the ACL refuses every key of the API. A Redis that answers but refuses writes (`OOM`
+  when full, `MISCONF` when it cannot persist, `READONLY` on a replica, `NOPERM`) is `unavailable`
+  too: the adapters cannot work with it. A hard dependency only with `REDIS_REQUIRED=true`, and then
+  readiness answers 503 in those states as well, so a deployment or a rollback (both wait for
+  readiness) waits until Redis accepts writes again.
 - **Keys:** `REDIS_KEY_PREFIX` + feature + key, e.g. `app:cache:profiles:3:user-7`,
   `app:ratelimit:{default:<hash>}:hits`, `app:lock:jobs:report`. One prefix per application and
   environment when they share a Redis. Every key the template writes has a TTL (cache generations
@@ -158,7 +166,8 @@ Without `REDIS_URL` everything above still runs in process. Decision record:
 - **ACL for production** (`deploy/vps/compose.yaml` writes this one): a user limited to
   `~<prefix>*` and the commands the adapters run:
   `+get +set +del +incr +eval +evalsha +ping +time +pttl +pexpire +zadd +zcard +zrange +zremrangebyscore`
-  (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake).
+  (plus `+client|setinfo`, `+hello`, `+auth` for the connection handshake). Readiness itself needs
+  `+eval` and `+set` on `<prefix>health`.
 - **Server:** any Redis-compatible server (Redis, Valkey, managed services). Development
   (`pnpm services:up`) and the reference server (`deploy/vps/compose.yaml`) run `redis:8-alpine`,
   pinned by digest; production settings: [docs/security.md#redis](security.md#redis).
@@ -255,6 +264,8 @@ MailWorker (every instance) ── claim one due row (lease 2 min, FOR UPDATE SK
   claims one message for one worker, security notices (the kinds nobody can request) before the
   others, so a flood of requested messages never delays a "your password was changed"; every later transition requires the same claim (status
   `sending`, same attempt), so a worker whose lease ran out cannot overwrite another's outcome.
+  The SMTP timeouts bound each step, not the whole exchange, so a worker renews its lease every
+  40 seconds while it sends: a slow relay never makes another worker send the message too.
 - **Retries:** the SMTP reply decides: 4xx and connection failures are retried (30 s doubling to
   an hour, equal jitter, at most `MAIL_MAX_ATTEMPTS`), 5xx fails the message at once; refused
   credentials or TLS are retried and reported to the error tracker. Every attempt is counted when

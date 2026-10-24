@@ -151,7 +151,7 @@ export class SignUpService {
     this.logger.log(`Account ${user.id} created by sign-up`);
     if (previousToken !== undefined) await this.sessions.retire(previousToken, 'sign-in');
     const refresh = await this.sessions.create(user.id, signUp.passwordHash);
-    return { session: await this.auth.sessionFor(user, refresh.securityVersion), refresh };
+    return { session: await this.auth.sessionFor(user, refresh), refresh };
   }
 
   private async register(email: string, name: string, password: string): Promise<void> {

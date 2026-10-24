@@ -50,7 +50,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** End the current session family and clear the cookies */
+        /**
+         * End the current session family and clear the cookies
+         * @description Without sessionIds, ends the refresh cookie's session, whichever it is. With them, ends it only when it is one of those sessions (AuthSession.sessionId), and clears the cookies only then; a live session started meanwhile is left alone, with its session hint set again.
+         */
         post: operations["AuthController_logout"];
         delete?: never;
         options?: never;
@@ -446,6 +449,8 @@ export interface operations {
                         data: {
                             accessToken: string;
                             expiresIn: number;
+                            /** Format: uuid */
+                            sessionId: string;
                             user: {
                                 /** Format: uuid */
                                 id: string;
@@ -517,6 +522,8 @@ export interface operations {
                         data: {
                             accessToken: string;
                             expiresIn: number;
+                            /** Format: uuid */
+                            sessionId: string;
                             user: {
                                 /** Format: uuid */
                                 id: string;
@@ -567,7 +574,13 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    sessionIds?: string[];
+                };
+            };
+        };
         responses: {
             /** @description Signed out */
             204: {
@@ -575,6 +588,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation failed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
             };
             /** @description Not allowed */
             403: {
@@ -713,6 +735,8 @@ export interface operations {
                         data: {
                             accessToken: string;
                             expiresIn: number;
+                            /** Format: uuid */
+                            sessionId: string;
                             user: {
                                 /** Format: uuid */
                                 id: string;
@@ -931,6 +955,8 @@ export interface operations {
                         data: {
                             accessToken: string;
                             expiresIn: number;
+                            /** Format: uuid */
+                            sessionId: string;
                             user: {
                                 /** Format: uuid */
                                 id: string;
@@ -1477,6 +1503,8 @@ export interface operations {
                         data: {
                             accessToken: string;
                             expiresIn: number;
+                            /** Format: uuid */
+                            sessionId: string;
                             user: {
                                 /** Format: uuid */
                                 id: string;

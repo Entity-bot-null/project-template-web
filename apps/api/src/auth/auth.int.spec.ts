@@ -255,6 +255,117 @@ describe('Auth (integration)', () => {
       .expect(401);
   });
 
+  it('ends only the sessions a logout names, and gives a live one started meanwhile its hint back', async () => {
+    const signInFresh = () =>
+      request(t.server)
+        .post('/api/auth/sign-in')
+        .send({ email: EMAIL, password: TEST_PASSWORD })
+        .expect(200);
+    const idOf = (res: request.Response) => envelopeOf<{ sessionId: string }>(res).data.sessionId;
+    // A session the browser discarded (it answered after a sign-out it raced),
+    // rotated since by another tab: the id stays the same across rotations.
+    const discarded = await signInFresh();
+    const rotated = await request(t.server)
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookieOf(discarded))
+      .expect(200);
+    expect(idOf(rotated)).toBe(idOf(discarded));
+    const newer = await signInFresh();
+
+    // The jar holds the newer session: left alone, its hint set again.
+    const kept = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', refreshCookieOf(newer))
+      .send({ sessionIds: [idOf(discarded)] })
+      .expect(204);
+    expect(cookiesOf(kept).some((cookie) => cookie.startsWith('refresh_token='))).toBe(false);
+    expect(cookiesOf(kept).find((cookie) => cookie.startsWith('has_session='))).toMatch(
+      /^has_session=1; .*Expires=/,
+    );
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(newer), revokedAt: null } }),
+    ).resolves.toBe(1);
+
+    // The jar holds the discarded family (its rotated cookie): ended, cleared.
+    const ended = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', refreshCookieOf(rotated))
+      .send({ sessionIds: [idOf(discarded)] })
+      .expect(204);
+    expect(clearsCookies(ended)).toBe(true);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(discarded), revokedAt: null } }),
+    ).resolves.toBe(0);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(newer), revokedAt: null } }),
+    ).resolves.toBe(1);
+
+    // No cookie: nothing to end, no cookie touched. A malformed id: refused.
+    const none = await request(t.server)
+      .post('/api/auth/logout')
+      .send({ sessionIds: [idOf(discarded)] })
+      .expect(204);
+    expect(cookiesOf(none)).toEqual([]);
+    await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', refreshCookieOf(newer))
+      .send({ sessionIds: ['not-a-session'] })
+      .expect(400);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(newer), revokedAt: null } }),
+    ).resolves.toBe(1);
+  });
+
+  it('tries each refresh cookie of a logout that names its sessions: only the named one ends', async () => {
+    const signInFresh = () =>
+      request(t.server)
+        .post('/api/auth/sign-in')
+        .send({ email: EMAIL, password: TEST_PASSWORD })
+        .expect(200);
+    const idOf = (res: request.Response) => envelopeOf<{ sessionId: string }>(res).data.sessionId;
+    const discarded = await signInFresh();
+    // Another family's cookie next to it, as one planted for a parent domain.
+    const planted = await signInFresh();
+    const res = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', `${refreshCookieOf(planted)}; ${refreshCookieOf(discarded)}`)
+      // An id in upper case names the same session.
+      .send({ sessionIds: [idOf(discarded).toUpperCase()] })
+      .expect(204);
+    expect(clearsCookies(res)).toBe(true);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(discarded), revokedAt: null } }),
+    ).resolves.toBe(0);
+    await expect(
+      t.prisma.session.count({ where: { familyId: idOf(planted), revokedAt: null } }),
+    ).resolves.toBe(1);
+  });
+
+  it('gives a live session left alone no hint back when the refresh cookies are ambiguous', async () => {
+    const live = await request(t.server)
+      .post('/api/auth/sign-in')
+      .send({ email: EMAIL, password: TEST_PASSWORD })
+      .expect(200);
+    const res = await request(t.server)
+      .post('/api/auth/logout')
+      // An empty second cookie makes the pair ambiguous: a refresh refuses it.
+      .set('Cookie', `refresh_token=; ${refreshCookieOf(live)}`)
+      .send({ sessionIds: ['3b1e8d42-6c7a-4f0e-9d25-7a8c1e4b6f30'] })
+      .expect(204);
+    expect(cookiesOf(res)).toEqual([]);
+  });
+
+  it("logs out like before with an empty JSON body: the cookie's session, whichever it is", async () => {
+    const session = await signIn(t.server, EMAIL);
+    const res = await request(t.server)
+      .post('/api/auth/logout')
+      .set('Cookie', session.refreshCookie)
+      .send({})
+      .expect(204);
+    expect(clearsCookies(res)).toBe(true);
+    await expect(t.prisma.session.count({ where: { revokedAt: null } })).resolves.toBe(0);
+  });
+
   it('ends the session this browser already had when it signs in again', async () => {
     const before = await signIn(t.server, EMAIL);
     const again = await request(t.server)

@@ -17,8 +17,10 @@
   `users.service.spec.ts`).
 - `*.int.spec.ts`: API integration tests, next to the module (`auth.int.spec.ts`).
 - `e2e/*.e2e.ts`: end-to-end tests.
-- `*.test.*` is **not used**: one suffix per kind keeps runners and reviewers unambiguous, and no
-  runner collects `.test.` files, so they would silently never run.
+- `*.test.*` is **not used** in the apps: one suffix per kind keeps runners and reviewers
+  unambiguous, and no app's runner collects `.test.` files, so they would silently never run. The
+  repository's own scripts are the exception: `scripts/*.test.mjs`, run by `node --test`
+  (`pnpm test:scripts`).
 
 ### Structure
 
@@ -70,7 +72,9 @@ pnpm --filter api test:watch / pnpm --filter web test:watch / pnpm --filter land
   object-level authorization matrix of a route on one record: [authorization.md](authorization.md#tests)).
 - **Integration state:** each suite builds its own app (`createTestApp`), and resets the database
   (`resetDatabase`) where it writes. Suites run one file at a time on `<db>_test`, created and
-  migrated by the global setup. Never point them at a database you care about.
+  migrated by the global setup, which first replays every migration on an empty `<db>_shadow` and
+  compares it with `schema.prisma` (docs/database.md#test-databases). Never point them at a
+  database you care about.
 - **E2E state:** `<db>_e2e`, migrated, emptied and seeded with the development accounts on every
   run. A spec that changes an account creates its own (`e2e/support/accounts.ts`, through the built
   `user:create` CLI, a new address per attempt), so the seeded accounts other specs sign in with
@@ -124,13 +128,25 @@ their own stricter numbers with glob keys, for example
 
 ## Performance budget
 
-`pnpm perf:check` (after `pnpm build`; in `pnpm verify` and CI) compares the gzip size of the
-built web assets with `apps/web/performance-budget.json`, and the landing's with
-`apps/landing/performance-budget.json`: its JavaScript budget is 0 kB (the pages are HTML and CSS;
-a script added to one fails the check until its budget is raised on purpose) and its CSS budget
-6 kB. The web app's budget is its measured
+`pnpm perf:check` (after `pnpm build`; in `pnpm verify` and CI) compares the gzip size of every
+file of the web build with `apps/web/performance-budget.json`, and of the landing's with
+`apps/landing/performance-budget.json` (the bundler's assets and what it copies from `public/`
+alike, each matched by its file name in any letter case): the landing's JavaScript budget is 0 kB (the pages are HTML
+and CSS; a script added to one, from `public/` too, fails the check until its budget is raised on
+purpose) and its CSS budget 6 kB. Astro writes no processed script into a page (`assetsInlineLimit: 0`: it becomes a file the
+budget counts; an `is:inline` one stays inline), and the same check reads every built page of the
+landing, as browsers with and without JavaScript parse it (parse5, which follows the HTML standard:
+comments, raw text, SVG and MathML, character references; a `<noscript>`'s content both ways and a
+`<template>`'s included), for
+what the web server's Content-Security-Policy refuses: an inline script or event
+handler, a `<style>` element or a style attribute, a `javascript:` URL, an object or an embed, a
+base or a form pointing elsewhere, a file from another origin, and any of these in an iframe's
+`srcdoc`; and every stylesheet of both apps, `public/` included, read as a browser tokenizes it,
+for an `@import`, a `url()` or an `image-set()` candidate from another origin (a web font's
+stylesheet: self-host it) or a `data:` URL that is not an image (the preview server of
+the E2E tests sends no CSP, so only this check sees them before production). The web app's budget is its measured
 build rounded up (initial JavaScript 110 kB, the lazy error tracking chunk 35 kB, the lazy Web
-Vitals chunks 5 kB, the lazy account and admin pages 13 kB, all JavaScript 157 kB, CSS 5 kB). The initial
+Vitals chunks 5 kB, the lazy account and admin pages 13 kB, all JavaScript 158 kB, CSS 5 kB). The initial
 JavaScript is what `index.html` loads before the app starts: its entry script and every chunk it
 preloads, so code the bundler splits into a shared chunk still counts, whatever its name. Each
 project should set its own from its targets (device class, network, Core Web Vitals goals) and

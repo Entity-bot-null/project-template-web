@@ -157,6 +157,13 @@ async function retry(): Promise<void> {
     ...(values.id === undefined ? {} : { id: values.id }),
     ...(kind === undefined ? {} : { kind: kind as MailKind }),
   });
+  // One message was named: not finding it (a typo, or one that is not failed
+  // or lost its address) is an error, not "0 queued".
+  if (values.id !== undefined && count === 0) {
+    fail(
+      `No failed message ${values.id}${kind === undefined ? '' : ` of kind ${kind}`} that still has its address: see "mail status".`,
+    );
+  }
   console.log(
     `${String(count)} failed message(s) queued again; an API worker sends them within seconds.`,
   );

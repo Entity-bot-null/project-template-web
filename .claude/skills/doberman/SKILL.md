@@ -51,7 +51,7 @@ Arguments: `$ARGUMENTS`
 11. **No secrets in the output.** Never print, log or quote the values of `.env` files, tokens,
     keys or passwords in the report or `result.json`; name the variable and redact the value.
 12. **Databases.** Only the test databases the template's own test setup creates (for example
-    `<db>_test`, `<db>_e2e`). Never run migrations, seeds or resets against a development, shared
+    `<db>_test`, `<db>_shadow`, `<db>_e2e`). Never run migrations, seeds or resets against a development, shared
     or production database, and never point a suite at a database the template's configuration
     does not.
 13. **No real credentials in reproductions:** fixtures and the test configuration only.

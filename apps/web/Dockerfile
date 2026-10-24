@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Web image: the site behind nginx, one origin for the browser (same-origin
 # refresh cookie, no CORS): the landing at / (apps/landing), the web app at
 # /app/ (apps/web), and /api forwarded to the API. The build context is the
@@ -7,6 +6,10 @@
 # APP_ORIGIN (the site's public origin) is required; API_UPSTREAM (default
 # http://api:3000) is where /api goes; the other runtime variables are
 # optional (docs/environment.md#web-variables).
+#
+# No `# syntax=` line: BuildKit's built-in Dockerfile frontend reads this file
+# (cache mounts, COPY --chmod), so no parser image is pulled by a moving tag;
+# CI's BuildKit is pinned by digest (scripts/tool-images/Dockerfile, buildkit).
 #
 # Base images by tag and digest, so a build is reproducible and a moved tag
 # changes nothing; Dependabot proposes tag and digest together. Node.js 24

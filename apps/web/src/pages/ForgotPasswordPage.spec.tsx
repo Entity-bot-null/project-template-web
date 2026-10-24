@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearSession, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, stubFetch } from '../test/http';
+import { failure, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const REQUEST = 'POST /api/auth/password-resets';
@@ -70,7 +70,7 @@ describe('ForgotPasswordPage', () => {
 
   it('is for signed-out visitors only', async () => {
     stubFetch({});
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     const router = renderRoute('/forgot-password');
     await screen.findByRole('heading', { name: `Welcome, ${member.name}` });
     expect(router.state.location.pathname).toBe('/');

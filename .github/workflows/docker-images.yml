@@ -48,7 +48,8 @@ jobs:
       - name: Commit being built
         id: commit
         run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "os-date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       # The Dockerfile's base images from the mirror, by digest, where it has
       # them (scripts/tool-image.mjs): ECR Public limits anonymous pulls per
@@ -64,7 +65,19 @@ jobs:
             node scripts/tool-image.mjs --build-contexts "$DOCKERFILE"
             echo 'CONTEXTS'
           } >> "$GITHUB_OUTPUT"
+      # The BuildKit daemon pinned by digest (scripts/tool-images/Dockerfile),
+      # through the mirror where it has it: the action's default is a moving tag.
+      - name: BuildKit image
+        id: buildkit
+        env:
+          TOOL_IMAGE_MIRROR: mirror.gcr.io
+        # On its own line: a failure inside $(...) passed to echo would go unseen.
+        run: |
+          image=$(node scripts/tool-image.mjs --mirrored buildkit)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ steps.buildkit.outputs.image }}
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -118,7 +131,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           provenance: mode=max
           sbom: true
-      # OPCIONAL, signed GitHub attestation (Sigstore) that deployments verify
+      # OPTIONAL, signed GitHub attestation (Sigstore) that deployments verify
       # with `gh attestation verify oci://<image>@<digest> --repo <owner>/<repo>`.
       # Needs a public repository or GitHub Enterprise Cloud, and
       # permissions id-token: write, attestations: write, packages: write.

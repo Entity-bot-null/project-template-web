@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Prisma } from '../../prisma/generated/client.js';
-import { errorSummary } from './error-summary.js';
+import { errorSummary, loggableStack, reportableError } from './error-summary.js';
 
 describe('errorSummary', () => {
   it("logs Prisma's errors by class and code, never their message (it can quote arguments)", () => {
@@ -20,5 +20,80 @@ describe('errorSummary', () => {
   it('keeps the message of other errors, and stringifies anything else', () => {
     expect(errorSummary(new Error('database down'))).toBe('database down');
     expect(errorSummary('plain')).toBe('plain');
+  });
+});
+
+const validation = () =>
+  new Prisma.PrismaClientValidationError(
+    'Invalid `prisma.user.findUnique()` invocation:\n\n{\n  where: {\n    email: "ada@example.test",\n  }\n}',
+    { clientVersion: 'test' },
+  );
+
+describe('loggableStack', () => {
+  it("keeps a Prisma error's frames and drops its message", () => {
+    const stack = loggableStack(validation());
+    expect(stack.split('\n')[0]).toBe('PrismaClientValidationError');
+    expect(stack).toMatch(/\n\s+at /);
+    expect(stack).not.toContain('ada@example.test');
+  });
+
+  it('keeps the whole stack of other errors', () => {
+    const error = new Error('boom');
+    expect(loggableStack(error)).toBe(error.stack);
+    expect(loggableStack('plain')).toBe('plain');
+  });
+});
+
+describe('reportableError', () => {
+  it('reports a Prisma error by class, code and frames, without its message', () => {
+    const known = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed on email ada@example.test',
+      { code: 'P2002', clientVersion: 'test' },
+    );
+    const reported = reportableError(known) as Error;
+    expect(reported).toMatchObject({ name: 'PrismaClientKnownRequestError', message: 'P2002' });
+    const withheld = reportableError(validation()) as Error;
+    expect(withheld.name).toBe('PrismaClientValidationError');
+    expect(`${withheld.message}\n${withheld.stack ?? ''}`).not.toContain('ada@example.test');
+  });
+
+  it('reports any other error as it is', () => {
+    const error = new Error('boom', { cause: new Error('below') });
+    expect(reportableError(error)).toBe(error);
+  });
+
+  it('makes a Prisma error safe wherever it is in the cause chain, without touching the original', () => {
+    const wrapped = new Error('Could not save the profile', {
+      cause: new Error('during the update', { cause: validation() }),
+    });
+    const reported = reportableError(wrapped) as Error & { cause: Error & { cause: Error } };
+    expect(reported).not.toBe(wrapped);
+    expect(reported.message).toBe('Could not save the profile');
+    expect(reported.cause.message).toBe('during the update');
+    expect(reported.cause.cause.name).toBe('PrismaClientValidationError');
+    const everything = JSON.stringify([
+      reported.message,
+      reported.cause.message,
+      reported.cause.cause.message,
+      reported.cause.cause.stack,
+    ]);
+    expect(everything).not.toContain('ada@example.test');
+    // The caller's error keeps its chain.
+    expect(((wrapped.cause as Error).cause as Error).message).toContain('ada@example.test');
+  });
+
+  it('makes the errors of an AggregateError safe too (Sentry reports them as linked errors)', () => {
+    const aggregate = new AggregateError([new Error('first'), validation()], 'Every write failed');
+    const reported = reportableError(aggregate) as AggregateError;
+    expect(reported).not.toBe(aggregate);
+    expect(reported).toBeInstanceOf(AggregateError);
+    expect(reported.message).toBe('Every write failed');
+    const [first, second] = reported.errors as [Error, Error];
+    expect(first).toBe(aggregate.errors[0]);
+    expect(second.name).toBe('PrismaClientValidationError');
+    expect(`${second.message}\n${second.stack ?? ''}`).not.toContain('ada@example.test');
+    // Nothing to replace: the same error.
+    const harmless = new AggregateError([new Error('a')], 'b');
+    expect(reportableError(harmless)).toBe(harmless);
   });
 });

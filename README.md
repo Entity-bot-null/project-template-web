@@ -49,7 +49,7 @@ Follow **Sign in** on the landing and sign in with `admin@example.com` / `admin-
 
 | Command                                             | What it does                                                                                                                         |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm dev`                                          | Database and Mailpit up, then the API, web and landing dev servers; their URLs in a box under the logs                               |
+| `pnpm dev`                                          | PostgreSQL, Redis and Mailpit up, then the API, web and landing dev servers; their URLs in a box under the logs                      |
 | `pnpm build`                                        | Build every app                                                                                                                      |
 | `pnpm lint` / `pnpm lint:fix`                       | ESLint on the whole repository                                                                                                       |
 | `pnpm format` / `pnpm format:check`                 | Prettier                                                                                                                             |

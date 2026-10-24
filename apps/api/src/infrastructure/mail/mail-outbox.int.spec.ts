@@ -168,6 +168,7 @@ describe.skipIf(skipWithoutMailpit)('mail outbox (PostgreSQL + Mailpit)', () => 
     await disarmChaos();
     await expect(main.store.retryFailed({ id: failed?.id ?? '' })).resolves.toBe(1);
     await deliver(main);
+    // The attempts started again with the retry.
     expect(await rowsTo(main, to)).toMatchObject([{ status: 'sent', attempts: 1 }]);
   });
 

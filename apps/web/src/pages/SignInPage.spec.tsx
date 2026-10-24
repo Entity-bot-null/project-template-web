@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetCapabilitiesForTests } from '../auth/capabilities';
 import { clearSession, resetForTests, setSession } from '../auth/session';
 import { member } from '../test/fixtures';
-import { failure, ok, session, stubFetch } from '../test/http';
+import { deferred, failure, ok, session, SESSION_ID, stubFetch } from '../test/http';
 import { renderRoute } from '../test/render';
 
 const SIGN_IN = 'POST /api/auth/sign-in';
@@ -85,7 +85,7 @@ describe('SignInPage', () => {
       'POST /api/auth/logout': () =>
         attempts++ === 0 ? failure(503, 'unavailable') : new Response(null, { status: 204 }),
     });
-    setSession({ accessToken: 'token-1', expiresIn: 900, user: member });
+    setSession({ accessToken: 'token-1', expiresIn: 900, sessionId: SESSION_ID, user: member });
     renderRoute('/');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Sign out' }));
@@ -94,6 +94,23 @@ describe('SignInPage', () => {
     await user.click(screen.getByRole('button', { name: 'Retry sign-out' }));
     await expect.poll(() => screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+  });
+
+  it('says so when another tab signed out while the sign-in was on its way', async () => {
+    const answer = deferred<Response>();
+    stubFetch({
+      [SIGN_IN]: () => answer.promise,
+      'POST /api/auth/logout': () => new Response(null, { status: 204 }),
+    });
+    renderRoute('/sign-in');
+    await submit(member.email, 'member-password');
+    const otherTab = new BroadcastChannel('auth');
+    otherTab.postMessage('signed-out');
+    otherTab.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    answer.resolve(session('token-1'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('signed out in another tab');
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
   });
 
   it('tells the user how long to wait when rate limited', async () => {
@@ -123,11 +140,26 @@ describe('the way back into an account', () => {
     expect(await screen.findByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
   });
 
-  it('shows no link where email is off, or while that cannot be known', async () => {
-    const { calls } = stubFetch({ [CAPABILITIES]: offers(false) });
+  it('shows no link while it cannot be known', () => {
+    stubFetch({ [CAPABILITIES]: () => new Promise<Response>(() => undefined) });
     renderRoute('/sign-in');
-    await expect.poll(() => calls.length).toBe(1);
     expect(screen.queryByRole('link', { name: 'Forgot your password?' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Create an account' })).toBeNull();
+  });
+
+  // Each answer turns one link on and the other off: the one that shows proves
+  // the answer was applied, so the missing one is missing because of it.
+  it('shows no recovery link where the deployment offers none', async () => {
+    stubFetch({ [CAPABILITIES]: offers(false, true) });
+    renderRoute('/sign-in');
+    await screen.findByRole('link', { name: 'Create an account' });
+    expect(screen.queryByRole('link', { name: 'Forgot your password?' })).toBeNull();
+  });
+
+  it('shows no sign-up link where sign-up is closed', async () => {
+    stubFetch({ [CAPABILITIES]: offers(true, false) });
+    renderRoute('/sign-in');
+    await screen.findByRole('link', { name: 'Forgot your password?' });
     expect(screen.queryByRole('link', { name: 'Create an account' })).toBeNull();
   });
 

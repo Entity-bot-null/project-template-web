@@ -14,10 +14,12 @@ import { passwordProblem } from '../auth/password-policy.js';
 import { lockUser, revokeSessionsLocked } from '../auth/sessions.service.js';
 import { errorSummary } from '../common/logging/error-summary.js';
 import { MailOutboxService } from '../infrastructure/mail/mail-outbox.service.js';
+import type { EmailChangeRequestPayload } from '../infrastructure/mail/templates/email-change-confirmation.template.js';
 import type { EmailChangedPayload } from '../infrastructure/mail/templates/email-changed.template.js';
 import type { PasswordChangedPayload } from '../infrastructure/mail/templates/password-changed.template.js';
 import { Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { onceMoreOnWriteConflict } from '../prisma/write-conflicts.js';
 
 const ACCOUNT_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted };
 
@@ -64,7 +66,7 @@ export class EmailChangeService {
       throw new ServiceUnavailableException('Changing the email is not available');
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, passwordHash: true },
+      select: { id: true, email: true, passwordHash: true, securityVersion: true },
     });
     if (user === null) throw new NotFoundException('User not found');
     const address = normalizeEmail(newEmail);
@@ -73,7 +75,7 @@ export class EmailChangeService {
       // 403, not 401: the session is fine, the confirmation is not.
       throw new ForbiddenException(WRONG_CURRENT_PASSWORD);
     }
-    const work: Promise<void> = this.queueLink(user.id, address)
+    const work: Promise<void> = this.queueLink(user.id, address, user.securityVersion)
       .catch((error: unknown) => {
         this.logger.error(`Could not queue a change of email: ${errorSummary(error)}`);
       })
@@ -90,7 +92,7 @@ export class EmailChangeService {
 
   /**
    * Moves the account to the new address of a confirmation link, which works
-   * once and only while the account is as it was when it was sent. In one
+   * once and only while the account is as it was when it was asked for. In one
    * transaction under the account's lock: the token is taken, the address
    * replaced, the securityVersion raised and every session ended (sign in
    * again with the new address), the other links of the account dropped, and
@@ -120,7 +122,12 @@ export class EmailChangeService {
             usedAt: null,
           },
         });
-        const payload: EmailChangedPayload = { changedAt: new Date(now).toISOString() };
+        // The securityVersion right after this change ranks its undo link
+        // among the account's others (revert), whenever the notice goes out.
+        const payload: EmailChangedPayload = {
+          changedAt: new Date(now).toISOString(),
+          securityVersion: String(account.securityVersion + 1),
+        };
         await this.mail.enqueue(tx, {
           kind: 'email_changed',
           to: account.email,
@@ -142,7 +149,8 @@ export class EmailChangeService {
    * whatever happened to the account since. In one transaction under the
    * account's lock: the address and the password replaced, the
    * securityVersion raised, every session ended, every other link of the
-   * account dropped except earlier undo links (the earliest owner wins), and
+   * account dropped except the undo links of earlier changes (the earliest
+   * owner wins), and
    * a notice queued to the restored address.
    */
   async revert(token: string, password: string, now = Date.now()): Promise<void> {
@@ -158,46 +166,68 @@ export class EmailChangeService {
     if (problem !== undefined) throw new BadRequestException(`password: ${problem}`);
     // Hashed before the transaction: it holds the account's lock meanwhile.
     const passwordHash = await hashPassword(password);
+    let dropped: { dropped: number; unclaimed: number };
     try {
-      await this.prisma.$transaction(async (tx) => {
-        await lockUser(tx, owner.userId);
-        const current = await tx.user.findUnique({
-          where: { id: owner.userId },
-          select: { id: true, email: true, securityVersion: true },
-        });
-        if (current === null) throw new NotFoundException(INVALID_EMAIL_LINK);
-        const used = await consumeAccountToken(tx, token, 'email_revert', current, now, false);
-        if (used?.targetEmail == null) throw new NotFoundException(INVALID_EMAIL_LINK);
-        await tx.user.update({
-          where: { id: current.id },
-          data: { email: used.targetEmail, passwordHash, securityVersion: { increment: 1 } },
-        });
-        await revokeSessionsLocked(tx, current.id);
-        // Every other link of the account, except the undo links minted
-        // BEFORE this one: they undo earlier changes, so the earliest owner
-        // wins. Whoever took the account and undoes their own later change
-        // cannot void the owner's link; the owner's link voids theirs.
-        await tx.accountToken.deleteMany({
-          where: {
+      // The undo drops several notices of the account (expireQueued): the
+      // outbox's sweep or a retry from the command line may update some of
+      // them in another order, and PostgreSQL then aborts one of the two as a
+      // deadlock. Nothing of the undo committed: it runs once more.
+      dropped = await onceMoreOnWriteConflict(() =>
+        this.prisma.$transaction(async (tx) => {
+          await lockUser(tx, owner.userId);
+          const current = await tx.user.findUnique({
+            where: { id: owner.userId },
+            select: { id: true, email: true, securityVersion: true },
+          });
+          if (current === null) throw new NotFoundException(INVALID_EMAIL_LINK);
+          const used = await consumeAccountToken(tx, token, 'email_revert', current, now, false);
+          if (used?.targetEmail == null) throw new NotFoundException(INVALID_EMAIL_LINK);
+          await tx.user.update({
+            where: { id: current.id },
+            data: { email: used.targetEmail, passwordHash, securityVersion: { increment: 1 } },
+          });
+          await revokeSessionsLocked(tx, current.id);
+          // Every other link of the account, except the undo links of EARLIER
+          // changes (a lower securityVersion right after the change), however
+          // late their messages went out: the earliest owner wins. Whoever took
+          // the account and undoes their own later change cannot void the
+          // owner's link; the owner's link voids theirs.
+          await tx.accountToken.deleteMany({
+            where: {
+              userId: current.id,
+              usedAt: null,
+              NOT: { purpose: 'email_revert', securityVersion: { lt: used.securityVersion } },
+            },
+          });
+          // Notices of this change or later ones that still wait in the outbox
+          // would mint undo links after this one is used: dropped unsent. One
+          // being composed right now is refused by its template, which reads
+          // its row under this lock (email-changed.template.ts); one composed
+          // before it goes out with a link the deleteMany above voids.
+          const superseded = await this.mail.expireQueued(tx, {
+            kind: 'email_changed',
             userId: current.id,
-            usedAt: null,
-            NOT: { purpose: 'email_revert', createdAt: { lt: used.createdAt } },
-          },
-        });
-        const payload: PasswordChangedPayload = {
-          changedAt: new Date(now).toISOString(),
-          via: 'reset',
-        };
-        await this.mail.enqueue(tx, {
-          kind: 'password_changed',
-          to: used.targetEmail,
-          userId: current.id,
-          payload,
-        });
-      }, ACCOUNT_TRANSACTION);
+            key: 'securityVersion',
+            from: used.securityVersion,
+            reason: 'superseded',
+          });
+          const payload: PasswordChangedPayload = {
+            changedAt: new Date(now).toISOString(),
+            via: 'reset',
+          };
+          await this.mail.enqueue(tx, {
+            kind: 'password_changed',
+            to: used.targetEmail,
+            userId: current.id,
+            payload,
+          });
+          return superseded;
+        }, ACCOUNT_TRANSACTION),
+      );
     } catch (error) {
       throw takenAsConflict(error);
     }
+    this.mail.recordExpired('email_changed', dropped.unclaimed);
     this.mail.notifyQueued();
     this.logger.log(`Change of email of user ${owner.userId} undone: every session ended`);
   }
@@ -221,12 +251,21 @@ export class EmailChangeService {
     return { userId: row.userId, targetEmail: row.targetEmail };
   }
 
-  private async queueLink(userId: string, address: string): Promise<void> {
+  // The link is bound to the account as it was when it was asked for (its
+  // securityVersion, raised by every password change, reset and change of
+  // address): a message still in the outbox then is sent with no link.
+  private async queueLink(userId: string, address: string, securityVersion: number): Promise<void> {
     const queued = await this.prisma.$transaction(async (tx) => {
       const owner = await tx.user.findUnique({ where: { email: address }, select: { id: true } });
+      const payload: EmailChangeRequestPayload = { securityVersion: String(securityVersion) };
       const result =
         owner === null
-          ? await this.mail.enqueue(tx, { kind: 'email_change_confirmation', to: address, userId })
+          ? await this.mail.enqueue(tx, {
+              kind: 'email_change_confirmation',
+              to: address,
+              userId,
+              payload,
+            })
           : await this.mail.enqueue(tx, {
               kind: 'email_change_existing',
               to: address,

@@ -16,6 +16,7 @@ const USER = {
 const REFRESH = {
   token: 'refresh-token',
   expiresAt: new Date('2030-01-01T00:00:00Z'),
+  familyId: '7d3c1c2e-5f1a-4b8e-9a51-0c6f2b9e4d10',
   securityVersion: 3,
 };
 const jwt = new JwtService({ secret: 'spec-only-secret-not-for-real-use-'.padEnd(64, '0') });
@@ -30,7 +31,7 @@ function setup(found: (typeof USER & { passwordHash: string }) | null) {
   const sessions = {
     create: vi.fn().mockResolvedValue(REFRESH),
     rotate: vi.fn().mockResolvedValue({ user: USER, securityVersion: 5, session: REFRESH }),
-    retire: vi.fn().mockResolvedValue(undefined),
+    retire: vi.fn().mockResolvedValue({ retired: true }),
   };
   const prisma = { user: { findUnique } } as unknown as PrismaService;
   const service = new AuthService(prisma, jwt, sessions as unknown as SessionsService);
@@ -56,7 +57,12 @@ describe('AuthService', () => {
     expect(sessions.create).toHaveBeenCalledWith(USER.id, passwordHash);
     expect(sessions.retire).not.toHaveBeenCalled();
     expect(result.refresh).toBe(REFRESH);
-    expect(result.session).toMatchObject({ expiresIn: ACCESS_TOKEN_TTL_SEC, user: USER });
+    // Named by its family, which the client hands back to end only it.
+    expect(result.session).toMatchObject({
+      expiresIn: ACCESS_TOKEN_TTL_SEC,
+      sessionId: REFRESH.familyId,
+      user: USER,
+    });
     expect(result.session.user).not.toHaveProperty('passwordHash');
     const claims = await jwt.verifyAsync<Record<string, unknown>>(result.session.accessToken);
     // sv: the version SessionsService read under the user's lock.
@@ -105,15 +111,19 @@ describe('AuthService', () => {
     const result = await service.refresh('old-token');
     expect(sessions.rotate).toHaveBeenCalledWith('old-token');
     expect(result.refresh).toBe(REFRESH);
+    // The same session across rotations.
+    expect(result.session.sessionId).toBe(REFRESH.familyId);
     await expect(jwt.verifyAsync(result.session.accessToken)).resolves.toMatchObject({
       sub: USER.id,
       sv: 5,
     });
   });
 
-  it('logs out by retiring the session family', async () => {
+  it('logs out by retiring the session family, only the named ones when it names them', async () => {
     const { service, sessions } = setup(null);
-    await service.logout('a-token');
-    expect(sessions.retire).toHaveBeenCalledWith('a-token', 'logout');
+    await expect(service.logout('a-token')).resolves.toEqual({ retired: true });
+    expect(sessions.retire).toHaveBeenCalledWith('a-token', 'logout', undefined);
+    await service.logout('a-token', [REFRESH.familyId]);
+    expect(sessions.retire).toHaveBeenLastCalledWith('a-token', 'logout', [REFRESH.familyId]);
   });
 });

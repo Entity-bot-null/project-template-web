@@ -161,7 +161,7 @@ describe('RedisService against a Redis that stops answering', () => {
     await service.onModuleDestroy();
   });
 
-  it('answers the readiness PING as unavailable instead of hanging the probe', async () => {
+  it('answers the readiness probe as unavailable instead of hanging it', async () => {
     const service = await connectedService(200);
     fake.stalled = true;
     expect(await Promise.race([service.health(), pendingAfter(1_500)])).toBe('unavailable');
@@ -183,6 +183,24 @@ describe('RedisService against a Redis that stops answering', () => {
     expect(outcome).toBe('limited: 1 hit');
     store.onApplicationShutdown();
     fake.stalled = false;
+    await service.onModuleDestroy();
+  });
+
+  it('degrades, and says so in readiness, when the ACL refuses the prefix (NOPERM)', async () => {
+    const service = await connectedService(200);
+    // Another REDIS_KEY_PREFIX than the ACL's: every key and script refused,
+    // PING still answered.
+    fake.replyFor.EVAL =
+      '-NOPERM No permissions to access a key used as arguments of the command\r\n';
+    fake.replyFor.SET = fake.replyFor.EVAL;
+    await expect(service.run((redis) => redis.ping())).resolves.toBe('PONG');
+    await expect(service.health()).resolves.toBe('unavailable');
+    // The rate limiter counts per instance instead of failing every request.
+    const store = new RedisRateLimitStore(service);
+    await expect(
+      store.increment('client-ip', 60_000, 10, 60_000, 'default'),
+    ).resolves.toMatchObject({ totalHits: 1, isBlocked: false });
+    store.onApplicationShutdown();
     await service.onModuleDestroy();
   });
 

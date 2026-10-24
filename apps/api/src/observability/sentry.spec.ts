@@ -1,5 +1,6 @@
 import type { ErrorEvent } from '@sentry/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '../prisma/generated/client.js';
 import { createSentryTracker, scrubEvent } from './sentry.js';
 
 const DSN = 'https://abc123publickey@o1.ingest.example.com/42';
@@ -71,6 +72,28 @@ describe('createSentryTracker', () => {
       },
     });
     expect(bodies[0]).not.toContain('db-secret');
+    await tracker.close(1_000);
+  });
+
+  it('sends a Prisma error by class, code and frames, never its message (it quotes arguments)', async () => {
+    const { bodies } = stubIngest();
+    const tracker = createSentryTracker({
+      dsn: DSN,
+      environment: 'test',
+      release: 'r',
+      sampleRate: 1,
+    });
+    tracker.capture(
+      new Prisma.PrismaClientValidationError(
+        'Invalid `prisma.user.findUnique()` invocation:\n{ where: { email: "ada@example.test" } }',
+        { clientVersion: 'test' },
+      ),
+      { origin: 'application' },
+    );
+    await tracker.flush(2_000);
+    const [event] = eventsIn(bodies[0] ?? '');
+    expect(JSON.stringify(event)).toContain('PrismaClientValidationError');
+    expect(bodies[0]).not.toContain('ada@example.test');
     await tracker.close(1_000);
   });
 

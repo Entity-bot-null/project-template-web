@@ -59,7 +59,9 @@ export function createAuthMiddleware(store: TokenStore): Middleware {
       const retry = new Request(sent.replay);
       retry.headers.set('Authorization', `Bearer ${token}`);
       const second = await options.fetch(retry);
-      if (second.status === 401) store.clearSession();
+      // Refused again: the session is gone, unless a newer one replaced it
+      // meanwhile (a password change answered while the replay was on its way).
+      if (second.status === 401 && store.getAccessToken() === token) store.clearSession();
       return second;
     },
     onError({ id }) {

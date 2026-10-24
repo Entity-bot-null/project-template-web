@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { disabledErrorTracker, setErrorTracker } from '../../observability/error-tracker.js';
 import type { MailOutboxService } from './mail-outbox.service.js';
 import { MailWorker } from './mail-worker.service.js';
+import { MAIL_EXCHANGE_MAX_MS, MAIL_LEASE_MS } from './mail.constants.js';
 import type { MailStore, OutboxStats } from './mail.store.js';
 import type { MailTransport } from './mail.transport.js';
 import type { ClaimedMessage, MailOptions, OutgoingMail } from './mail.types.js';
@@ -36,6 +37,7 @@ function message(overrides: Partial<ClaimedMessage> = {}): ClaimedMessage {
     userId: null,
     payload: {},
     attempts: 1,
+    claimId: 'claim-1',
     expiresAt: new Date(Date.now() + 60_000),
     createdAt: new Date(Date.now() - 2_000),
     requestId: null,
@@ -67,9 +69,13 @@ function setup({
     claim: vi.fn(() => Promise.resolve(queue.shift())),
     inTransaction: vi.fn((work: (tx: unknown) => Promise<unknown>) => work('tx')),
     markSent: vi.fn(() => Promise.resolve(true)),
+    renewLease: vi.fn(() => Promise.resolve(true)),
     reschedule: vi.fn(() => Promise.resolve(true)),
     markFailed: vi.fn(() => Promise.resolve(true)),
     markExpired: vi.fn(() => Promise.resolve(true)),
+    fateOf: vi.fn((): Promise<'dropped' | 'counted' | 'taken-over' | 'gone'> =>
+      Promise.resolve('taken-over'),
+    ),
     stats: vi.fn(() => Promise.resolve(stats)),
     sweep: vi.fn(() => Promise.resolve({ deleted: 0, cleared: 0, expired: 0 })),
   };
@@ -328,11 +334,127 @@ describe('MailWorker', () => {
     expect(context.worker.health()).toBe('degraded');
   });
 
-  it('warns when its lease ran out before it recorded a delivery (another worker may resend)', async () => {
-    const context = tracked(setup({ queue: [message()] }));
-    context.store.markSent.mockResolvedValueOnce(false);
+  it('renews its lease while a slow exchange goes on, and stops once it ends', async () => {
+    let answer: () => void = () => undefined;
+    const exchange = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const queued = message();
+    const context = tracked(setup({ send: () => exchange }));
     await started(context);
-    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('lease had run out'));
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      context.queue.push(queued);
+      const run = context.worker.runOnce();
+      await vi.waitFor(() => {
+        expect(context.transport.send).toHaveBeenCalled();
+      });
+      // Every step within its own timeout, the whole past the lease.
+      vi.advanceTimersByTime(MAIL_LEASE_MS * 2);
+      expect(context.store.renewLease).toHaveBeenCalledTimes(6);
+      expect(context.store.renewLease).toHaveBeenCalledWith(queued);
+      answer();
+      await run;
+      expect(context.store.markSent).toHaveBeenCalledWith(queued);
+      vi.advanceTimersByTime(MAIL_LEASE_MS);
+      expect(context.store.renewLease).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops renewing past the exchange cap, so another worker can take a hung message over', async () => {
+    let finish: () => void = () => undefined;
+    const exchange = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const queued = message();
+    const context = tracked(setup({ send: () => exchange }));
+    await started(context);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      context.queue.push(queued);
+      const run = context.worker.runOnce();
+      await vi.waitFor(() => {
+        expect(context.transport.send).toHaveBeenCalled();
+      });
+      vi.advanceTimersByTime(MAIL_EXCHANGE_MAX_MS + MAIL_LEASE_MS);
+      const renewals = context.store.renewLease.mock.calls.length;
+      expect(renewals).toBeLessThanOrEqual(MAIL_EXCHANGE_MAX_MS / (MAIL_LEASE_MS / 3));
+      expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('no longer renewed'));
+      vi.advanceTimersByTime(10 * MAIL_LEASE_MS);
+      expect(context.store.renewLease).toHaveBeenCalledTimes(renewals);
+      finish();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says why a sent message could not be recorded: taken over, or dropped by an undo meanwhile', async () => {
+    const taken = tracked(setup({ queue: [message()] }));
+    taken.store.markSent.mockResolvedValueOnce(false);
+    await started(taken);
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('another worker took it over'));
+    // It did go out: counted as sent, once.
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'sent', expect.any(Number));
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
+
+    metrics.recordMailDelivery.mockClear();
+    const dropped = tracked(setup({ queue: [message()] }));
+    dropped.store.markSent.mockResolvedValueOnce(false);
+    dropped.store.fateOf.mockResolvedValueOnce('dropped');
+    await started(dropped);
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'sent', expect.any(Number));
+  });
+
+  it('counts an outcome the row refused once: as expired when an undo dropped it, not when taken over', async () => {
+    // Dropped under this claim while it was composed: this worker counts it.
+    const dropped = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
+    dropped.store.markExpired.mockResolvedValueOnce(false);
+    dropped.store.fateOf.mockResolvedValueOnce('dropped');
+    await started(dropped);
+    expect(dropped.store.markExpired).toHaveBeenCalledWith(expect.anything(), 'not_applicable');
+    expect(metrics.recordMailDelivery).toHaveBeenCalledWith('test', 'expired');
+    expect(metrics.recordMailDelivery).toHaveBeenCalledTimes(1);
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
+
+    // Taken over by another worker: that worker counts it.
+    metrics.recordMailDelivery.mockClear();
+    const retried = tracked(
+      setup({ queue: [message()], compose: () => Promise.reject(new Error('db down')) }),
+    );
+    retried.store.reschedule.mockResolvedValueOnce(false);
+    await started(retried);
+    expect(retried.store.reschedule).toHaveBeenCalled();
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).not.toHaveBeenCalledWith(expect.stringContaining('retrying in'));
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('another worker took it over'));
+
+    const failed = tracked(setup({ queue: [message({ attempts: 4 })] }));
+    failed.store.markFailed.mockResolvedValueOnce(false);
+    await started(failed);
+    expect(failed.store.markFailed).toHaveBeenCalledWith(expect.anything(), 'attempts_exhausted');
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.error).not.toHaveBeenCalledWith(expect.stringContaining('Gave up on'));
+
+    // Dropped by an undo that counted it itself (its lease had run out).
+    const counted = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
+    counted.store.markExpired.mockResolvedValueOnce(false);
+    counted.store.fateOf.mockResolvedValueOnce('counted');
+    await started(counted);
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('dropped meanwhile'));
+
+    // Deleted with its account.
+    const gone = tracked(setup({ queue: [message()], compose: () => Promise.resolve(null) }));
+    gone.store.markExpired.mockResolvedValueOnce(false);
+    gone.store.fateOf.mockResolvedValueOnce('gone');
+    await started(gone);
+    expect(metrics.recordMailDelivery).not.toHaveBeenCalled();
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('its account was deleted'));
   });
 
   it('reads as degraded while the oldest waiting message is older than 15 minutes', async () => {

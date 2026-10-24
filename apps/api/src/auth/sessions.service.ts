@@ -6,6 +6,7 @@ import {
   type OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
+import { errorSummary } from '../common/logging/error-summary.js';
 import { sha256Hex } from '../common/utils/sha256.js';
 import { Prisma } from '../prisma/generated/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -21,7 +22,19 @@ export interface IssuedSession {
   /** The opaque refresh token; only ever sent to the client as a cookie. */
   token: string;
   expiresAt: Date;
+  /**
+   * The session's id, the same across rotations (its refresh token family).
+   * Not a credential: the client names it to end only this session (retire).
+   */
+  familyId: string;
 }
+
+/**
+ * What a logout did. Without `only` it always retires a known token's family;
+ * with it, a family it does not name is left alone, and `liveUntil` says
+ * that family is a live session (its expiry): one started meanwhile.
+ */
+export type RetireOutcome = { retired: true } | { retired: false; liveUntil?: Date };
 
 /** A new session, with the account's securityVersion read under its lock: the access token carries it. */
 export interface StartedSession extends IssuedSession {
@@ -101,6 +114,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   // with the old password can never outlive the revocation.
   async create(userId: string, verifiedPasswordHash: string): Promise<StartedSession> {
     const token = newToken();
+    const familyId = randomUUID();
     const { expiresAt, securityVersion } = await this.prisma.$transaction(async (tx) => {
       await lockUser(tx, userId);
       const user = await tx.user.findUnique({
@@ -116,7 +130,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       await tx.session.create({
         data: {
           userId,
-          familyId: randomUUID(),
+          familyId,
           familyExpiresAt,
           tokenHash: hashRefreshToken(token),
           expiresAt: sessionExpiresAt,
@@ -124,7 +138,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       });
       return { expiresAt: sessionExpiresAt, securityVersion: user.securityVersion };
     }, SESSION_TRANSACTION);
-    return { token, expiresAt, securityVersion };
+    return { token, expiresAt, familyId, securityVersion };
   }
 
   // Single use: a valid token is revoked as rotated and replaced by a successor
@@ -178,7 +192,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         },
       });
       const { securityVersion, ...user } = current.user;
-      return { user, securityVersion, session: { token: next, expiresAt } };
+      return {
+        user,
+        securityVersion,
+        session: { token: next, expiresAt, familyId: current.familyId },
+      };
     }, SESSION_TRANSACTION);
 
     if ('error' in outcome) {
@@ -195,24 +213,36 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   // Logout, and sign-in over an existing session: ends the family of the
   // presented token, whatever its state. Presenting a token that was rotated
   // earlier than the leeway is also reported as theft, naming where it was
-  // caught. Idempotent; an unknown token is a no-op.
-  async retire(token: string, during: 'sign-in' | 'logout'): Promise<void> {
+  // caught. Idempotent; an unknown token is a no-op. `only` (a logout that
+  // names the sessions it ends) leaves any other family as it is: the browser
+  // holds a session started meanwhile, which that logout must not end.
+  async retire(
+    token: string,
+    during: 'sign-in' | 'logout',
+    only?: readonly string[],
+  ): Promise<RetireOutcome> {
     const tokenHash = hashRefreshToken(token);
-    const reusedBy = await this.prisma.$transaction(async (tx) => {
+    const outcome = await this.prisma.$transaction(async (tx) => {
       const found = await tx.session.findUnique({ where: { tokenHash }, select: { userId: true } });
-      if (!found) return null;
+      if (!found) return { retired: false as const };
       await lockUser(tx, found.userId);
       const current = await tx.session.findUnique({ where: { tokenHash } });
-      if (!current) return null;
+      if (!current) return { retired: false as const };
       const now = Date.now();
+      if (only !== undefined && !only.includes(current.familyId)) {
+        const live = current.revokedAt === null && current.expiresAt.getTime() > now;
+        return { retired: false as const, ...(live && { liveUntil: current.expiresAt }) };
+      }
       await revokeFamily(tx, current.familyId, now);
       const reused =
         current.rotated &&
         current.revokedAt !== null &&
         now - current.revokedAt.getTime() > REFRESH_REUSE_LEEWAY_SEC * 1000;
-      return reused ? current.userId : null;
+      return { retired: true as const, reusedBy: reused ? current.userId : null };
     }, SESSION_TRANSACTION);
-    if (reusedBy !== null) this.logReuse(reusedBy, during);
+    if (!outcome.retired) return outcome;
+    if (outcome.reusedBy !== null) this.logReuse(outcome.reusedBy, during);
+    return { retired: true };
   }
 
   /** Ends every session of a user at once (password change, account lock). */
@@ -235,9 +265,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (count > 0) this.logger.log(`Swept ${count} expired sessions`);
       return count;
     } catch (error) {
-      this.logger.warn(
-        `Session sweep failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.warn(`Session sweep failed: ${errorSummary(error)}`);
       return 0;
     }
   }

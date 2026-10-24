@@ -54,7 +54,14 @@ on purpose, and [Per project](#per-project-requiere-configuración) what each pr
 - **Logout** ends the family of the presented cookie, even if that token was already rotated (a tab
   that missed a rotation still signs the session out), then clears both cookies. When the database
   cannot be reached it answers 500 and keeps them: the family is still live, and the sign-in page's
-  retry needs the cookie to end it.
+  retry needs the cookie to end it. Every session answer names its session (`sessionId`, the
+  family, the same across refreshes; not a credential). A logout that names the sessions it ends
+  (`{ "sessionIds": [...] }`: the web client's retry, and its logout of a session it discarded)
+  ends the cookie's family only when it is one of them, and touches the cookies only then: a
+  session started meanwhile is left alone, and gets its `has_session` hint back unless the refresh
+  cookies are ambiguous (the client drops the hint first, for a page closed meanwhile). It tries up
+  to four refresh cookies the request carries (two when one was planted next to ours): only named
+  sessions end, so that is safe. Ids compare in lower case.
 - **Concurrent changes:** every change to a user's sessions takes that user's row lock first, so
   sign-ins, rotations, logouts and revocations never interleave. Those transactions run in READ
   COMMITTED whatever the database's default, so what they read after the lock is what the one they
@@ -212,8 +219,9 @@ password) in someone else's hands cannot take the account for good:
   owner gets a notice instead and the person asking is answered the same (202, the lookup after
   the answer): no enumeration. Limited per address like every link.
 - **Confirming** (`POST /api/auth/email-changes/confirm`, from the new mailbox, signed in or
-  not): the token works once and only while the account is as it was when it was sent (same
-  address and `security_version`: a password change in between voids it). In one transaction
+  not): the token works once and only while the account is as it was when the change was asked
+  for (same address and `security_version`: a password change in between voids it, and a request
+  whose message is still in the outbox then goes out with no link). In one transaction
   under the account's row lock: the address changes, `security_version` increases (every access
   token ends at once), every session ends (sign in again with the new address), the other
   reset and change links of the account are dropped, and the **previous** address gets a notice
@@ -221,9 +229,26 @@ password) in someone else's hands cannot take the account for good:
 - **Undoing** (`POST /api/auth/email-changes/revert`, from the previous mailbox, within **7
   days**): the previous address comes back **with a new password chosen there** (whoever changed
   the address knew the old one), `security_version` increases and every session ends. Every other
-  link of the account is dropped **except the undo links minted before this one**: they undo
-  earlier changes, so the earliest owner wins. Whoever took the account and undoes their own later
-  change cannot void the owner's link; the owner's link voids theirs (both orders are tested). The
+  link of the account is dropped **except the undo links of earlier changes**, so the earliest owner
+  wins. They are ranked by the change they undo (the account's `security_version` right after it),
+  not by when their notice went out: a notice that waited in the outbox still outranks the links of
+  later changes, and the notices of later changes still waiting in the outbox are dropped unsent
+  (one being composed at that moment is not sent: its template reads its own row under the
+  account's lock the undo holds; one already composed goes out with a link the undo voided). The
+  previous release's undo drops nothing, so a notice also refuses its link when an undo link of
+  its change or an earlier one was used after it was queued (used links are kept a day), and a
+  notice of the previous release older than that is dropped (only a failed one put back by hand
+  gets there). A row another worker took over mints no second link. A change made after an undo
+  is told as usual. An undo that loses a deadlock to the outbox's sweep runs once more. Two limits
+  hold only while a deployment replaces the previous release: a notice that release queued carries
+  no rank, so it is ranked by the account as it is when it goes out, and an undo of any later
+  change, the thief's own included, refuses it (it cannot tell the owner's notice from one that
+  would undo an undo; drain the outbox's `email_changed` notices before deploying to avoid it,
+  `pnpm --filter api mail status`); and an undo the previous release makes counts from when its
+  request arrived (its password hash comes after), so a notice this release queues during those
+  milliseconds still goes out. Whoever took
+  the account and undoes their own later change cannot void the owner's link; the owner's link
+  voids theirs, whichever notice went out first (every order is tested). The
   undo link is **not bound to the account's later state** and is never replaced by a newer one:
   changing the address again or the password does not void it either. A refused password keeps the
   link usable; an address taken meanwhile answers 409.
@@ -235,17 +260,20 @@ password) in someone else's hands cannot take the account for good:
 ### Web client
 
 - **401 handling** (`web/src/auth/middleware.ts`): a 401 to a request that carried a token
-  triggers one refresh (shared by every concurrent caller) and one replay; a second 401 signs out.
+  triggers one refresh (shared by every concurrent caller) and one replay; a second 401 signs out,
+  unless a newer session (a password change answered meanwhile) replaced the one replayed.
   A request that went out without a token is left alone; when another request already refreshed,
   the replay uses that token instead of rotating again; and a request is never replayed for
   another user than the one who sent it.
 - **One cookie change at a time across tabs** (`web/src/auth/session.ts`): tabs share the cookie,
   and refresh (which rotates it), sign-in (which replaces it) and logout (which clears it) all
-  write it, so they take turns through one Web Lock. No tab presents a token another has just
-  rotated, and no late answer undoes a newer one: a refresh answered after another tab's sign-in
-  would put the old session back, a logout would clear the new one. A refresh gives up after 10
-  seconds without an answer, so a stalled one cannot hold the lock for every tab. Without Web Locks
-  (or when the browser refuses the lock), one retry covers a race between two refreshes.
+  write it, so they take turns through two Web Locks: refreshes and sign-ins share one, sign-ins
+  and logouts the other. No tab presents a token another has just rotated, and no late answer
+  undoes a newer one: a refresh answered after another tab's sign-in would put the old session
+  back, a logout would clear the new one. A logout never waits for a refresh. A refresh gives up
+  after 10 seconds without an answer, a sign-in or a logout after 20, so a stalled one cannot hold
+  a lock for every tab. Without Web Locks (or when the browser refuses one), one retry covers a
+  race between two refreshes.
 - **A rate-limited boot** (`429` on the first refresh of a page) waits out a `Retry-After` of up to
   5 seconds once, then settles as usual: people behind one address share the per-address limit, and
   a `429` says nothing about the session.
@@ -258,10 +286,32 @@ password) in someone else's hands cannot take the account for good:
   `has_session` hint is dropped first, so even a page closed at that instant leaves nothing the next
   visit would restore; the logout request leaves at once, with `keepalive` so closing the page
   does not cancel it, without waiting for a refresh in flight (any token of the family ends the
-  whole family). If the server cannot be reached, the sign-in page says so and offers a retry.
+  whole family): only another tab's sign-in on its way goes first; if it succeeds it ends this
+  session itself, and if it fails this logout follows (or the sign-in page's retry). A rotation
+  that lands after the sign-out cannot bring the hint back: it is dropped again, unless a sign-in
+  followed the sign-out (the hint is then the new session's).
+  If the server cannot be reached, the sign-in page says so and offers a retry, which names the
+  session the sign-out ended and every discarded session whose own logout failed (below), at most
+  four: a newer sign-in another tab made meanwhile stands. When one of them is unknown (a discarded
+  answer of the previous release, or a sign-out of a tab that never learnt its session), the retry
+  ends the cookie's session, whichever it is. Only a logout issued since the latest sign-out sets
+  what the page says; an older one's answer cannot bring back the hint that sign-out dropped. Each tab knows the browser's session, its own or the
+  one another tab announced (`BroadcastChannel`). A sign-out never joins a retry still on its way:
+  it sends its own logout, for the cookie's session, whichever it is.
+- **Picking up another tab's sign-in:** an anonymous tab refreshes when told; a refresh of its own
+  still on its way from before a sign-out is waited for, not joined (its answer is dropped), and
+  a sign-out that comes meanwhile calls the pick-up off.
 - **Ordering:** a sign-in waits for a logout or a refresh still on its way, which would otherwise
   clear or replace the cookie it sets; a refresh that lands after a sign-in or a sign-out never
-  overwrites it.
+  overwrites it; a sign-in or a password change still on its way when a sign-out reaches the tab
+  (this tab's, or another tab's; a sign-in still waiting for a lock is not on its way yet, and stands
+  once sent) does not sign the tab back in, and the session it started is ended on the server too,
+  by a logout that names it (and the session the sign-out ended), behind the sign-out's own: the
+  server ends whichever of them the cookie holds by then, a later rotation included, and leaves a
+  newer session alone. When that logout fails, the sign-in page says the session may still be
+  valid and its retry names it. An answer of the previous release names no session: its logout
+  ends the cookie's, as that release did, unless a newer session's answer set the hint again
+  meanwhile.
 - After a sign-out the next user starts at home, not on the page the previous one left.
 
 ## Secret rotation
@@ -527,7 +577,10 @@ When `SENTRY_DSN` / `WEB_SENTRY_DSN` are set (OPTIONAL), reports go to a third p
   of silently re-enabling a default.
 - **Scrubbed again before sending** (`scrubEvent`): request reduced to method and URL without query,
   user to its id, breadcrumbs dropped (API) or stripped of URLs' query strings and secret-looking
-  fields (browser, console breadcrumbs dropped), every message and field through the log redaction.
+  fields (browser, console breadcrumbs dropped, DOM breadcrumbs reduced to the element without its
+  attributes' values: a button's label can name someone), every message and field through the log
+  redaction. A Prisma error goes by its class, code and frames, never its message, which can quote
+  the query's arguments (logs too).
 - **Production DSNs must be https** (boot check); a malformed DSN fails the boot instead of turning
   error tracking off silently. Use separate Sentry projects for API and web, restrict who can read
   them, and set the data retention the project's policy allows.
@@ -582,9 +635,12 @@ mail without authentication: it is published on 127.0.0.1 only and is never part
 
 `pnpm security` = `pnpm audit --audit-level=high` + `pnpm deps:check` + the repository secret scan. High and critical
 advisories fail the gate. Fix order: update the direct dependency; if the vulnerable package is
-pinned by a dependency, add a scoped override in `pnpm-workspace.yaml` naming the advisory (two are
-there now, for packages pinned by the Prisma CLI); if neither is possible, document an exception
-with the advisory, why it is not exploitable here, and a review date, in the pull request and here.
+pinned by a dependency, or is a transitive one `pnpm update` does not move (it updates direct
+dependencies only), add a scoped override in `pnpm-workspace.yaml` naming the advisory (those there
+now: two packages pinned by the Prisma CLI, `multer` pinned by `@nestjs/platform-express`,
+`body-parser` and `fast-uri` within their parents' ranges); if neither is possible, document an
+exception with the advisory, why it is not exploitable here, and a review date, in the pull request
+and here.
 
 **Urgent fix younger than the release delay:** exempt only the fixed version, in
 `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, with the date the exemption expires and the
@@ -840,8 +896,8 @@ Accepted on purpose, each with its way out:
   prefix to a third party).
 - **A password change in one tab while another tab renews its session** at that very instant can
   leave the older cookie in the browser: that session ended on the server, so the browser asks to
-  sign in again (with the new password). The change does not take the cross-tab lock, which an
-  expired access token's renewal would wait on forever (`web/src/auth/session.ts`).
+  sign in again (with the new password). The change takes neither cross-tab lock: an expired access
+  token's renewal, which takes the refresh one, would wait on it forever (`web/src/auth/session.ts`).
 - **A refresh response lost on the network** (the server rotated the token, the connection
   dropped before the answer arrived) looks like theft once 30 seconds have passed: the family
   ends and the user signs in again. That is the price of reuse detection (RFC 9700 accepts it);
