@@ -133,9 +133,9 @@ before it writes anything.
 
 ## Limits
 
-- It reviews what the repository contains: the backend of the mobile app, production
-  infrastructure and real devices are outside its reach, and it says so (`UNVERIFIABLE`,
-  `SKIPPED — REQUIRES …`).
+- It reviews what the repository contains: production infrastructure (the running server, the
+  cloud account, the stores) and real devices are outside its reach, and it says so
+  (`UNVERIFIABLE`, `SKIPPED — REQUIRES …`).
 - Gates run on the machine: Docker, a database, a browser, an emulator or macOS are needed for the
   gates that use them. The verdict says which ones could not run.
 - It is a reviewer, not an approver: the merge decision, the approvals and CI stay as the
