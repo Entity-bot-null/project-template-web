@@ -165,6 +165,12 @@ why) is merged by hand, after reading its release notes. An update that changes 
 also needs the files copied to the server
 ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
 
+Prisma's CLI, client and driver adapter come in one pull request of their own (the `prisma`
+group), and `pnpm deps:check` fails one that moves them apart
+([release sets](security.md#dependency-policy)): when the trust policy refuses one of the new
+versions, Dependabot still opens the pull request with the others, and it stays red until the
+refused version passes (30 days after its release, `trustPolicyIgnoreAfter`) or a newer one does.
+
 Dependabot may change files under `.github/` only for GitHub Actions, so the tool images CI runs
 live in `scripts/tool-images/Dockerfile`: under `.github/`, it refused every update of them
 ([dependabot-core#15237](https://github.com/dependabot/dependabot-core/issues/15237)).

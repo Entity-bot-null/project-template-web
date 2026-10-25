@@ -16,7 +16,7 @@
 # (.nvmrc) from ECR Public's mirror of Docker's official images, nginx from
 # NGINX's own registry on GHCR: the same images as Docker Hub, without its
 # anonymous pull limit.
-FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS build
+FROM public.ecr.aws/docker/library/node:24-bookworm-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS build
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     CI=true \
@@ -38,7 +38,7 @@ RUN pnpm --filter web build
 RUN PUBLIC_URL=https://public-origin.invalid pnpm --filter landing build
 
 # Runs as an unprivileged user on port 8080.
-FROM ghcr.io/nginx/nginx-unprivileged:1.31-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS runtime
+FROM ghcr.io/nginx/nginx-unprivileged:1.31-alpine@sha256:a2545a4b4fdebc62bd6a624ba64bea3a1b8bb6e71deabe973ceec621349d5301 AS runtime
 # Operating system fixes published after the base image was built (the image
 # scan in CI fails on a fixable HIGH or CRITICAL advisory). The day of those
 # fixes (CI passes today's date) is part of the cache key of the upgrade: a

@@ -678,6 +678,7 @@ of `pnpm security`, so of `pnpm verify` and CI), with the policy in
 | License policy                 | A license the product cannot ship: production dependencies need a permissive license, tools may also use weak copyleft; unknown fails    | `deps:check`, `scripts/dependency-policy.json`                               |
 | Known vulnerabilities          | High and critical advisories                                                                                                             | `pnpm audit`, Trivy on the images                                            |
 | Weakened settings              | Lowering the delay, dropping the trust policy or the block on exotic sources; removing the Dependabot cooldown                           | `deps:check` (floors in `scripts/dependency-policy.json`); zizmor (cooldown) |
+| Release sets on one version    | Packages published as one release drifting apart: Prisma's CLI generating the code of one release for the client runtime of another      | `deps:check` (`releaseSets` in `scripts/dependency-policy.json`)             |
 
 **License expressions** are read as SPDX defines them: `WITH` binds tighter than `AND`, `AND`
 tighter than `OR`, parentheses group. One passes when some way to comply with it (every license of
@@ -689,6 +690,12 @@ than one maintainer for anything security-relevant), an allowed license, no inst
 it builds a native binary, no lighter alternative already in the tree, and named in the pull
 request with the reason. `pnpm-lock.yaml` diffs are shown in review, not collapsed.
 
+**Release sets**: the members of a set that the workspace uses directly resolve to one version in
+`pnpm-lock.yaml`. Prisma's CLI, client and driver adapter are one: the CLI generates the code the
+client runs, so an update that moved the client alone (the trust policy had refused the CLI's new
+version) would build and pass the tests with two releases mixed. Each set has a Dependabot group of
+its own.
+
 **Exceptions** (a license or a source) go in `scripts/dependency-policy.json` with the reason; the
 file is owned by the maintainers (`CODEOWNERS`). A dependency nobody imports any more is removed in
 the pull request that stops using it.
@@ -696,12 +703,13 @@ the pull request that stops using it.
 ## Dependency maintenance
 
 **Dependabot** opens the update pull requests (`.github/dependabot.yml`): weekly, grouped
-(production minor/patch, development minor/patch, actions, tool images), each with the full CI.
+(Prisma's three packages, production minor/patch, development minor/patch, actions, tool images),
+each with the full CI.
 It covers npm, GitHub Actions (SHA pins and their version comments), the Dockerfiles' base images,
 Docker Compose, the tool images (`scripts/tool-images/Dockerfile`, tag and digest) and the Terraform
 providers (`infra/terraform`, version and lock-file checksums together). Version updates wait the
 same seven days as pnpm; **security updates** (Dependabot alerts) are not delayed.
-Majors arrive one per pull request, with their release notes to read. A person still approves every
+Majors arrive one per pull request (Prisma's three together), with their release notes to read. A person still approves every
 update: once approved and green, a patch or minor update merges itself
 ([ci-cd.md](ci-cd.md#dependency-updates)); majors and workflow updates are merged by hand.
 Some majors are never proposed, because they move by hand with what depends on them
