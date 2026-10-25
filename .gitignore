@@ -59,3 +59,8 @@ Thumbs.db
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# Claude Code's personal settings. Claude Code ignores the file in the global
+# git configuration, which Prettier does not read: listed here,
+# `pnpm format:check` skips it too.
+.claude/settings.local.json
