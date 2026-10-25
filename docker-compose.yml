@@ -45,7 +45,7 @@ services:
   # Chaos (MP_ENABLE_CHAOS) only arms Mailpit's API to inject SMTP errors on
   # demand (the outbox specs do, then disarm it); nothing fails until asked.
   mailpit:
-    image: axllent/mailpit:v1.31.5@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
+    image: axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
     restart: unless-stopped
     environment:
       MP_MAX_MESSAGES: 500
@@ -174,7 +174,7 @@ services:
   # evaluates the rules (docs/observability.md#dashboards-and-alerts-as-code).
   otel-lgtm:
     profiles: [observability]
-    image: grafana/otel-lgtm:0.36.0@sha256:57c04cbd8e7022f32bb84c4ac005d79baf8b08e2c5be44facf11f5f1f9944ba2
+    image: grafana/otel-lgtm:0.37.0@sha256:57b5ab1ca6619beb180174e2fccce04762470750669d043f544b4726d0582d07
     ports:
       - '127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318'
       - '127.0.0.1:${GRAFANA_PORT:-3001}:3000'
