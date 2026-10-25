@@ -4,6 +4,7 @@ import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
+import { onceMoreOnWriteConflict } from '../src/prisma/write-conflicts.js';
 
 export interface TestApp {
   app: NestExpressApplication;
@@ -30,6 +31,10 @@ export async function createTestApp(
 
 // Empties every table between tests, so no test sees another's rows. The
 // table list is read from the database, so it never drifts from the schema.
+// The suite's app keeps working meanwhile (its outbox workers claim, compose
+// and sweep, locking rows of several tables), and TRUNCATE locks every table
+// in turn: PostgreSQL may abort it as a deadlock's victim. Nothing of it
+// committed, and the worker's transaction is done by then: it runs once more.
 export async function resetDatabase(prisma: PrismaService): Promise<void> {
   const tables = await prisma.$queryRaw<{ tablename: string }[]>`
     SELECT tablename FROM pg_tables
@@ -38,5 +43,5 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   if (tables.length === 0) return;
   const list = tables.map(({ tablename }) => `"${tablename.replaceAll('"', '""')}"`).join(', ');
   // eslint-disable-next-line no-restricted-properties -- table names are identifiers, which no query can bind as parameters; each one comes from pg_tables and is quoted above
-  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} CASCADE`);
+  await onceMoreOnWriteConflict(() => prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} CASCADE`));
 }

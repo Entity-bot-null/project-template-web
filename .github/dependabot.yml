@@ -17,10 +17,28 @@ updates:
       - dependency-name: '@types/node'
         update-types: [version-update:semver-major]
     groups:
+      # Prisma's CLI, client and driver adapter work only at one version
+      # (scripts/dependency-policy.json, releaseSets): one pull request moves
+      # the three, majors included. When the install policy refuses one of the
+      # new versions (a trust downgrade, docs/security.md#dependency-policy),
+      # Dependabot opens the pull request with the others and `pnpm deps:check`
+      # fails it until all three can move.
+      prisma:
+        patterns:
+          - prisma
+          - '@prisma/*'
+      # The two catch-all groups match every name ('*') on purpose. A
+      # dependency that several groups match goes to the most specific one
+      # (Dependabot's updater scores the patterns: an exact name 1000, a group
+      # with no patterns 500, `@prisma/*` 94, `*` 1), not to the first one
+      # listed: without '*' these two outranked the group above, and
+      # `@prisma/client` came in production, apart from its set.
       development:
+        patterns: ['*']
         dependency-type: development
         update-types: [minor, patch]
       production:
+        patterns: ['*']
         dependency-type: production
         update-types: [minor, patch]
     commit-message:
