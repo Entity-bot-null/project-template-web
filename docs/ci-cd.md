@@ -19,6 +19,9 @@ push / pull request
   └─ Conventions (conventions.yml)   branch name, PR title (Conventional Commits),
                                      again when the title is edited  ← required check
   └─ CodeQL (codeql.yml)       cross-file SAST                                    opt-in, advisory
+  └─ Cerberus (cerberus.yml)   security sweep of the change: stack rules, routes     advisory
+                               without authentication, learned rules (engine in the
+                               private Entity-bot-null/cerberus, secret CERBERUS_SSH_KEY)
 merge to main (squash)
   ├─ CI on main
   ├─ Main guard (main-guard.yml)   a pushed commit that is no merged pull request → failure + issue
