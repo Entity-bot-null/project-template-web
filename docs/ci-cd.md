@@ -431,7 +431,11 @@ Their majors move by hand, together, so CI keeps testing what runs:
 
 1. `docker-compose.yml` (`db`, `redis`), `deploy/vps/compose.yaml` (`db`, `backup`, `redis`) and
    `scripts/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
-   Dependabot proposes their minor updates (digests) in all three.
+   Dependabot proposes their minor updates (digests), but its two ecosystems (`docker` for the
+   tool images, `docker-compose` for the other two files) open separate pull requests;
+   `scripts/tool-image.test.mjs` (`pnpm test:scripts`) fails while the three files disagree on
+   PostgreSQL, Redis or Mailpit, so the pull request that moves one gets the same tag and digest in
+   the other files before it merges.
 2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure, then
    `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the accepted
    majors), and a restore drill afterwards ([disaster-recovery.md](disaster-recovery.md#checklist)).

@@ -155,6 +155,46 @@ describe('buildContexts', () => {
   });
 });
 
+describe('pins kept in step across the repository', () => {
+  const read = (/** @type {string} */ file) =>
+    readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+
+  test("the applications' Dockerfiles name no # syntax= image: BuildKit's own frontend parses them", () => {
+    // A `# syntax=` line makes every build pull and run that frontend image,
+    // by a tag that moves (docs/ci-cd.md#keeping-the-stack-current).
+    for (const file of ['apps/api/Dockerfile', 'apps/web/Dockerfile']) {
+      assert.doesNotMatch(read(file), /^#\s*syntax\s*=/im, file);
+    }
+  });
+
+  test('CI, development and the server run the same PostgreSQL, Redis and Mailpit', () => {
+    // docs/ci-cd.md#postgresql-and-redis: the tool images, docker-compose.yml
+    // and deploy/vps/compose.yaml, the same tag and digest in all.
+    const files = [
+      'scripts/tool-images/Dockerfile',
+      'docker-compose.yml',
+      'deploy/vps/compose.yaml',
+    ];
+    for (const image of ['postgres', 'redis', 'axllent/mailpit']) {
+      const pattern = new RegExp(`(?:^|[\\s/])${image}:([^\\s@]+@sha256:[0-9a-f]{64})`, 'gm');
+      /** @type {Map<string, string[]>} */
+      const pins = new Map();
+      for (const file of files) {
+        for (const [, pin = ''] of read(file).matchAll(pattern)) {
+          pins.set(pin, [...(pins.get(pin) ?? []), file]);
+        }
+      }
+      const places = [...pins.values()].flat();
+      assert.ok(places.length >= 2, `${image}: pinned in ${places.join(', ') || 'no file'}`);
+      assert.equal(
+        pins.size,
+        1,
+        `${image}: ${[...pins].map(([pin, where]) => `${pin} in ${where.join(', ')}`).join('; ')}: move them together`,
+      );
+    }
+  });
+});
+
 /**
  * A fake `docker`: `image inspect` answers whether the image is here, and each
  * `pull` takes the next answer of the list.
