@@ -76,8 +76,8 @@ jobs:
       - run: pnpm lint
       # Includes the contract check: the web client types match openapi/openapi.json.
       - run: pnpm typecheck
-      # The repository tooling's own tests: the Semgrep file selection and
-      # Doberman's engine (scripts/*.test.mjs).
+      # The repository tooling's own tests (scripts/*.test.mjs), the Semgrep
+      # file selection among them.
       - run: pnpm test:scripts
       # actionlint and zizmor (workflow security), the pinned images of
       # scripts/tool-images/Dockerfile (docs/ci-cd.md#workflow-security). The
