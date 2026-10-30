@@ -491,9 +491,9 @@ go on at 7.6.
 ### 7.0 On DigitalOcean, 7.1 to 7.5 with Terraform (optional)
 
 What Terraform creates, what it costs and why:
-[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). You need Terraform 1.16.5 or a
-later 1.16 ([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
-`terraform version` prints `Terraform v1.16.` and a patch number of 5 or more) and a DigitalOcean API token
+[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). You need Terraform 1.17
+([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
+`terraform version` prints `Terraform v1.17.`) and a DigitalOcean API token
 that can write (**API → Tokens**).
 
 On your computer, the deploy key of this environment (as in 7.4), then the settings file:

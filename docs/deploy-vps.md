@@ -495,7 +495,7 @@ Outbound traffic beyond the Droplet's included allowance is billed too.
 
 ### Before you start
 
-- Terraform 1.16 on your machine (`terraform version`).
+- Terraform 1.17 on your machine (`terraform version`).
 - A DigitalOcean team, and an API token that can write (API → Tokens). It lives in your shell's
   environment only, never in a file or a variable: `read -rs DIGITALOCEAN_TOKEN` (paste it, then
   Enter), then `export DIGITALOCEAN_TOKEN`.

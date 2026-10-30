@@ -11,7 +11,7 @@
 # Terraform itself moves with the terraform image of
 # scripts/tool-images/Dockerfile: keep required_version on its minor version.
 terraform {
-  required_version = "~> 1.16.5"
+  required_version = "~> 1.17.0"
 
   required_providers {
     digitalocean = {
