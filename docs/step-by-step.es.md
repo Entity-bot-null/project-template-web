@@ -506,9 +506,9 @@ DigitalOcean, Terraform puede construir el mismo servidor y una base de datos ge
 ### 7.0 En DigitalOcean, del 7.1 al 7.5 con Terraform (opcional)
 
 Qué crea Terraform, cuánto cuesta y por qué:
-[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). Necesitas Terraform 1.16.5 o un
-1.16 posterior ([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
-`terraform version` imprime `Terraform v1.16.` y un número de parche de 5 o más) y un token de la API de
+[deploy-vps.md](deploy-vps.md#provision-with-terraform-digitalocean). Necesitas Terraform 1.17
+([developer.hashicorp.com/terraform/install](https://developer.hashicorp.com/terraform/install);
+`terraform version` imprime `Terraform v1.17.`) y un token de la API de
 DigitalOcean con permiso de escritura (**API → Tokens**).
 
 En tu equipo, la clave de despliegue de este entorno (como en el 7.4) y después el fichero de
