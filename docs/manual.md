@@ -191,7 +191,7 @@ pnpm verify                              # format, lint, types, unit tests + cov
 pnpm test:integration                    # API against PostgreSQL (and Redis, if configured)
 pnpm exec playwright install chromium    # once per machine
 pnpm test:e2e                            # browser tests on the built app (needs pnpm build, done by verify)
-pnpm test:scripts                        # tests of the repository scripts (Semgrep file selection, Doberman)
+pnpm test:scripts                        # tests of the repository scripts (Semgrep file selection, among others)
 pnpm sast                                # Semgrep (Docker; a few minutes, see 14)
 pnpm lint:workflows                      # actionlint + zizmor + shellcheck (Docker)
 pnpm observability:check                 # dashboards and alert rules, promtool tests (Docker)
@@ -522,7 +522,7 @@ Every command the template ships.
 | `pnpm test:coverage`                                              | the same with the coverage thresholds                                                                                                                                                                                               |
 | `pnpm test:integration`                                           | the API against PostgreSQL (and Redis and Mailpit when configured)                                                                                                                                                                  |
 | `pnpm test:e2e`                                                   | Playwright on the built app and landing                                                                                                                                                                                             |
-| `pnpm test:scripts`                                               | the tests of the repository scripts (`scripts/*.test.mjs`: Semgrep file selection, Doberman's engine)                                                                                                                               |
+| `pnpm test:scripts`                                               | the tests of the repository scripts (`scripts/*.test.mjs`: Semgrep file selection, among others)                                                                                                                                    |
 | `pnpm security`                                                   | `pnpm audit --audit-level=high`, then `pnpm deps:check`, then `pnpm secrets:scan`                                                                                                                                                   |
 | `pnpm deps:check`                                                 | dependency policy: registry sources with integrity, licenses, and the supply-chain settings of `pnpm-workspace.yaml`                                                                                                                |
 | `pnpm secrets:scan`                                               | secretlint over every file git tracks or would add                                                                                                                                                                                  |

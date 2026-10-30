@@ -1,0 +1,52 @@
+name: Cerberus
+
+# Security sweep of each pull request's change (`cerberus.py ci`): stack rules,
+# routes without authentication, dependency changes and the rules Cerberus
+# learned from past audits. Fails on new high-risk leads; advisory, not a
+# required check. The engine lives in its own private repository, read with a
+# read-only deploy key (secret CERBERUS_SSH_KEY), and is checked out at run time,
+# never committed here (docs/ci-cd.md).
+on:
+  pull_request:
+
+concurrency:
+  group: cerberus-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  sweep:
+    name: Security sweep
+    # Pull requests from forks get no secrets, so they cannot read the private engine.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # the change to sweep
+      security-events: write # upload the leads to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: project
+          fetch-depth: 0 # the comparison base and its history
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Entity-bot-null/cerberus
+          ref: main # the engine and what it has learned; updated from the auditor's machine
+          path: cerberus
+          ssh-key: ${{ secrets.CERBERUS_SSH_KEY }}
+          persist-credentials: false
+      - name: Sweep the change
+        working-directory: project
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          CERBERUS_HOME: ${{ github.workspace }}/cerberus/memory
+        run: python3 ../cerberus/scripts/cerberus.py ci --root . --base "origin/$BASE_REF" --fail-on high --sarif ../cerberus.sarif
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        if: always() && hashFiles('cerberus.sarif') != ''
+        with:
+          sarif_file: cerberus.sarif
+          checkout_path: project
+          category: cerberus

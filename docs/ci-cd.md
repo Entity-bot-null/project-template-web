@@ -19,6 +19,9 @@ push / pull request
   └─ Conventions (conventions.yml)   branch name, PR title (Conventional Commits),
                                      again when the title is edited  ← required check
   └─ CodeQL (codeql.yml)       cross-file SAST                                    opt-in, advisory
+  └─ Cerberus (cerberus.yml)   security sweep of the change: stack rules, routes     advisory
+                               without authentication, learned rules (engine in the
+                               private Entity-bot-null/cerberus, secret CERBERUS_SSH_KEY)
 merge to main (squash)
   ├─ CI on main
   ├─ Main guard (main-guard.yml)   a pushed commit that is no merged pull request → failure + issue
@@ -164,6 +167,12 @@ major update, an update to the workflows, or a pull request the workflow decline
 why) is merged by hand, after reading its release notes. An update that changes `deploy/vps`
 also needs the files copied to the server
 ([deploy-vps.md](deploy-vps.md#update-the-server-files)).
+
+Prisma's CLI, client and driver adapter come in one pull request of their own (the `prisma`
+group), and `pnpm deps:check` fails one that moves them apart
+([release sets](security.md#dependency-policy)): when the trust policy refuses one of the new
+versions, Dependabot still opens the pull request with the others, and it stays red until the
+refused version passes (30 days after its release, `trustPolicyIgnoreAfter`) or a newer one does.
 
 Dependabot may change files under `.github/` only for GitHub Actions, so the tool images CI runs
 live in `scripts/tool-images/Dockerfile`: under `.github/`, it refused every update of them
@@ -425,7 +434,11 @@ Their majors move by hand, together, so CI keeps testing what runs:
 
 1. `docker-compose.yml` (`db`, `redis`), `deploy/vps/compose.yaml` (`db`, `backup`, `redis`) and
    `scripts/tool-images/Dockerfile` (`postgres`, `redis`, tag and digest): the same major.
-   Dependabot proposes their minor updates (digests) in all three.
+   Dependabot proposes their minor updates (digests), but its two ecosystems (`docker` for the
+   tool images, `docker-compose` for the other two files) open separate pull requests;
+   `scripts/tool-image.test.mjs` (`pnpm test:scripts`) fails while the three files disagree on
+   PostgreSQL, Redis or Mailpit, so the pull request that moves one gets the same tag and digest in
+   the other files before it merges.
 2. PostgreSQL in production: the managed database's major upgrade, by the provider's procedure, then
    `postgres_version` in `infra/terraform/digitalocean` to match (its validation lists the accepted
    majors), and a restore drill afterwards ([disaster-recovery.md](disaster-recovery.md#checklist)).
