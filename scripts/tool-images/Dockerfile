@@ -18,10 +18,10 @@
 # Workflow linting: actionlint (syntax, expressions, shellcheck) and zizmor
 # (security: permissions, injection, pinning, credential persistence).
 FROM rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 AS actionlint
-FROM ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9 AS zizmor
+FROM ghcr.io/zizmorcore/zizmor:1.32.0@sha256:3014cc8f68f663935f69b3c3e0e41f5ce102b268d97db13db0f62208747f860d AS zizmor
 
 # Static application security testing.
-FROM semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b AS semgrep
+FROM semgrep/semgrep:1.183.0@sha256:2e45517a85e13a9cca14a2a00df6bb48affd66b8ebfae1b0991cd57578362fb0 AS semgrep
 
 # Secrets in the git history.
 FROM ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f AS gitleaks
@@ -35,16 +35,16 @@ FROM ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9
 # the same digests as on Docker Hub, without its anonymous pull limit.
 FROM public.ecr.aws/hashicorp/terraform:1.16.6@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316 AS terraform
 FROM ghcr.io/terraform-linters/tflint:v0.65.0@sha256:2788f4d4fc663c0e953b011b01bf443fe5bfce7587ee916e588e6057b85d6359 AS tflint
-FROM public.ecr.aws/docker/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS ubuntu
+FROM public.ecr.aws/docker/library/ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS ubuntu
 
 # The BuildKit daemon that builds and pushes the application images
 # (docker/setup-buildx-action in docker-images.yml and deploy.yml), whose own
 # default is a moving tag (moby/buildkit:buildx-stable-1). Its built-in
 # Dockerfile frontend parses apps/*/Dockerfile, which name no `# syntax=` image.
-FROM moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c AS buildkit
+FROM moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c AS buildkit
 
 # Image vulnerability scanning.
-FROM ghcr.io/aquasecurity/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c AS trivy
+FROM ghcr.io/aquasecurity/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb AS trivy
 
 # Test database of the integration and end-to-end jobs; keep the major
 # version equal to docker-compose.yml.
@@ -52,19 +52,19 @@ FROM public.ecr.aws/docker/library/postgres:18-alpine@sha256:10a5c69a83035ab5239
 
 # Redis of the integration job (the Redis-backed adapters); keep the major
 # version equal to docker-compose.yml.
-FROM public.ecr.aws/docker/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 AS redis
+FROM public.ecr.aws/docker/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80 AS redis
 
 # Mail catcher of the integration job: the outbox specs send real SMTP to it
 # and read the messages back through its API. Keep the version equal to
 # docker-compose.yml.
-FROM axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387 AS mailpit
+FROM axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231 AS mailpit
 
 # Dynamic application security testing (.github/workflows/dast.yml).
-FROM ghcr.io/zaproxy/zaproxy:2.17.0@sha256:030d3df57735dacbb83464854758e674dd9ad01d79d12a129a8e58b1fd384238 AS zap
+FROM ghcr.io/zaproxy/zaproxy:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af AS zap
 
 # Observability as code (pnpm observability:check): promtool checks the
 # Prometheus configuration, alert and recording rules and the dashboards'
 # queries, and runs the rules' unit tests. Keep it at or above the Prometheus
 # version of the local backend (docker-compose.yml, grafana/otel-lgtm). From
 # Quay, where the Prometheus project publishes the digest of prom/prometheus.
-FROM quay.io/prometheus/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2 AS promtool
+FROM quay.io/prometheus/prometheus:v3.16.0@sha256:9332054523223e2ddc18d8101799d54a4a8d823b030c53216f063a6c117773cd AS promtool
